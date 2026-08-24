@@ -213,6 +213,7 @@ export default definePluginEntry({
     const requireOwner = cfg.mesh?.requireOwner !== false; // default true
     const verifyOwner = cfg.mesh?.verifyOwner === true;    // default false
     const MAX_JOB_DURATION_MS = cfg.mesh?.maxJobDurationMs ?? 30 * 60_000;
+    const promptVars = (cfg.mesh?.promptVars ?? {}) as Record<string, string>;
     const topics = {
       profile: `${meshRoot}/registry/${agentId}/profile`,
       status: `${meshRoot}/registry/${agentId}/status`,
@@ -332,6 +333,9 @@ export default definePluginEntry({
         agentId, meshRoot, protocolVersion: PROTOCOL_VERSION,
         session: { ...session },
         ownerPolicy: { required: requireOwner, verified: verifyOwner },
+        // Key names only — the panel flags unbound ${VAR} references, and the
+        // values are deployment secrets that must never reach a browser.
+        promptVars: Object.keys(promptVars).sort(),
       };
     }
 
@@ -445,7 +449,6 @@ export default definePluginEntry({
      * belong here — the capability definition stays portable and the values
      * live in the environment.
      */
-    const promptVars = (cfg.mesh?.promptVars ?? {}) as Record<string, string>;
     const resolvePromptEnv = (s: string): string =>
       s.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_m, k: string) => {
         // Plugin config first, environment second. Config is versioned and

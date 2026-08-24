@@ -515,87 +515,168 @@ function runView() {
   </div>`;
 }
 
+/* ── capability editor ──────────────────────────────────────────────────────
+   A capability is data, so editing one is a form — not a JSON blob. The editor
+   keeps the prompt and its schema honest about each other: placeholders the
+   prompt uses must be declared, declared fields should be used, and ${VAR}
+   references must actually be bound in this deployment. */
+let draft = null;   // null = editor closed
+
+const BLANK = () => ({ service: '', description: '', avgLatency: '', handler: 'session',
+                       prompt: '', fields: [], editing: null });
+
+function toFields(schema) {
+  return Object.entries(schema || {}).map(([name, spec]) => {
+    const t = String(spec);
+    const type = t.includes('number') ? 'number' : t.includes('boolean') ? 'boolean' : t.includes('object') ? 'object' : 'string';
+    const note = t.replace(/^(string|number|boolean|object)\??\s*/, '').replace(/^\((.*)\)$/, '$1');
+    return { name, type, optional: t.includes('?'), note };
+  });
+}
+function fromFields(fields) {
+  const out = {};
+  for (const f of fields) {
+    if (!f.name.trim()) continue;
+    out[f.name.trim()] = `${f.type}${f.optional ? '?' : ''}${f.note ? ` (${f.note})` : ''}`;
+  }
+  return out;
+}
+const placeholders = (prompt) => [...new Set([...String(prompt).matchAll(/\{\{(\w+)\}\}/g)].map((m) => m[1]))]
+  .filter((n) => n !== 'jobId' && n !== 'requestedBy');
+const varRefs = (prompt) => [...new Set([...String(prompt).matchAll(/\$\{([A-Za-z_]\w*)\}/g)].map((m) => m[1]))];
+
+function lint(d) {
+  const out = [];
+  const names = d.fields.map((f) => f.name.trim()).filter(Boolean);
+  const used = placeholders(d.prompt);
+  for (const u of used) if (!names.includes(u))
+    out.push({ bad: true, msg: `The prompt uses {{${u}}} but no argument declares it — Run a job won't offer that field, and it renders empty.` });
+  for (const n of names) if (!used.includes(n))
+    out.push({ bad: false, msg: `Argument “${n}” is declared but the prompt never uses it.` });
+  const bound = (status.promptVars || []);
+  for (const v of varRefs(d.prompt)) if (!bound.includes(v))
+    out.push({ bad: true, msg: `\${${v}} is not bound. Add it to mesh.promptVars in openclaw.json, or it substitutes empty.` });
+  if (d.service && !/^[a-z][a-z0-9]*(\.[a-z0-9]+)*$/.test(d.service.trim()))
+    out.push({ bad: false, msg: `Service names are conventionally lowercase and dotted, like “code.review”.` });
+  return out;
+}
+
 function services() {
   const caps = profile.capabilities || [];
   return `
   <div class="stack">
+    ${draft ? editor() : ''}
     <div class="panel">
       <div class="panel-h"><span class="eyebrow">${caps.length} service${caps.length === 1 ? '' : 's'}</span>
-        <span class="note">Published to <code>${esc(status.meshRoot)}/registry/${esc(status.agentId)}/profile</code></span></div>
+        <div class="rowflex">
+          <span class="note">Published to <code>${esc(status.meshRoot)}/registry/${esc(status.agentId)}/profile</code></span>
+          ${draft ? '' : `<button class="btn small" data-new="1">New service</button>`}
+        </div></div>
       <div class="panel-b">
-        ${caps.map((c) => `
+        ${caps.map((c) => {
+          const missing = placeholders(c.prompt || '').filter((n) => !(c.requestSchema || {})[n]);
+          const unbound = varRefs(c.prompt || '').filter((v) => !(status.promptVars || []).includes(v));
+          return `
           <div class="cap">
             <div class="rowflex" style="justify-content:space-between">
               <span class="cap-n">${esc(c.service)}</span>
               <div class="rowflex">
                 ${c.avgLatency ? `<span class="chip plain">${esc(c.avgLatency)}</span>` : ''}
+                ${missing.length ? `<span class="chip err" title="Prompt uses {{${esc(missing.join(', '))}}} with no matching argument">${missing.length} undeclared</span>` : ''}
+                ${unbound.length ? `<span class="chip err" title="Unbound: ${esc(unbound.join(', '))}">${unbound.length} unbound var</span>` : ''}
                 <button class="btn quiet small" data-use="${esc(c.service)}">Run</button>
+                <button class="btn quiet small" data-edit="${esc(c.service)}">Edit</button>
                 <button class="btn danger small" data-del="${esc(c.service)}">Remove</button>
               </div>
             </div>
             <p class="cap-d">${esc(c.description || '')}</p>
-            <details><summary>Request schema</summary>
-              <pre class="payload">${esc(JSON.stringify(c.requestSchema || {}, null, 2))}</pre></details>
-          </div>`).join('') || `<div class="empty"><b>No services</b>Add one below.</div>`}
-      </div>
-    </div>
-    <div class="panel">
-      <div class="panel-h"><span class="eyebrow">Add a service</span></div>
-      <div class="panel-b">
-        <div class="field"><label for="a-name">Name</label>
-          <input id="a-name" class="mono" placeholder="db.schema_review"></div>
-        <div class="field"><label for="a-desc">What it does</label>
-          <input id="a-desc" placeholder="Review a migration for lock risk and index coverage"></div>
-        <div class="field"><label for="a-prompt">Prompt template</label>
-          <textarea id="a-prompt" spellcheck="false">Review migration {{migration}} in {{repo}}.</textarea>
-          <p class="note" style="margin-top:5px"><code>{{name}}</code> is filled from the job arguments.
-            <code>${'$'}{VAR}</code> is filled from <code>mesh.promptVars</code> or the environment — use it for
-            deployment values so they never reach the published catalog.</p></div>
-        <div class="rowflex" style="margin-top:14px"><button class="btn" id="a-go">Add service</button></div>
+            <div class="rowflex" style="gap:6px">
+              ${Object.keys(c.requestSchema || {}).map((k) => `<span class="chip plain">${esc(k)}</span>`).join('') || '<span class="note">no arguments</span>'}
+            </div>
+            <details style="margin-top:9px"><summary>Prompt</summary>
+              <pre class="payload">${esc(c.prompt || '(none)')}</pre></details>
+          </div>`; }).join('') || `<div class="empty"><b>No services yet</b>A capability is a name, a prompt, and the arguments it takes.</div>`}
       </div>
     </div>
   </div>`;
 }
 
-function sessionView() {
-  const s = status.session || {};
-  const op = status.ownerPolicy || profile.ownerPolicy || {};
+function editor() {
+  const d = draft, issues = lint(d);
   return `
-  <div class="stack">
-    ${s.durable === false ? `<div class="warn-bar"><span>⚠</span><div><b>Durability degraded.</b> A client id collision forced a disambiguated session. Jobs published while this agent is offline are no longer queued.</div></div>` : ''}
-    <div class="panel">
-      <div class="panel-h"><span class="eyebrow">Broker session</span></div>
-      <div class="panel-b"><dl class="kv">
-        <dt>Client id</dt><dd>${esc(s.clientId || '—')}</dd>
-        <dt>Protocol</dt><dd>MQTT ${s.mqttVersion === 5 ? '5' : '3.1.1'} · mesh ${esc(status.protocolVersion || '—')}</dd>
-        <dt>Durable session</dt><dd>${s.durable === false ? 'no — jobs lost while offline' : 'yes — offline jobs are queued'}</dd>
-        <dt>Keepalive</dt><dd>${esc(s.keepalive || '—')}s</dd>
-        <dt>Uptime</dt><dd>${dur(status.uptimeMs)} · ${status.reconnects} reconnect${status.reconnects === 1 ? '' : 's'}</dd>
-        <dt>Last error</dt><dd>${status.lastError ? esc(status.lastError) : 'none'}</dd>
-      </dl></div>
-    </div>
-    <div class="panel">
-      <div class="panel-h"><span class="eyebrow">Owner policy</span></div>
-      <div class="panel-b">
-        <dl class="kv">
-          <dt>requestedBy</dt><dd>${op.required ? 'required — unowned jobs are rejected' : 'optional — unowned jobs go to “public”'}</dd>
-          <dt>Verified</dt><dd>${op.verified ? 'yes — checked against broker identity' : 'no — self-declared, not authenticated'}</dd>
-        </dl>
-        ${!op.verified ? `<p class="note" style="margin-top:11px">Owner scoping is a convention here: anyone with broker credentials can claim any owner. Enable <code>mesh.verifyOwner</code> once the broker injects <code>client_username</code>.</p>` : ''}
+  <div class="panel">
+    <div class="panel-h"><span class="eyebrow">${d.editing ? 'Edit ' + esc(d.editing) : 'New service'}</span>
+      <button class="btn quiet small" data-cancel-edit="1">Cancel</button></div>
+    <div class="panel-b">
+      <div class="rowflex" style="gap:12px;align-items:flex-start">
+        <div class="field" style="flex:2;min-width:190px"><label for="e-name">Name</label>
+          <input id="e-name" class="mono" placeholder="db.schema_review" value="${esc(d.service)}"${d.editing ? ' disabled' : ''}>
+          ${d.editing ? '<p class="note" style="margin-top:5px">Renaming would orphan callers — remove and re-add instead.</p>' : ''}</div>
+        <div class="field" style="flex:1;min-width:120px"><label for="e-lat">Typical time</label>
+          <input id="e-lat" placeholder="2-4 min" value="${esc(d.avgLatency)}"></div>
       </div>
-    </div>
-    <div class="panel">
-      <div class="panel-h"><span class="eyebrow">Subscribe</span></div>
-      <div class="panel-b stack" style="gap:6px">
-        ${[['your jobs', `${status.meshRoot}/jobs/<your-name>/#`],
-           ['results only', `${status.meshRoot}/jobs/<your-name>/+/result`],
-           ['dispatch', `${status.meshRoot}/commands/${status.agentId}/invoke`],
-           ['catalog', `${status.meshRoot}/registry/${status.agentId}/profile`]]
-          .map(([k, t]) => `<div class="topic"><b>${esc(k)}</b><span>${esc(t)}</span>
-            <button class="btn quiet small" style="margin-left:auto" data-copy="${esc(t)}">Copy</button></div>`).join('')}
+      <div class="field"><label for="e-desc">What it does</label>
+        <input id="e-desc" placeholder="Review a migration for lock risk and index coverage" value="${esc(d.description)}"></div>
+
+      <div class="field"><label>Arguments</label>
+        <p class="note" style="margin:-2px 0 8px">Each becomes a <code>{{name}}</code> the prompt can use, and a field in Run a job.</p>
+        ${d.fields.map((f, i) => `
+          <div class="rowflex" style="gap:7px;margin-bottom:6px">
+            <input class="mono" style="flex:1;min-width:110px" data-f="name" data-i="${i}" placeholder="repo" value="${esc(f.name)}">
+            <select style="width:auto" data-f="type" data-i="${i}">
+              ${['string', 'number', 'boolean', 'object'].map((t) => `<option${f.type === t ? ' selected' : ''}>${t}</option>`).join('')}
+            </select>
+            <input style="flex:2;min-width:130px" data-f="note" data-i="${i}" placeholder="owner/name" value="${esc(f.note)}">
+            <label style="display:flex;align-items:center;gap:5px;margin:0;font-weight:500;white-space:nowrap">
+              <input type="checkbox" style="width:auto" data-f="optional" data-i="${i}"${f.optional ? ' checked' : ''}> optional</label>
+            <button class="btn quiet small" data-rmfield="${i}">Remove</button>
+          </div>`).join('')}
+        <button class="btn quiet small" data-addfield="1">Add argument</button></div>
+
+      <div class="field"><label for="e-prompt">Prompt</label>
+        <textarea id="e-prompt" spellcheck="false" placeholder="Review migration {{migration}} in {{repo}}.">${esc(d.prompt)}</textarea>
+        <p class="note" style="margin-top:5px"><code>{{name}}</code> comes from the arguments above.
+          <code>${'$'}{VAR}</code> comes from <code>mesh.promptVars</code>, resolved on dispatch so deployment
+          values never reach the published catalog.
+          ${(status.promptVars || []).length ? `Bound here: ${(status.promptVars || []).map((v) => `<code>${'$'}{${esc(v)}}</code>`).join(' ')}` : 'None bound in this deployment.'}</p></div>
+
+      ${issues.length ? `<div class="stack" style="gap:6px;margin-top:12px">
+        ${issues.map((i) => `<div class="warn-bar" style="${i.bad ? '' : 'background:var(--surface-2);color:var(--ink-2)'}">
+          <span>${i.bad ? '⚠' : 'ⓘ'}</span><div>${esc(i.msg)}</div></div>`).join('')}</div>` : ''}
+
+      <div class="rowflex" style="margin-top:14px">
+        <button class="btn" data-save="1"${issues.some((i) => i.bad) ? ' disabled title="Resolve the warnings above first"' : ''}>
+          ${d.editing ? 'Save changes' : 'Create service'}</button>
+        <span class="note">${d.editing ? 'Republishes the catalog immediately.' : 'Available to the mesh as soon as it is created.'}</span>
       </div>
     </div>
   </div>`;
+}
+
+function readEditor() {
+  if (!draft) return;
+  const g = (id) => $(id)?.value ?? '';
+  if (!draft.editing) draft.service = g('e-name');
+  draft.avgLatency = g('e-lat');
+  draft.description = g('e-desc');
+  draft.prompt = g('e-prompt');
+}
+
+async function saveDraft() {
+  readEditor();
+  const d = draft;
+  if (!d.service.trim()) return toast('Give the service a name');
+  if (!d.prompt.trim()) return toast('A capability needs a prompt — it is what the executor runs');
+  const body = {
+    service: d.service.trim(), description: d.description.trim(), handler: d.handler,
+    prompt: d.prompt, requestSchema: fromFields(d.fields),
+    ...(d.avgLatency.trim() ? { avgLatency: d.avgLatency.trim() } : {}),
+  };
+  const r = d.editing
+    ? await post('/config', { action: 'update_service', service: d.editing, patch: body })
+    : await post('/config', { action: 'add_service', service: body });
+  if (r.ok) { toast((d.editing ? 'Saved ' : 'Created ') + d.service); draft = null; await loadAll(); }
+  else toast(r.data.error || 'Could not save it');
 }
 
 /* ── actions ── */
@@ -639,6 +720,17 @@ document.addEventListener('click', async (e) => {
     loadAll();
   }
   else if (d.use) { page = 'run'; render(); const s = $('r-svc'); if (s) { s.value = d.use; fillArgs(); } }
+  else if (d.new) { draft = BLANK(); render(); $('e-name')?.focus(); }
+  else if (d.edit) {
+    const c = (profile.capabilities || []).find((x) => x.service === d.edit);
+    if (c) { draft = { service: c.service, description: c.description || '', avgLatency: c.avgLatency || '',
+                       handler: c.handler || 'session', prompt: c.prompt || '',
+                       fields: toFields(c.requestSchema), editing: c.service }; render(); }
+  }
+  else if (d.cancelEdit) { draft = null; render(); }
+  else if (d.addfield) { readEditor(); draft.fields.push({ name: '', type: 'string', optional: false, note: '' }); render(); }
+  else if (d.rmfield) { readEditor(); draft.fields.splice(Number(d.rmfield), 1); render(); }
+  else if (d.save) saveDraft();
   else if (d.del) {
     if (!confirm(`Remove ${d.del}?\n\nIt disappears from the published catalog immediately.`)) return;
     const r = await post('/config', { action: 'remove_service', service: d.del });
@@ -646,16 +738,6 @@ document.addEventListener('click', async (e) => {
     loadAll();
   }
   else if (t.id === 'r-go') dispatch();
-  else if (t.id === 'a-go') {
-    const name = $('a-name').value.trim();
-    if (!name) return toast('Give the service a name');
-    const r = await post('/config', {
-      action: 'add_service',
-      service: { service: name, description: $('a-desc').value, handler: 'session', prompt: $('a-prompt').value },
-    });
-    toast(r.ok ? 'Added ' + name : (r.data.error || 'Could not add it'));
-    loadAll();
-  }
   else if (t.id === 'themeBtn') {
     const now = document.documentElement.getAttribute('data-theme')
       || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
@@ -665,10 +747,32 @@ document.addEventListener('click', async (e) => {
   }
 });
 
+// Re-rendering on every keystroke would steal the caret, so restore it. Only
+// the prompt and the argument rows re-render live — they drive the linter.
+function keepCaret(id, fn) {
+  const el = $(id), pos = el?.selectionStart;
+  fn();
+  const next = $(id);
+  if (next) { next.focus(); if (pos != null && next.setSelectionRange) try { next.setSelectionRange(pos, pos); } catch {} }
+}
 document.addEventListener('input', (e) => {
-  if (e.target.id === 'f-text') { filter.text = e.target.value; const p = e.target.selectionStart; render(); const n = $('f-text'); if (n) { n.focus(); n.setSelectionRange(p, p); } }
-  if (e.target.id === 'f-state') { filter.state = e.target.value; render(); }
-  if (e.target.id === 'r-svc') fillArgs();
+  const t = e.target;
+  if (t.id === 'f-text') { filter.text = t.value; keepCaret('f-text', render); return; }
+  if (t.id === 'f-state') { filter.state = t.value; render(); return; }
+  if (t.id === 'r-svc') { fillArgs(); return; }
+  if (!draft) return;
+  if (t.id === 'e-prompt') { draft.prompt = t.value; keepCaret('e-prompt', render); return; }
+  if (t.dataset.f) {
+    const f = draft.fields[Number(t.dataset.i)];
+    if (!f) return;
+    f[t.dataset.f] = t.type === 'checkbox' ? t.checked : t.value;
+    if (t.dataset.f === 'name') {
+      const sel = `[data-f="name"][data-i="${t.dataset.i}"]`;
+      const pos = t.selectionStart; render();
+      const n = document.querySelector(sel);
+      if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch {} }
+    } else if (t.dataset.f === 'optional' || t.dataset.f === 'type') render();
+  }
 });
 document.addEventListener('keydown', (e) => {
   if (e.key === '/' && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) {
