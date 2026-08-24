@@ -333,9 +333,39 @@ async function loadAll() {
     setLink(status.connected);
     render();
   } catch {
-    if (needsAuth) { renderSignIn(); return; }
+    if (needsAuth) { enterSignIn(); return; }
     setLink(false, 'api unreachable');
   }
+}
+
+/* Unauthenticated: shut down polling and the stream first. Both re-render, and
+   a re-render while someone is typing their token wipes the field — which made
+   the form impossible to submit. The screen is drawn once and then left alone. */
+function enterSignIn() {
+  if (poll) { clearInterval(poll); poll = null; }
+  if (es) { try { es.close(); } catch {} es = null; }
+  if (!$('tok')) renderSignIn();
+  else setLink(false, 'not signed in');
+}
+
+async function submitToken() {
+  const el = $('tok');
+  const v = (el?.value || '').trim();
+  if (!v) { toast('Paste the token first'); el?.focus(); return; }
+  const btn = $('tok-go');
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+  TOKEN = v;
+  await loadAll();
+  if (needsAuth) {                      // rejected — say so, keep what was typed
+    if (btn) { btn.disabled = false; btn.textContent = 'Sign in'; }
+    const bad = $('tok-err');
+    if (bad) bad.textContent = 'That token was not accepted. Check web.auth in your plugin config.';
+    $('tok')?.focus();
+    return;
+  }
+  try { localStorage.setItem('mesh-token', v); } catch {}
+  stream();
+  toast('Signed in');
 }
 
 function renderSignIn() {
@@ -350,7 +380,8 @@ function renderSignIn() {
           plugin config, under <code>mqtt-bridge → config → web</code>.</p>
         <div class="field"><label for="tok">Panel token</label>
           <input id="tok" type="password" class="mono" autocomplete="current-password"
-                 placeholder="paste the token" autofocus></div>
+                 placeholder="paste the token" autofocus>
+          <p class="note" id="tok-err" style="margin-top:6px;color:var(--err)"></p></div>
         <div class="rowflex"><button class="btn" id="tok-go">Sign in</button>
           <span class="note">Stored in this browser — you will not need it again on this machine.</span></div>
       </div>
@@ -375,6 +406,7 @@ function flashRx() {
 /* ── live stream ── */
 let es = null, poll = null;
 function stream() {
+  if (needsAuth) return;                 // nothing to stream until signed in
   try { es = new EventSource(q(API + '/events')); } catch { return startPoll(); }
   es.addEventListener('status', (e) => {
     status = Object.assign(status || {}, JSON.parse(e.data));
@@ -397,7 +429,11 @@ function stream() {
     else setLink(false, 'reconnecting');
   };
 }
-function startPoll() { if (!poll) { poll = setInterval(loadAll, 3000); setLink(false, 'polling'); } }
+function startPoll() {
+  if (needsAuth || poll) return;         // polling a 401 just clears the form
+  poll = setInterval(loadAll, 3000);
+  setLink(false, 'polling');
+}
 
 /* ── views ── */
 function render() {
@@ -904,12 +940,7 @@ document.addEventListener('click', async (e) => {
     if (!confirm(`Delete ${d.delvar}?\n\nPrompts referencing it will substitute empty on the next job.`)) return;
     saveVar(d.delvar, '', true);
   }
-  else if (t.id === 'tok-go') {
-    const v = $('tok').value.trim();
-    if (!v) return toast('Paste the token first');
-    TOKEN = v; try { localStorage.setItem('mesh-token', v); } catch {}
-    loadAll().then(() => { if (!needsAuth) { stream(); toast('Signed in'); } });
-  }
+  else if (t.id === 'tok-go') submitToken();
   else if (t.id === 'signOut') signOut();
   else if (t.id === 'r-go') dispatch();
   else if (t.id === 'themeBtn') {
@@ -949,6 +980,7 @@ document.addEventListener('input', (e) => {
   }
 });
 document.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && e.target.id === 'tok') { e.preventDefault(); submitToken(); return; }
   if (e.key === '/' && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) {
     e.preventDefault(); page = 'jobs'; render(); $('f-text')?.focus();
   }
@@ -956,7 +988,10 @@ document.addEventListener('keydown', (e) => {
 
 try { const saved = localStorage.getItem('mesh-theme'); if (saved) document.documentElement.setAttribute('data-theme', saved); } catch {}
 loadAll().then(stream);
-setInterval(() => { if (page === 'overview' || page === 'jobs') render(); }, 15000);  // keeps relative times honest
+setInterval(() => {
+  if (needsAuth || !profile || !status) return;       // never redraw over the sign-in form
+  if (page === 'overview' || page === 'jobs') render();
+}, 15000);                                            // keeps relative times honest
 </script>
 </body>
 </html>
