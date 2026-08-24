@@ -1,187 +1,229 @@
 {
-  "active": [],
+  "active": [
+    "rev-117"
+  ],
   "history": [
     {
+      "jobId": "rev-118",
+      "service": "code.review",
       "state": "done",
-      "createdAt": 1787593131258,
+      "owner": "alice",
+      "requestedBy": "alice",
+      "createdAt": 1759999760000,
+      "updatedAt": 1759999952000,
       "events": [
         {
-          "type": "duplicate",
-          "ts": 1787593131258
-        }
-      ],
-      "updatedAt": 1787593131258,
-      "jobId": "proto-test-2",
-      "result": {
-        "type": "duplicate",
-        "note": "jobId already active",
-        "jobId": "proto-test-2",
-        "owner": "testuser",
-        "ts": "2026-08-19T09:17:34.343Z"
-      },
-      "requestedBy": "alice",
-      "owner": "alice",
-      "finishedAt": 1787593131258
-    },
-    {
-      "state": "done",
-      "createdAt": 1787593131257,
-      "events": [
+          "type": "accepted",
+          "ts": 1759999760000,
+          "note": "code.review"
+        },
         {
-          "type": "duplicate",
-          "ts": 1787593131257
-        }
-      ],
-      "updatedAt": 1787593131257,
-      "jobId": "proto-test-1",
-      "result": {
-        "type": "duplicate",
-        "note": "jobId already active",
-        "jobId": "proto-test-1",
-        "owner": "testuser",
-        "ts": "2026-08-19T09:16:00.102Z"
-      },
-      "requestedBy": "alice",
-      "owner": "alice",
-      "finishedAt": 1787593131257
-    },
-    {
-      "state": "error",
-      "createdAt": 1787593131187,
-      "events": [
+          "type": "started",
+          "ts": 1759999760900,
+          "note": "push dispatch"
+        },
         {
-          "type": "error",
-          "note": "unknown service \"__probe__\"",
-          "ts": 1787593131187
-        }
-      ],
-      "updatedAt": 1787593131187,
-      "jobId": "job-mt7ie2c6",
-      "result": {
-        "type": "error",
-        "error": "unknown service \"__probe__\"",
-        "jobId": "job-mt7ie2c6",
-        "owner": "probe",
-        "ts": "2026-08-24T17:27:30.391Z"
-      },
-      "requestedBy": "alice",
-      "owner": "alice",
-      "finishedAt": 1787593131187
-    },
-    {
-      "state": "error",
-      "createdAt": 1787593131186,
-      "events": [
+          "type": "analyzing",
+          "ts": 1759999801900,
+          "note": "fetching diff"
+        },
         {
-          "type": "error",
-          "note": "unknown service \"__nonexistent__\"",
-          "ts": 1787593131186
-        }
-      ],
-      "updatedAt": 1787593131186,
-      "jobId": "job-mt792ixu",
-      "result": {
-        "type": "error",
-        "error": "unknown service \"__nonexistent__\"",
-        "jobId": "job-mt792ixu",
-        "owner": "probe",
-        "ts": "2026-08-24T13:06:35.491Z"
-      },
-      "requestedBy": "alice",
-      "owner": "alice",
-      "finishedAt": 1787593131186
-    },
-    {
-      "state": "done",
-      "createdAt": 1787593131184,
-      "events": [
+          "type": "analyzing",
+          "ts": 1759999889900,
+          "note": "diff-review-complete"
+        },
+        {
+          "type": "result-ready",
+          "ts": 1759999950900,
+          "note": "verdict APPROVE"
+        },
         {
           "type": "review",
-          "ts": 1787593131184
+          "ts": 1759999952000
         }
       ],
-      "updatedAt": 1787593131184,
-      "jobId": "rev-026",
+      "finishedAt": 1759999952000,
       "result": {
         "type": "review",
-        "jobId": "rev-026",
-        "repo": "acme/web-app",
-        "pr": 2961,
-        "prTitle": "feat: control Atlas search pinning randomization via remote config",
-        "author": "ragaa07",
-        "prState": "MERGED",
         "verdict": "APPROVE",
-        "summary": "Atlas search pinning-shuffle A/B kill-switch (atlas_search_pinning_shuffle_enabled, default true). Gate derivation verified against SearchCategoryListingsInteractor routing (same flag, no other legacy fallback); OFF-branch null parity and purifyNormalListings dedup consistency verified against ForSaleShuffler source. No blocking issues.",
+        "pr": 412,
+        "repo": "acme/web-app",
+        "summary": "Adds a feature flag around the new checkout path; flag defaults off and the legacy branch is untouched.",
         "findings": [
-          {
-            "n": 1,
-            "severity": "minor",
-            "title": "Gate/route timing skew during RC flips",
-            "detail": "isPinningShuffleEnabled snapshots isNewListingsSearchApiEnabled() once per decorator (lazy), interactor re-reads it per loadPage; flag flip mid-screen can make variant and serving backend disagree transiently."
-          },
-          {
-            "n": 2,
-            "severity": "info",
-            "title": "Enum rename verified safe",
-            "detail": "NEW_LISTINGS_SEARCH_API -> ATLAS_SEARCH_ENABLED keeps keyValue enable_new_search_api; zero stale references repo-wide."
-          },
-          {
-            "n": 3,
-            "severity": "info",
-            "title": "Null/empty parity in OFF branches",
-            "detail": "ForSaleShuffler returns emptyList for null/empty buckets; .orEmpty() pass-throughs are behavior-identical for empty inputs."
-          },
-          {
-            "n": 4,
-            "severity": "info",
-            "title": "Dedup consistency preserved",
-            "detail": "pinnedShuffled StateFlows assigned in both branches; purifyNormalListings strips exactly the displayed pinned items in the OFF arm."
-          },
-          {
-            "n": 5,
-            "severity": "info",
-            "title": "Default polarity + experiment checklist",
-            "detail": "Default true = unreachable RC keeps today's ranking. Pre-experiment: create RC key, enable_new_search_api=true, add key to tracked_experiments."
-          },
-          {
-            "n": 6,
-            "severity": "info",
-            "title": "Duplicated pass-through branches",
-            "detail": "Three near-identical if(isPinningShuffleEnabled) branches could fold into the shuffler layer; single-gate design is defensible as-is."
-          }
-        ],
-        "stats": {
-          "additions": 58,
-          "deletions": 12,
-          "files": 6
-        },
-        "reviewFile": "reviews/pr-2961-review.md",
-        "reviewedAt": "2026-08-24T16:47:59+00:00"
+          "No blocking issues.",
+          "Consider a follow-up to delete the legacy branch once the flag is fully rolled out."
+        ]
       },
-      "owner": "alice",
-      "finishedAt": 1787593131184,
-      "requestedBy": "alice"
+      "lastEvent": "review"
     },
     {
-      "state": "done",
-      "createdAt": 1787593131182,
+      "jobId": "rev-117",
+      "service": "repo.investigate",
+      "state": "started",
+      "owner": "alice",
+      "requestedBy": "alice",
+      "createdAt": 1759999910000,
+      "updatedAt": 1760000000000,
       "events": [
         {
-          "type": "already_reviewed",
-          "ts": 1787593131182
+          "type": "accepted",
+          "ts": 1759999910000,
+          "note": "repo.investigate"
+        },
+        {
+          "type": "started",
+          "ts": 1759999910800,
+          "note": "push dispatch"
+        },
+        {
+          "type": "analyzing",
+          "ts": 1759999957800,
+          "note": "walking git history"
         }
       ],
-      "updatedAt": 1787593131182,
-      "jobId": "rev-025",
-      "result": {
-        "type": "already_reviewed",
-        "pr": 2960,
-        "repo": "acme/web-app",
-        "note": "review published and retained earlier this session; verdict COMMENT, 6 findings"
-      },
+      "lastEvent": "analyzing"
+    },
+    {
+      "jobId": "rev-116",
+      "service": "build.diagnose",
+      "state": "done",
       "owner": "alice",
-      "finishedAt": 1787593131182,
-      "requestedBy": "alice"
+      "requestedBy": "alice",
+      "createdAt": 1759998680000,
+      "updatedAt": 1759998776000,
+      "events": [
+        {
+          "type": "accepted",
+          "ts": 1759998680000,
+          "note": "build.diagnose"
+        },
+        {
+          "type": "started",
+          "ts": 1759998680700
+        },
+        {
+          "type": "analyzing",
+          "ts": 1759998718700,
+          "note": "reading failed run logs"
+        },
+        {
+          "type": "result-ready",
+          "ts": 1759998774700
+        }
+      ],
+      "finishedAt": 1759998776000,
+      "result": {
+        "type": "diagnosis",
+        "classification": "flaky",
+        "confidence": "high",
+        "culprit": "CheckoutFlowTest#appliesOfferOnce",
+        "recommendation": "rerun \u2014 the failure does not reproduce and the assertion depends on wall-clock ordering"
+      },
+      "lastEvent": "result-ready"
+    },
+    {
+      "jobId": "rev-115",
+      "service": "release.notes",
+      "state": "done",
+      "owner": "alice",
+      "requestedBy": "alice",
+      "createdAt": 1759997240000,
+      "updatedAt": 1759997660000,
+      "events": [
+        {
+          "type": "accepted",
+          "ts": 1759997240000,
+          "note": "release.notes"
+        },
+        {
+          "type": "started",
+          "ts": 1759997240900
+        },
+        {
+          "type": "requeued",
+          "ts": 1759997540900,
+          "note": "run settled without publishing a result \u2014 re-dispatching executor (attempt 1/2)"
+        },
+        {
+          "type": "started",
+          "ts": 1759997542100,
+          "note": "watchdog re-dispatch"
+        },
+        {
+          "type": "result-ready",
+          "ts": 1759997660100
+        }
+      ],
+      "finishedAt": 1759997660000,
+      "result": {
+        "type": "release_notes",
+        "markdown": "## Features\n- Checkout flag\n\n## Fixes\n- Offer sheet dismissal",
+        "riskFlags": []
+      },
+      "lastEvent": "result-ready"
+    },
+    {
+      "jobId": "rev-114",
+      "service": "code.review",
+      "state": "error",
+      "owner": "alice",
+      "requestedBy": "alice",
+      "createdAt": 1759995920000,
+      "updatedAt": 1759997780000,
+      "events": [
+        {
+          "type": "accepted",
+          "ts": 1759995920000,
+          "note": "code.review"
+        },
+        {
+          "type": "started",
+          "ts": 1759995920800
+        },
+        {
+          "type": "timeout",
+          "ts": 1759997720800,
+          "note": "executor never produced a result"
+        }
+      ],
+      "finishedAt": 1759997780000,
+      "result": {
+        "type": "error",
+        "error": "execution not confirmed after 2 re-injections"
+      },
+      "lastEvent": "timeout"
+    },
+    {
+      "jobId": "rev-113",
+      "service": "docs.summarize",
+      "state": "cancelled",
+      "owner": "alice",
+      "requestedBy": "alice",
+      "createdAt": 1759994300000,
+      "updatedAt": 1759994342000,
+      "events": [
+        {
+          "type": "accepted",
+          "ts": 1759994300000,
+          "note": "docs.summarize"
+        },
+        {
+          "type": "started",
+          "ts": 1759994300700
+        },
+        {
+          "type": "cancel_acknowledged",
+          "ts": 1759994341700,
+          "note": "by alice"
+        }
+      ],
+      "finishedAt": 1759994342000,
+      "result": {
+        "type": "cancelled",
+        "note": "cancelled by request",
+        "requestedBy": "alice"
+      },
+      "lastEvent": "cancel_acknowledged"
     }
   ]
 }

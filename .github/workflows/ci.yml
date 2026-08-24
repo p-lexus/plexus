@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # Builds first, then imports the built output — so a missing .js extension
+      # in an ESM import fails here rather than at gateway start.
+      - name: Test
+        run: npm test
+
+      - name: Check fixtures carry no real deployment data
+        run: |
+          if grep -rniE '(U0[0-9A-Z]{8,})|amazonaws\.com|\.elb\.' test/fixtures/; then
+            echo "::error::fixtures contain what looks like real deployment data"
+            exit 1
+          fi
+          echo "fixtures clean"

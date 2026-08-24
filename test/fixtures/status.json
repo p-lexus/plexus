@@ -1,16 +1,18 @@
 {
   "connected": true,
-  "uptimeMs": 412589,
-  "rx": 39,
-  "tx": 0,
-  "reconnects": 3,
-  "lastError": "connack timeout",
-  "activeJobs": [],
+  "uptimeMs": 15120000,
+  "rx": 1284,
+  "tx": 96,
+  "reconnects": 0,
+  "lastError": "",
+  "activeJobs": [
+    "rev-117"
+  ],
   "agentId": "agent",
   "meshRoot": "agents",
   "protocolVersion": "1.2",
   "session": {
-    "clientId": "openclaw-mqtt-bridge-example",
+    "clientId": "openclaw-mqtt-bridge-9f3c1a77b2",
     "mqttVersion": 4,
     "keepalive": 30,
     "durable": true

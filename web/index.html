@@ -814,13 +814,22 @@ function sessionView() {
    Values are write-only from here: the API returns names, sources and a masked
    hint, never a value. Managing them needs web.auth configured — an open
    loopback endpoint is not somewhere secrets belong. */
-let secrets = null;      // null = not loaded, {authRequired} or {vars}
+let secrets = null;          // null = not loaded, {authRequired} or {vars}
+let secretsLoading = false;
 
-async function loadSecrets() {
+/* Guarded, because render() calls this and this calls render(): without the
+   guards the Variables tab fetches /api/secrets in an unbounded loop. */
+async function loadSecrets(force) {
+  if (secretsLoading) return;
+  if (secrets && !force) return;
+  secretsLoading = true;
   try {
     const r = await fetch(q(API + '/secrets'), { headers: TOKEN ? { Authorization: 'Bearer ' + TOKEN } : {} });
     secrets = await r.json();
-  } catch { secrets = { error: 'Could not reach the bridge.' }; }
+  } catch {
+    secrets = { error: 'Could not reach the bridge.' };
+  }
+  secretsLoading = false;
   if (page === 'vars') render();
 }
 
@@ -909,7 +918,7 @@ function varsView() {
 
 async function saveVar(name, value, remove) {
   const r = await post('/secrets', remove ? { name, delete: true } : { name, value });
-  if (r.ok) { toast(remove ? `Removed ${name}` : `Saved ${name}`); await loadSecrets(); await loadAll(); }
+  if (r.ok) { toast(remove ? `Removed ${name}` : `Saved ${name}`); await loadSecrets(true); await loadAll(); }
   else toast(r.data.error || 'Could not save it');
 }
 
