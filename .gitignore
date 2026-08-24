@@ -20,3 +20,6 @@ CLAUDE.md
 
 # deployment-local capability catalog (copy from services.example.json)
 services.json
+
+# panel-managed deployment variables (0600, never committed)
+mesh.local.json

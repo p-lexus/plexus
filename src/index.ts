@@ -213,7 +213,57 @@ export default definePluginEntry({
     const requireOwner = cfg.mesh?.requireOwner !== false; // default true
     const verifyOwner = cfg.mesh?.verifyOwner === true;    // default false
     const MAX_JOB_DURATION_MS = cfg.mesh?.maxJobDurationMs ?? 30 * 60_000;
-    const promptVars = (cfg.mesh?.promptVars ?? {}) as Record<string, string>;
+    const configVars = (cfg.mesh?.promptVars ?? {}) as Record<string, string>;
+
+    // ── Deployment secrets ─────────────────────────────
+    //
+    // Panel-managed values live in their own file rather than openclaw.json:
+    // that file belongs to the gateway, is JSONC with comments and trailing
+    // commas, and rewriting it programmatically would destroy formatting the
+    // operator wrote by hand. This one is ours, 0600, and gitignored.
+    //
+    // Resolution order for ${VAR}: openclaw.json wins (config-as-code is the
+    // operator's explicit intent), then this file, then the environment.
+    const secretsFile = path.join(pluginDir, "mesh.local.json");
+    let localVars: Record<string, string> = {};
+
+    function readLocalVars(): Record<string, string> {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(secretsFile, "utf8"));
+        const vars = parsed?.promptVars;
+        return vars && typeof vars === "object" ? vars as Record<string, string> : {};
+      } catch { return {}; }   // absent is the normal case, not an error
+    }
+    function writeLocalVars(vars: Record<string, string>): string | null {
+      try {
+        // Written 0600 and replaced atomically, so a crash mid-write cannot
+        // leave a half-file that silently drops every variable.
+        const tmp = `${secretsFile}.tmp`;
+        fs.writeFileSync(tmp, JSON.stringify({ promptVars: vars }, null, 2) + "\n", { mode: 0o600 });
+        fs.renameSync(tmp, secretsFile);
+        try { fs.chmodSync(secretsFile, 0o600); } catch { /* best effort on odd filesystems */ }
+        localVars = vars;
+        return null;
+      } catch (e: any) {
+        // Never include values in an error string — this reaches logs.
+        logger.error(`mqtt-bridge: writing ${path.basename(secretsFile)} failed: ${e.code ?? e.message}`);
+        return `could not write ${path.basename(secretsFile)}`;
+      }
+    }
+    localVars = readLocalVars();
+    if (Object.keys(localVars).length) {
+      logger.info(`mqtt-bridge: ${Object.keys(localVars).length} local prompt variable(s) loaded`);
+    }
+
+    /** Effective value, by precedence. Values never leave this process. */
+    const varValue = (k: string): string | undefined =>
+      configVars[k] ?? localVars[k] ?? process.env[k];
+    /** Where a variable resolves from — safe to send to the panel. */
+    const varSource = (k: string): "config" | "local" | "env" | "unset" =>
+      k in configVars ? "config" : k in localVars ? "local" : process.env[k] !== undefined ? "env" : "unset";
+    const knownVarNames = () => [...new Set([
+      ...Object.keys(configVars), ...Object.keys(localVars),
+    ])].sort();
     const topics = {
       profile: `${meshRoot}/registry/${agentId}/profile`,
       status: `${meshRoot}/registry/${agentId}/status`,
@@ -333,9 +383,11 @@ export default definePluginEntry({
         agentId, meshRoot, protocolVersion: PROTOCOL_VERSION,
         session: { ...session },
         ownerPolicy: { required: requireOwner, verified: verifyOwner },
-        // Key names only — the panel flags unbound ${VAR} references, and the
-        // values are deployment secrets that must never reach a browser.
-        promptVars: Object.keys(promptVars).sort(),
+        // Names and SOURCES only — the panel flags unbound ${VAR} references and
+        // shows where each resolves from. Values are deployment secrets and
+        // never reach a browser.
+        promptVars: knownVarNames().map((k) => ({ name: k, source: varSource(k) })),
+        secretsAuth: Boolean(webAuth),
       };
     }
 
@@ -453,10 +505,10 @@ export default definePluginEntry({
       s.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_m, k: string) => {
         // Plugin config first, environment second. Config is versioned and
         // survives service-env regeneration; env stays available for secrets.
-        const v = promptVars[k] ?? process.env[k];
+        const v = varValue(k);
         if (v === undefined) {
           logger.warn(`mqtt-bridge: prompt references unset variable ${k} — substituted empty ` +
-                      `(set mesh.promptVars.${k} in plugin config, or export ${k})`);
+                      `(set it in the panel, in mesh.promptVars, or export ${k})`);
           return "";
         }
         return String(v);
@@ -797,10 +849,38 @@ export default definePluginEntry({
     /** web.auth was previously declared but never enforced — a silent no-op. */
     function authorized(req: IncomingMessage, url: URL): boolean {
       if (!webAuth) return true;
+      return hasToken(req, url);
+    }
+    function hasToken(req: IncomingMessage, url: URL): boolean {
+      if (!webAuth) return false;
       const header = String(req.headers.authorization ?? "");
       if (header === `Bearer ${webAuth}` || header === webAuth) return true;
       // EventSource cannot set headers, so allow a query token for the SSE stream.
       return url.searchParams.get("token") === webAuth;
+    }
+    /**
+     * Secret operations demand a configured token, always — unlike the rest of
+     * the panel, which may run open on loopback. Reading or writing deployment
+     * secrets over an unauthenticated endpoint is not a trade-off worth making
+     * for convenience, so this fails closed when web.auth is unset.
+     */
+    const elevated = (req: IncomingMessage, url: URL) => Boolean(webAuth) && hasToken(req, url);
+
+    /**
+     * Cross-site request forgery guard for state-changing routes.
+     *
+     * Binding to 127.0.0.1 keeps other machines out, but any page in the
+     * operator's browser can POST to localhost. A custom header cannot be set
+     * cross-origin without a preflight this server never approves, and a
+     * cross-site Origin is rejected outright, so a hostile page cannot dispatch
+     * jobs, edit the catalog or touch secrets.
+     */
+    function sameOrigin(req: IncomingMessage): boolean {
+      if (String(req.headers["x-mesh-panel"] ?? "") !== "1") return false;
+      const origin = req.headers.origin;
+      if (!origin) return true;                    // non-browser client (curl, scripts)
+      try { return new URL(String(origin)).host === String(req.headers.host ?? ""); }
+      catch { return false; }
     }
 
     const handleUiRequest = async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
@@ -853,7 +933,69 @@ export default definePluginEntry({
           });
           return true;
         }
+        // ── Deployment variables ──
+        // GET returns names, sources and a masked hint — never a value. There
+        // is deliberately no way to read a secret back out of this API: the
+        // panel only ever needs to know what is set, not what it is.
+        if (p === `${base}/api/secrets`) {
+          if (!elevated(req, url)) {
+            sendJson(res, 403, {
+              ok: false,
+              authRequired: true,
+              error: webAuth
+                ? "A valid token is required to manage deployment variables."
+                : "Set web.auth in the plugin config to manage deployment variables from the panel.",
+            });
+            return true;
+          }
+          if (req.method === "GET") {
+            sendJson(res, 200, {
+              ok: true,
+              file: path.basename(secretsFile),
+              vars: knownVarNames().map((k) => {
+                const v = varValue(k) ?? "";
+                return {
+                  name: k,
+                  source: varSource(k),
+                  // Enough to recognise a value, never enough to reconstruct it.
+                  hint: v.length > 8 ? `••••${v.slice(-4)}` : v ? "••••" : "",
+                  editable: varSource(k) !== "config",
+                };
+              }),
+            });
+            return true;
+          }
+          if (req.method === "POST") {
+            if (!sameOrigin(req)) { sendJson(res, 403, { ok: false, error: "cross-origin request refused" }); return true; }
+            const body = await readBody(req);
+            const name = String(body.name ?? "").trim();
+            if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+              sendJson(res, 400, { ok: false, error: "Name must look like AN_ENV_VAR: letters, digits and underscores, not starting with a digit." });
+              return true;
+            }
+            if (name in configVars) {
+              sendJson(res, 409, { ok: false, error: `${name} is pinned in openclaw.json (mesh.promptVars) and takes precedence. Remove it there to manage it here.` });
+              return true;
+            }
+            const next = { ...localVars };
+            if (body.delete === true) delete next[name];
+            else {
+              const value = String(body.value ?? "");
+              if (!value) { sendJson(res, 400, { ok: false, error: "Value cannot be empty. Use delete to remove it." }); return true; }
+              next[name] = value;
+            }
+            const err = writeLocalVars(next);
+            if (err) { sendJson(res, 500, { ok: false, error: err }); return true; }
+            // Logged by NAME only. The value must never reach a log line.
+            logger.info(`mqtt-bridge: prompt variable ${name} ${body.delete === true ? "removed" : "set"} via panel`);
+            sseBroadcast("status", brokerSnapshot());
+            sendJson(res, 200, { ok: true, name, removed: body.delete === true });
+            return true;
+          }
+        }
+
         if (p === `${base}/api/invoke` && req.method === "POST") {
+          if (!sameOrigin(req)) { sendJson(res, 403, { ok: false, error: "cross-origin request refused" }); return true; }
           const body = await readBody(req);
           const r = dispatchJob(
             { jobId: body.jobId, service: body.service, args: body.args, requestedBy: body.requestedBy },
@@ -865,12 +1007,14 @@ export default definePluginEntry({
           return true;
         }
         if (p === `${base}/api/cancel` && req.method === "POST") {
+          if (!sameOrigin(req)) { sendJson(res, 403, { ok: false, error: "cross-origin request refused" }); return true; }
           const body = await readBody(req);
           const ok = cancelJob(String(body.jobId ?? ""), body.requestedBy ?? "web-ui");
           sendJson(res, ok ? 200 : 404, { ok, jobId: body.jobId });
           return true;
         }
         if (p === `${base}/api/config` && req.method === "POST") {
+          if (!sameOrigin(req)) { sendJson(res, 403, { ok: false, error: "cross-origin request refused" }); return true; }
           const body = await readBody(req);
           const r = runConfigAction(body);
           sendJson(res, r.ok ? 200 : 400, r);

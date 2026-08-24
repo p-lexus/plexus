@@ -255,6 +255,7 @@ const PAGES = [
   ['run', 'Run a job'],
   ['services', 'Services'],
   ['session', 'Session'],
+  ['vars', 'Variables'],
 ];
 
 /* ── helpers ── */
@@ -295,7 +296,10 @@ async function getJSON(p) { const r = await fetch(q(API + p)); if (!r.ok) throw 
 async function post(p, body) {
   const r = await fetch(q(API + p), {
     method: 'POST',
-    headers: Object.assign({ 'Content-Type': 'application/json' }, TOKEN ? { Authorization: 'Bearer ' + TOKEN } : {}),
+    // X-Mesh-Panel proves this came from the panel: a hostile page cannot set
+    // a custom header cross-origin without a preflight the bridge never allows.
+    headers: Object.assign({ 'Content-Type': 'application/json', 'X-Mesh-Panel': '1' },
+                           TOKEN ? { Authorization: 'Bearer ' + TOKEN } : {}),
     body: JSON.stringify(body),
   });
   return { ok: r.ok, data: await r.json().catch(() => ({})) };
@@ -356,8 +360,9 @@ function render() {
     `<button data-p="${k}" aria-current="${page === k}">${label}</button>`).join('');
   const v = $('view');
   if (!profile || !status) { v.innerHTML = `<div class="panel"><div class="empty">Connecting to the bridge…</div></div>`; return; }
-  v.innerHTML = ({ overview, jobs: jobsView, run: runView, services, session: sessionView })[page]();
+  v.innerHTML = ({ overview, jobs: jobsView, run: runView, services, session: sessionView, vars: varsView })[page]();
   if (page === 'run') fillArgs();
+  if (page === 'vars') loadSecrets();
 }
 
 function overview() {
@@ -679,6 +684,110 @@ async function saveDraft() {
   else toast(r.data.error || 'Could not save it');
 }
 
+
+/* ── deployment variables ───────────────────────────────────────────────────
+   Values are write-only from here: the API returns names, sources and a masked
+   hint, never a value. Managing them needs web.auth configured — an open
+   loopback endpoint is not somewhere secrets belong. */
+let secrets = null;      // null = not loaded, {authRequired} or {vars}
+
+async function loadSecrets() {
+  try {
+    const r = await fetch(q(API + '/secrets'), { headers: TOKEN ? { Authorization: 'Bearer ' + TOKEN } : {} });
+    secrets = await r.json();
+  } catch { secrets = { error: 'Could not reach the bridge.' }; }
+  if (page === 'vars') render();
+}
+
+function varsView() {
+  const referenced = new Set();
+  for (const c of (profile.capabilities || [])) for (const v of varRefs(c.prompt || '')) referenced.add(v);
+
+  if (!secrets) return `<div class="panel"><div class="empty">Loading…</div></div>`;
+
+  if (secrets.authRequired) return `
+    <div class="stack">
+      <div class="panel">
+        <div class="panel-h"><span class="eyebrow">Deployment variables</span></div>
+        <div class="panel-b stack">
+          <div class="warn-bar"><span>⚠</span><div><b>Managing variables needs a panel token.</b>
+            ${esc(secrets.error || '')}</div></div>
+          <p class="note">These values are substituted into capability prompts, so anything that can
+            write them can change what your agent does. The panel runs open on loopback, which is fine
+            for reading job state but not for holding secrets — so this section stays locked until a
+            token exists.</p>
+          <div><div class="eyebrow" style="margin-bottom:7px">Add to openclaw.json</div>
+            <pre class="payload">"mqtt-bridge": {
+  "config": {
+    "web": { "auth": "<a long random string>" }
+  }
+}</pre></div>
+          <p class="note">Restart the gateway, then open the panel as
+            <code>${esc(location.origin)}/?token=&lt;that string&gt;</code>.
+            The token also unlocks the SSE stream, which cannot send headers.</p>
+          ${referenced.size ? `<p class="note">Prompts currently reference:
+            ${[...referenced].map((v) => `<code>${'$'}{${esc(v)}}</code>`).join(' ')}</p>` : ''}
+        </div>
+      </div>
+    </div>`;
+
+  const vars = secrets.vars || [];
+  const unbound = [...referenced].filter((v) => !vars.some((x) => x.name === v));
+
+  return `
+  <div class="stack">
+    ${unbound.length ? `<div class="warn-bar"><span>⚠</span><div>
+      <b>${unbound.length} variable${unbound.length > 1 ? 's are' : ' is'} referenced by a prompt but not set.</b>
+      They substitute empty at dispatch: ${unbound.map((v) => `<code>${'$'}{${esc(v)}}</code>`).join(' ')}</div></div>` : ''}
+
+    <div class="panel">
+      <div class="panel-h"><span class="eyebrow">${vars.length} variable${vars.length === 1 ? '' : 's'}</span>
+        <span class="note">Stored in <code>${esc(secrets.file || 'mesh.local.json')}</code>, mode 0600, never committed</span></div>
+      <div class="panel-b">
+        ${vars.map((v) => `
+          <div class="cap">
+            <div class="rowflex" style="justify-content:space-between">
+              <div class="rowflex" style="gap:9px">
+                <span class="cap-n">${'$'}{${esc(v.name)}}</span>
+                <span class="chip ${v.source === 'config' ? 'accent' : v.source === 'env' ? 'plain' : 'done'}">${esc(v.source)}</span>
+                ${referenced.has(v.name) ? '' : '<span class="chip plain" title="No prompt uses it">unused</span>'}
+              </div>
+              <div class="rowflex">
+                <span class="mono note">${esc(v.hint || 'set')}</span>
+                ${v.editable
+                  ? `<button class="btn quiet small" data-setvar="${esc(v.name)}">Replace</button>
+                     <button class="btn danger small" data-delvar="${esc(v.name)}">Delete</button>`
+                  : `<span class="note">pinned in openclaw.json</span>`}
+              </div>
+            </div>
+          </div>`).join('') || `<div class="empty"><b>No variables yet</b>Add one below and reference it from a prompt as <code>${'$'}{NAME}</code>.</div>`}
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-h"><span class="eyebrow">Set a variable</span></div>
+      <div class="panel-b">
+        <div class="rowflex" style="gap:12px;align-items:flex-start">
+          <div class="field" style="flex:1;min-width:190px"><label for="s-name">Name</label>
+            <input id="s-name" class="mono" placeholder="SLACK_REVIEW_RECIPIENTS" value="${esc(unbound[0] || '')}"></div>
+          <div class="field" style="flex:2;min-width:210px"><label for="s-val">Value</label>
+            <input id="s-val" type="password" autocomplete="new-password" placeholder="value is write-only"></div>
+        </div>
+        <div class="rowflex" style="margin-top:12px">
+          <button class="btn" data-savevar="1">Save variable</button>
+          <span class="note">Takes effect on the next job — no restart. Setting an existing name replaces it.</span>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function saveVar(name, value, remove) {
+  const r = await post('/secrets', remove ? { name, delete: true } : { name, value });
+  if (r.ok) { toast(remove ? `Removed ${name}` : `Saved ${name}`); await loadSecrets(); await loadAll(); }
+  else toast(r.data.error || 'Could not save it');
+}
+
 /* ── actions ── */
 function sampleArgs(cap) {
   const out = {};
@@ -736,6 +845,17 @@ document.addEventListener('click', async (e) => {
     const r = await post('/config', { action: 'remove_service', service: d.del });
     toast(r.ok ? 'Removed ' + d.del : (r.data.error || 'Could not remove it'));
     loadAll();
+  }
+  else if (d.savevar) {
+    const n = $('s-name').value.trim(), v = $('s-val').value;
+    if (!n) return toast('Name the variable');
+    if (!v) return toast('Give it a value');
+    saveVar(n, v, false);
+  }
+  else if (d.setvar) { const el = $('s-name'); if (el) { el.value = d.setvar; $('s-val').value = ''; $('s-val').focus(); } }
+  else if (d.delvar) {
+    if (!confirm(`Delete ${d.delvar}?\n\nPrompts referencing it will substitute empty on the next job.`)) return;
+    saveVar(d.delvar, '', true);
   }
   else if (t.id === 'r-go') dispatch();
   else if (t.id === 'themeBtn') {
