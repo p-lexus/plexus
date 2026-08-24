@@ -160,6 +160,20 @@ export default definePluginEntry({
     const GUARD = Symbol.for("mqtt-bridge.active");
     const globalAny = globalThis as Record<symbol, unknown>;
 
+    /**
+     * Operational alert that must reach the operator.
+     *
+     * Some deployments capture only info-level plugin output, so a warn/error
+     * alone can be silently dropped — an alert nobody can see is not an alert.
+     * Emitted at error level for correctness and mirrored to info so it is
+     * actually visible. Reserved for state changes an operator must act on;
+     * ordinary warnings still use logger.warn.
+     */
+    const alert = (msg: string) => {
+      logger.error(msg);
+      logger.info(`[ALERT] ${msg}`);
+    };
+
     const meshRoot = cfg.mesh?.root ?? "agents";
     const agentId = cfg.mesh?.agentId ?? "agent";
     const servicesFile = cfg.mesh?.servicesFile ?? path.join(pluginDir, "services.json");
@@ -826,11 +840,30 @@ export default definePluginEntry({
       logger.info("mqtt-bridge: web panel disabled (web.enabled=false)");
     }
 
-    // ── Singleton guard (after route so reloads keep serving) ──
-
+    // ── Reload takeover ────────────────────────────────
+    //
+    // This used to bail out when GUARD was already set, which meant a
+    // hot-reloaded plugin never took over: the gateway kept serving the OLD
+    // module and code updates silently required a full restart. Worse, the
+    // previous module's MQTT client stayed connected — so with a stable
+    // clientId two clients could briefly hold the same session and kick each
+    // other in a loop.
+    //
+    // Instead: tear the previous instance down, then take over.
+    const CLIENT_SLOT = Symbol.for("mqtt-bridge.client");
+    const DISPOSE_SLOT = Symbol.for("mqtt-bridge.dispose");
     if (globalAny[GUARD]) {
-      logger.warn("mqtt-bridge: duplicate registration — deactivating this instance");
-      return;
+      logger.info("mqtt-bridge: re-registration — disposing previous instance and taking over");
+      try { (globalAny[DISPOSE_SLOT] as (() => void) | undefined)?.(); }
+      catch (e: any) { logger.error(`mqtt-bridge: previous dispose failed: ${e.message}`); }
+    }
+    // Belt and braces: end any client the previous module left behind, even if
+    // its dispose hook was missing or threw. force=true so we do not wait on a
+    // graceful DISCONNECT that may never complete.
+    const staleClient = globalAny[CLIENT_SLOT] as mqtt.MqttClient | undefined;
+    if (staleClient) {
+      try { staleClient.end(true); } catch { /* already gone */ }
+      globalAny[CLIENT_SLOT] = undefined;
     }
     globalAny[GUARD] = true;
 
@@ -865,64 +898,46 @@ export default definePluginEntry({
       .update(`${os.hostname()}::${pluginDir}`)
       .digest("hex")
       .slice(0, 10);
-    const clientId = cfg.broker.clientId ?? `openclaw-mqtt-bridge-${stableSuffix}`;
-    logger.info(`mqtt-bridge: clientId ${clientId} (persistent session, clean:false)`);
+    const baseClientId = cfg.broker.clientId ?? `openclaw-mqtt-bridge-${stableSuffix}`;
+    // Disambiguator appended only after a collision is detected (see below).
+    // Empty in the normal case, so the session stays durable.
+    let idSuffix = "";
+    const currentClientId = () => `${baseClientId}${idSuffix}`;
+    logger.info(`mqtt-bridge: clientId ${baseClientId} (persistent session, clean:false)`);
 
     const protocolVersion = cfg.broker.protocolVersion ?? 4;
     const sessionExpirySeconds = cfg.broker.sessionExpirySeconds ?? 86_400;
-    client = mqtt.connect(cfg.broker.url, {
-      username,
-      password,
-      clientId,
-      keepalive: cfg.broker.keepalive ?? 30,
-      clean: false,
-      reconnectPeriod: 5_000,
-      connectTimeout: 15_000,
-      protocolVersion: protocolVersion as 4 | 5,
-      // MQTT 5 only: bounds how long the broker holds our queued messages,
-      // so a decommissioned deployment stops accumulating them forever.
-      ...(protocolVersion === 5
-        ? { properties: { sessionExpiryInterval: sessionExpirySeconds } }
-        : {}),
-      will: {
-        topic: topics.status,
-        payload: Buffer.from(JSON.stringify({ status: "offline", reason: "unexpected-disconnect", timestamp: new Date().toISOString() })),
-        qos: 1, retain: true,
-      },
-    });
-
     // Kick-loop detector: a stable clientId is what makes the session durable,
     // but two instances sharing one id will fight over it. Surface that clearly
     // instead of letting it look like flaky networking.
     const recentConnects: number[] = [];
 
-    client.on("connect", () => {
-      stats.connectedAt = Date.now();
-      const now = Date.now();
-      recentConnects.push(now);
-      while (recentConnects.length && now - recentConnects[0] > 60_000) recentConnects.shift();
-      if (recentConnects.length >= 5) {
-        logger.error(
-          `mqtt-bridge: ${recentConnects.length} connects in 60s — another client is probably using clientId "${clientId}". ` +
-          `Set broker.clientId to a distinct value on one of the instances.`,
-        );
-      }
-
-      client!.subscribe({
-        [topics.invoke]: { qos: 1 }, [topics.query]: { qos: 1 },
-        [topics.cancel]: { qos: 1 }, [topics.config]: { qos: 1 },
-        [`${meshRoot}/jobs/#`]: { qos: 1 }, // history for the web panel
-      }, (err) => err && logger.error(`mqtt-bridge: subscribe failed: ${err.message}`));
-
-      client!.publish(topics.status, JSON.stringify({ status: "online", timestamp: new Date().toISOString() }), { qos: 1, retain: true });
-      publishProfile();
-      logger.info(`mqtt-bridge: connected (MQTT ${protocolVersion === 5 ? "5" : "3.1.1"}) — commands + jobs-history subscribed`);
-      sseBroadcast("status", brokerSnapshot());
-    });
-    client.on("reconnect", () => { stats.reconnects++; logger.warn("mqtt-bridge: reconnecting…"); sseBroadcast("status", brokerSnapshot()); });
-    client.on("error", (err) => { stats.lastError = err.message; logger.error(`mqtt-bridge: MQTT error: ${err.message}`); sseBroadcast("status", brokerSnapshot()); });
-    client.on("offline", () => { logger.warn("mqtt-bridge: broker offline"); sseBroadcast("status", brokerSnapshot()); });
-    client.on("close", () => { logger.warn("mqtt-bridge: connection closed"); sseBroadcast("status", brokerSnapshot()); });
+    // Wrapped in a function so the collision fallback below can rebuild the
+    // connection under a different clientId without restarting the plugin.
+    function connect() {
+      client = mqtt.connect(cfg.broker!.url, {
+        username,
+        password,
+        clientId: currentClientId(),
+        keepalive: cfg.broker!.keepalive ?? 30,
+        clean: false,
+        reconnectPeriod: 5_000,
+        connectTimeout: 15_000,
+        protocolVersion: protocolVersion as 4 | 5,
+        // MQTT 5 only: bounds how long the broker holds our queued messages,
+        // so a decommissioned deployment stops accumulating them forever.
+        ...(protocolVersion === 5
+          ? { properties: { sessionExpiryInterval: sessionExpirySeconds } }
+          : {}),
+        will: {
+          topic: topics.status,
+          payload: Buffer.from(JSON.stringify({ status: "offline", reason: "unexpected-disconnect", timestamp: new Date().toISOString() })),
+          qos: 1, retain: true,
+        },
+      });
+      globalAny[CLIENT_SLOT] = client;
+      attachHandlers();
+    }
 
     // ── services.json change detection: push (fs.watch), not a poll ──
     // Watch the directory rather than the file so editor rename-on-save is caught.
@@ -956,6 +971,52 @@ export default definePluginEntry({
       } catch { /* noop */ }
     }, servicesWatcher ? 300_000 : 30_000);
     mtimeTimer.unref?.();
+
+
+    function attachHandlers() {
+    client.on("connect", () => {
+      stats.connectedAt = Date.now();
+      const now = Date.now();
+      recentConnects.push(now);
+      while (recentConnects.length && now - recentConnects[0] > 60_000) recentConnects.shift();
+      if (recentConnects.length >= 5 && !idSuffix) {
+        // Two clients are fighting over one session and kicking each other.
+        // Durability and stability are in direct conflict here, and stability
+        // wins: an agent that reconnects every few seconds processes nothing,
+        // whereas a non-durable session merely loses jobs published while it
+        // was down. Take a distinct id and say so plainly.
+        idSuffix = `-${createHash("sha1")
+          .update(`${process.pid}:${recentConnects[0]}`)
+          .digest("hex")
+          .slice(0, 4)}`;
+        recentConnects.length = 0;
+        alert(
+          `mqtt-bridge: clientId collision on "${baseClientId}" — 5+ connects in 60s means another ` +
+          `client holds this session and the broker is kicking us back and forth. Switching to ` +
+          `"${currentClientId()}" to break the loop. DURABILITY IS NOW DEGRADED: this is a fresh ` +
+          `session, so invokes published while this agent is offline will NOT be queued. Fix the ` +
+          `collision (set a distinct broker.clientId per instance) and restart to restore it.`,
+        );
+        try { client?.end(true); } catch { /* noop */ }
+        setTimeout(() => connect(), 1_000);
+        return;
+      }
+
+      client!.subscribe({
+        [topics.invoke]: { qos: 1 }, [topics.query]: { qos: 1 },
+        [topics.cancel]: { qos: 1 }, [topics.config]: { qos: 1 },
+        [`${meshRoot}/jobs/#`]: { qos: 1 }, // history for the web panel
+      }, (err) => err && logger.error(`mqtt-bridge: subscribe failed: ${err.message}`));
+
+      client!.publish(topics.status, JSON.stringify({ status: "online", timestamp: new Date().toISOString() }), { qos: 1, retain: true });
+      publishProfile();
+      logger.info(`mqtt-bridge: connected (MQTT ${protocolVersion === 5 ? "5" : "3.1.1"}) — commands + jobs-history subscribed`);
+      sseBroadcast("status", brokerSnapshot());
+    });
+    client.on("reconnect", () => { stats.reconnects++; logger.warn("mqtt-bridge: reconnecting…"); sseBroadcast("status", brokerSnapshot()); });
+    client.on("error", (err) => { stats.lastError = err.message; logger.error(`mqtt-bridge: MQTT error: ${err.message}`); sseBroadcast("status", brokerSnapshot()); });
+    client.on("offline", () => { logger.warn("mqtt-bridge: broker offline"); sseBroadcast("status", brokerSnapshot()); });
+    client.on("close", () => { logger.warn("mqtt-bridge: connection closed"); sseBroadcast("status", brokerSnapshot()); });
 
     client.on("message", (topic: string, payload: Buffer) => {
       stats.rx++;
@@ -1024,6 +1085,9 @@ export default definePluginEntry({
         return;
       }
     });
+    } // end attachHandlers
+
+    connect();
 
     // ── Agent tool ─────────────────────────────────────
 
@@ -1086,8 +1150,14 @@ export default definePluginEntry({
       const off = JSON.stringify({ status: "offline", reason: "shutdown", timestamp: new Date().toISOString() });
       client?.publish(topics.status, off, { qos: 1, retain: true });
       client?.end();
+      globalAny[CLIENT_SLOT] = undefined;
       delete globalAny[GUARD];
+      delete globalAny[DISPOSE_SLOT];
     };
+    // Published so the NEXT registration can tear this instance down. Without
+    // it a hot reload leaves this client connected while the new module opens
+    // its own — two holders of one session, which is what a kick-loop is.
+    globalAny[DISPOSE_SLOT] = shutdown;
     process.on("beforeExit", shutdown);
     process.on("SIGTERM", () => { shutdown(); process.exit(0); });
   },
