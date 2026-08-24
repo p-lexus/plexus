@@ -56,11 +56,19 @@ values specific to your install, so it never collides with an upstream update. O
 `services.example.json` is tracked. If you skip the copy the plugin falls back to the example
 and logs a warning, so a fresh clone still runs.
 
-Keep deployment values out of the catalog by referencing the environment:
+Keep deployment values out of the catalog by referencing them as `${VAR}`:
 
 ```json
 "prompt": "Review PR {{pr}} in {{repo}}. DM the summary to ${SLACK_REVIEW_RECIPIENTS}."
 ```
+
+and binding them per deployment in plugin config (checked before `process.env`):
+
+```jsonc
+"mesh": { "promptVars": { "SLACK_REVIEW_RECIPIENTS": "U07XXXXXXX,U08YYYYYYY" } }
+```
+
+so the same catalog runs everywhere and only the bindings differ.
 
 This matters more than it looks: the catalog is published to the **retained** profile topic, so
 a literal id in a prompt is broadcast to everyone on the broker and persists there. `${VAR}` is

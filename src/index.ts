@@ -81,6 +81,17 @@ interface MeshConfig {
   verifyOwner?: boolean;
   /** Hard wall-clock cap per job before the mesh declares it failed. Default 30 min. */
   maxJobDurationMs?: number;
+  /**
+   * Deployment values substituted into ${VAR} placeholders in capability
+   * prompts. Keeps the catalog portable: the same services.json runs in every
+   * deployment, and only these differ.
+   *
+   * Checked before process.env, so a deployment can override an inherited
+   * environment without touching it. Put non-secret identifiers here (Slack
+   * ids, channel names, repo paths); leave anything genuinely secret in the
+   * environment.
+   */
+  promptVars?: Record<string, string>;
 }
 
 interface Capability {
@@ -363,14 +374,18 @@ export default definePluginEntry({
      * belong here — the capability definition stays portable and the values
      * live in the environment.
      */
+    const promptVars = (cfg.mesh?.promptVars ?? {}) as Record<string, string>;
     const resolvePromptEnv = (s: string): string =>
       s.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_m, k: string) => {
-        const v = process.env[k];
+        // Plugin config first, environment second. Config is versioned and
+        // survives service-env regeneration; env stays available for secrets.
+        const v = promptVars[k] ?? process.env[k];
         if (v === undefined) {
-          logger.warn(`mqtt-bridge: prompt references unset env var ${k} — substituted empty`);
+          logger.warn(`mqtt-bridge: prompt references unset variable ${k} — substituted empty ` +
+                      `(set mesh.promptVars.${k} in plugin config, or export ${k})`);
           return "";
         }
-        return v;
+        return String(v);
       });
 
     // ── Job dispatch (shared by MQTT invoke + HTTP API) ─

@@ -52,12 +52,27 @@ the transport is unchanged.
 ### Deployment values: `${ENV_VAR}` in prompts
 
 A capability definition should stay portable, but real prompts need deployment-specific
-values — Slack ids, channel names, internal repo paths. Put them in the environment and
-reference them from the prompt:
+values — Slack ids, channel names, internal repo paths. Reference them as `${VAR}`:
 
 ```json
 "prompt": "Review PR {{pr}} in {{repo}}. DM the summary to ${SLACK_REVIEW_RECIPIENTS}."
 ```
+
+and supply them per deployment, either in plugin config:
+
+```jsonc
+"mesh": {
+  "promptVars": { "SLACK_REVIEW_RECIPIENTS": "U07XXXXXXX,U08YYYYYYY" }
+}
+```
+
+or from the environment. **Config is checked first**, then `process.env`. Prefer config for
+identifiers — it is versioned with the rest of your deployment and survives any regeneration
+of a service-managed environment file. Keep genuinely secret values in the environment.
+
+The point of the split: one `services.json` runs everywhere, and only the variable bindings
+change. Without it, every deployment forks the catalog and every upstream catalog change has
+to be merged by hand.
 
 Two properties make this safe, and both are deliberate:
 

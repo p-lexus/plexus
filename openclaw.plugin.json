@@ -90,6 +90,13 @@
             "type": "number",
             "default": 1800000,
             "description": "Hard wall-clock cap per job before the mesh publishes a terminal timeout error."
+          },
+          "promptVars": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Deployment values substituted into ${VAR} placeholders in capability prompts, so the same services.json runs in every deployment. Checked before process.env. Use for non-secret identifiers (Slack ids, channel names, repo paths); keep real secrets in the environment. Resolved only at dispatch, never in the retained profile."
           }
         }
       },
