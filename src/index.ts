@@ -53,6 +53,20 @@ const pluginDir: string =
 
 const PROTOCOL_VERSION = "1.2";
 
+/**
+ * Identifies this *module evaluation*.
+ *
+ * register() runs more than once per process: the gateway registers plugins
+ * again for each new agent session, so dispatching a job re-registers this
+ * plugin. Those calls share one loaded module and must NOT disturb the
+ * transport. A rebuild re-imports the module and produces a new id — that is
+ * the only case where taking over the connection is correct.
+ */
+const MODULE_INSTANCE = createHash("sha1")
+  .update(`${process.pid}:${Date.now()}:${Math.random()}`)
+  .digest("hex")
+  .slice(0, 12);
+
 // ── Types ──────────────────────────────────────────────
 
 interface BrokerConfig {
@@ -826,6 +840,45 @@ export default definePluginEntry({
         return true;
     };
 
+    // ── Reload takeover ────────────────────────────────
+    //
+    // This used to bail out when GUARD was already set, which meant a
+    // hot-reloaded plugin never took over: the gateway kept serving the OLD
+    // module and code updates silently required a full restart. Worse, the
+    // previous module's MQTT client stayed connected — so with a stable
+    // clientId two clients could briefly hold the same session and kick each
+    // other in a loop.
+    //
+    // Instead: tear the previous instance down, then take over.
+    const CLIENT_SLOT = Symbol.for("mqtt-bridge.client");
+    const DISPOSE_SLOT = Symbol.for("mqtt-bridge.dispose");
+    const MODULE_SLOT = Symbol.for("mqtt-bridge.module");
+    if (globalAny[GUARD]) {
+      if (globalAny[MODULE_SLOT] === MODULE_INSTANCE) {
+        // Same loaded module, additional session. The transport is already up
+        // and belongs to this module — leave it completely alone. Tearing it
+        // down here would reconnect the broker on every dispatched job, since
+        // spawning an executor subagent re-registers the plugin.
+        logger.info("mqtt-bridge: additional registration for the active module — transport untouched");
+        return;
+      }
+      // Different module id => the plugin was rebuilt and re-imported. This is
+      // the genuine hot-reload case, where taking over is what we want.
+      logger.info("mqtt-bridge: new build detected — disposing previous instance and taking over");
+      try { (globalAny[DISPOSE_SLOT] as (() => void) | undefined)?.(); }
+      catch (e: any) { logger.error(`mqtt-bridge: previous dispose failed: ${e.message}`); }
+    }
+    globalAny[MODULE_SLOT] = MODULE_INSTANCE;
+    // Belt and braces: end any client the previous module left behind, even if
+    // its dispose hook was missing or threw. force=true so we do not wait on a
+    // graceful DISCONNECT that may never complete.
+    const staleClient = globalAny[CLIENT_SLOT] as mqtt.MqttClient | undefined;
+    if (staleClient) {
+      try { staleClient.end(true); } catch { /* already gone */ }
+      globalAny[CLIENT_SLOT] = undefined;
+    }
+    globalAny[GUARD] = true;
+
     // Standalone HTTP server on its own port — independent of the gateway
     // lifecycle for browsing; the plugin process hosts it either way.
     let standaloneServer: ReturnType<typeof createServer> | null = null;
@@ -840,32 +893,6 @@ export default definePluginEntry({
       logger.info("mqtt-bridge: web panel disabled (web.enabled=false)");
     }
 
-    // ── Reload takeover ────────────────────────────────
-    //
-    // This used to bail out when GUARD was already set, which meant a
-    // hot-reloaded plugin never took over: the gateway kept serving the OLD
-    // module and code updates silently required a full restart. Worse, the
-    // previous module's MQTT client stayed connected — so with a stable
-    // clientId two clients could briefly hold the same session and kick each
-    // other in a loop.
-    //
-    // Instead: tear the previous instance down, then take over.
-    const CLIENT_SLOT = Symbol.for("mqtt-bridge.client");
-    const DISPOSE_SLOT = Symbol.for("mqtt-bridge.dispose");
-    if (globalAny[GUARD]) {
-      logger.info("mqtt-bridge: re-registration — disposing previous instance and taking over");
-      try { (globalAny[DISPOSE_SLOT] as (() => void) | undefined)?.(); }
-      catch (e: any) { logger.error(`mqtt-bridge: previous dispose failed: ${e.message}`); }
-    }
-    // Belt and braces: end any client the previous module left behind, even if
-    // its dispose hook was missing or threw. force=true so we do not wait on a
-    // graceful DISCONNECT that may never complete.
-    const staleClient = globalAny[CLIENT_SLOT] as mqtt.MqttClient | undefined;
-    if (staleClient) {
-      try { staleClient.end(true); } catch { /* already gone */ }
-      globalAny[CLIENT_SLOT] = undefined;
-    }
-    globalAny[GUARD] = true;
 
     // ── MQTT connect ───────────────────────────────────
 
