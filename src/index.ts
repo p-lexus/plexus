@@ -177,6 +177,18 @@ export default definePluginEntry({
       try {
         return JSON.parse(fs.readFileSync(servicesFile, "utf8")) as ServicesFile;
       } catch (e: any) {
+        // The catalog is deployment-local and therefore not tracked in git.
+        // On a fresh clone it won't exist yet, so fall back to the shipped
+        // example rather than starting with an empty, silently useless agent.
+        const example = servicesFile.replace(/\.json$/, ".example.json");
+        try {
+          const svc = JSON.parse(fs.readFileSync(example, "utf8")) as ServicesFile;
+          logger.warn(
+            `mqtt-bridge: ${path.basename(servicesFile)} not readable — falling back to ` +
+            `${path.basename(example)}. Copy it to ${path.basename(servicesFile)} to customise.`,
+          );
+          return svc;
+        } catch { /* no example either — report the original failure */ }
         logger.error(`mqtt-bridge: read ${servicesFile} failed: ${e.message}`);
         return { capabilities: [] };
       }

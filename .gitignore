@@ -17,3 +17,6 @@ CLAUDE.md
 *.swp
 *.bak
 *~
+
+# deployment-local capability catalog (copy from services.example.json)
+services.json

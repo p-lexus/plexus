@@ -47,8 +47,24 @@ a delivery path polls.
 git clone https://github.com/MoGhali/agent-mesh-protocol.git
 cd agent-mesh-protocol
 npm install
+cp services.example.json services.json   # your capability catalog
 npm run build
 ```
+
+`services.json` is **deployment-local and gitignored** — it holds your capabilities and any
+values specific to your install, so it never collides with an upstream update. Only
+`services.example.json` is tracked. If you skip the copy the plugin falls back to the example
+and logs a warning, so a fresh clone still runs.
+
+Keep deployment values out of the catalog by referencing the environment:
+
+```json
+"prompt": "Review PR {{pr}} in {{repo}}. DM the summary to ${SLACK_REVIEW_RECIPIENTS}."
+```
+
+This matters more than it looks: the catalog is published to the **retained** profile topic, so
+a literal id in a prompt is broadcast to everyone on the broker and persists there. `${VAR}` is
+resolved on the way to the executor, so the wire only ever carries the template.
 
 Then point OpenClaw at it — drop the directory in `~/.openclaw/extensions/` and enable it:
 
