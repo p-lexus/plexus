@@ -49,6 +49,33 @@ panel) with no restart and no code change — the retained profile republishes a
 The catalog shipped here is an **example**; replace it wholesale for a different domain and
 the transport is unchanged.
 
+### Deployment values: `${ENV_VAR}` in prompts
+
+A capability definition should stay portable, but real prompts need deployment-specific
+values — Slack ids, channel names, internal repo paths. Put them in the environment and
+reference them from the prompt:
+
+```json
+"prompt": "Review PR {{pr}} in {{repo}}. DM the summary to ${SLACK_REVIEW_RECIPIENTS}."
+```
+
+Two properties make this safe, and both are deliberate:
+
+- **Resolved at dispatch, never in the catalog.** The capability list is published to the
+  *retained* profile topic. Resolving there would broadcast every deployment value to anyone
+  subscribed to the registry. On the wire the prompt stays a template; substitution happens
+  only on the way to the executor.
+- **Environment first, then arguments.** `${…}` is expanded *before* `{{args}}`, so a value
+  arriving in an invoke argument is never itself expanded. Were the order reversed, any caller
+  could pass `"${SOME_SECRET}"` as an argument and have the bridge read it back — turning
+  every invoke into an environment read.
+
+An unset variable substitutes empty and logs a warning; it never leaks the literal `${NAME}`
+into the executor's instructions.
+
+Note the boundary this respects: env vars supply *identifiers and configuration*, not
+credentials for the mesh to use. Authentication still belongs to the executor.
+
 ## Credentials & scope boundary
 
 **The bridge carries jobs, not credentials.** It holds exactly two secrets: the broker

@@ -338,6 +338,29 @@ export default definePluginEntry({
       }
     }
 
+    /**
+     * Resolve ${ENV_VAR} inside a capability prompt, at dispatch time.
+     *
+     * Deliberately NOT resolved in readServices(): the capability catalog is
+     * published to the RETAINED profile topic, so resolving there would
+     * broadcast every deployment secret to anyone subscribing the registry.
+     * Templates stay templates on the wire and are only filled in on the way
+     * to the executor.
+     *
+     * Deployment identifiers (Slack ids, internal repo names, channel ids)
+     * belong here — the capability definition stays portable and the values
+     * live in the environment.
+     */
+    const resolvePromptEnv = (s: string): string =>
+      s.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_m, k: string) => {
+        const v = process.env[k];
+        if (v === undefined) {
+          logger.warn(`mqtt-bridge: prompt references unset env var ${k} — substituted empty`);
+          return "";
+        }
+        return v;
+      });
+
     // ── Job dispatch (shared by MQTT invoke + HTTP API) ─
 
     function dispatchJob(
@@ -417,7 +440,10 @@ export default definePluginEntry({
 
       let messageText: string;
       if (cap.prompt) {
-        messageText = String(cap.prompt)
+        // Env FIRST, then args. Reversing this would let a caller smuggle
+        // "${SOME_SECRET}" through an arg value and have the bridge expand it —
+        // turning any invoke into an environment read.
+        messageText = resolvePromptEnv(String(cap.prompt))
           .replace(/\{\{jobId\}\}/g, jobId)
           .replace(/\{\{requestedBy\}\}/g, String(requestedBy || "unknown"))
           .replace(/\{\{(\w+)\}\}/g, (_m, k: string) => String((args as any)?.[k] ?? ""));

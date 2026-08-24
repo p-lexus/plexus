@@ -5,7 +5,7 @@
   "capabilities": [
     {
       "service": "code.review",
-      "description": "Full PR review: diff analysis, verdict (APPROVE/REQUEST_CHANGES/COMMENT) with numbered findings and severity.",
+      "description": "Full PR review: diff analysis, verdict (APPROVE/REQUEST_CHANGES/COMMENT) with numbered findings and severity. Side-delivery: Slack DM to the configured reviewers.",
       "requestSchema": {
         "repo": "string (owner/name)",
         "pr": "number",
@@ -21,7 +21,7 @@
       },
       "avgLatency": "2-4 min",
       "handler": "session",
-      "prompt": "Review pull request {{pr}} in {{repo}}. Fetch with: gh pr view/diff. Correctness first, then reuse/simplification/performance. Verdict APPROVE | REQUEST_CHANGES | COMMENT with numbered findings and severity. If repo starts with a slash, strip it. If this PR state was already reviewed (unless force), publish {\"type\":\"already_reviewed\"} instead."
+      "prompt": "Review pull request {{pr}} in {{repo}}. Fetch with: gh pr view/diff. Correctness first, then reuse/simplification/performance. Verdict APPROVE | REQUEST_CHANGES | COMMENT with numbered findings and severity. Publish the result JSON to the result topic; if ${SLACK_REVIEW_RECIPIENTS} is non-empty, also send a Slack DM with the verdict summary to each id in it. If repo starts with a slash, strip it. If this PR state was already reviewed (unless force), publish {\"type\":\"already_reviewed\"} instead."
     },
     {
       "service": "repo.investigate",
@@ -93,7 +93,7 @@
       },
       "avgLatency": "1-2 min",
       "handler": "session",
-      "prompt": "Triage this alert: {{payload}}. Classify severity, dedupe against recent work, attach deploy/PR context, recommend first action."
+      "prompt": "Triage this alert: {{payload}}. Classify severity, dedupe against recent work, attach deploy/PR context, recommend first action. If ${SLACK_ALERT_RECIPIENTS} is non-empty, DM the ranked notice to each id in it."
     },
     {
       "service": "docs.summarize",
