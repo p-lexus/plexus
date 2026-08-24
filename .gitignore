@@ -1,0 +1,19 @@
+# dependencies
+node_modules/
+
+# build output — produced by `npm run build`
+dist/
+
+# code intelligence index (machine-local)
+.gitnexus/
+
+# agent tooling scaffolding (machine-local)
+.claude/
+AGENTS.md
+CLAUDE.md
+
+# editor / OS
+.DS_Store
+*.swp
+*.bak
+*~

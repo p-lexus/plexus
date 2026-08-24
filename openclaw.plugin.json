@@ -1,0 +1,131 @@
+{
+  "id": "mqtt-bridge",
+  "name": "MQTT Bridge — Agent Mesh",
+  "description": "Agent Mesh Protocol v1.2 over MQTT — durable push connection (persistent session, QoS 1), owner-scoped job dispatch, HTTP control API and SSE-backed web panel. Capability-agnostic: services are data, not code. Works behind NAT (outbound connection only).",
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "tools": [
+      "mqtt_publish"
+    ]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "broker": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "MQTT broker URL (e.g. mqtt://localhost:1883 or mqtts://broker.emqx.io:8883)"
+          },
+          "username": {
+            "type": "string",
+            "description": "Broker username. Supports ${ENV_VAR} interpolation."
+          },
+          "password": {
+            "type": "string",
+            "description": "Broker password. Supports ${ENV_VAR} interpolation."
+          },
+          "clientId": {
+            "type": "string",
+            "description": "MQTT client ID. MUST be stable across restarts or the persistent session (clean:false) is defeated and messages queued while offline are lost. Defaults to openclaw-mqtt-bridge-<hash of host+install path>. Set explicitly only if you run two gateways from the same install directory."
+          },
+          "keepalive": {
+            "type": "number",
+            "default": 30,
+            "description": "Keepalive interval in seconds."
+          },
+          "protocolVersion": {
+            "type": "number",
+            "enum": [
+              4,
+              5
+            ],
+            "default": 4,
+            "description": "4 = MQTT 3.1.1 (default, widest broker compatibility). 5 = MQTT 5, which adds a bounded session expiry so decommissioned deployments stop accumulating queued messages."
+          },
+          "sessionExpirySeconds": {
+            "type": "number",
+            "default": 86400,
+            "description": "MQTT 5 only: how long the broker retains our queued messages while disconnected."
+          }
+        },
+        "required": [
+          "url"
+        ]
+      },
+      "mesh": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "root": {
+            "type": "string",
+            "default": "agents",
+            "description": "Mesh topic root."
+          },
+          "agentId": {
+            "type": "string",
+            "default": "agent",
+            "description": "This agent's id within the mesh."
+          },
+          "servicesFile": {
+            "type": "string",
+            "description": "Path to the capability catalog. Defaults to services.json beside the plugin. Watched via fs.watch; edits republish the retained profile."
+          },
+          "requireOwner": {
+            "type": "boolean",
+            "default": true,
+            "description": "Reject invokes with no requestedBy, as protocol 1.2 requires, instead of silently routing them to owner \"public\". Set false to accept unowned invokes with a warning."
+          },
+          "verifyOwner": {
+            "type": "boolean",
+            "default": false,
+            "description": "Verify requestedBy against a broker-injected client_username (EMQX rule-engine payload enrichment). Fails closed: with this on, an invoke lacking client_username is rejected. Requires broker-side setup first."
+          },
+          "maxJobDurationMs": {
+            "type": "number",
+            "default": 1800000,
+            "description": "Hard wall-clock cap per job before the mesh publishes a terminal timeout error."
+          }
+        }
+      },
+      "web": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "Serve the control panel and HTTP API."
+          },
+          "path": {
+            "type": "string",
+            "default": "/mqtt-bridge/ui",
+            "description": "Base path for the panel and its API."
+          },
+          "port": {
+            "type": "number",
+            "default": 8765,
+            "description": "Standalone HTTP port, bound to 127.0.0.1."
+          },
+          "auth": {
+            "type": "string",
+            "description": "Bearer token required for the panel and API. Accepted as an Authorization header, or as ?token= for the SSE stream (EventSource cannot set headers). Unset means no authentication."
+          }
+        }
+      },
+      "sessionKey": {
+        "type": "string",
+        "default": "agent:main:main",
+        "description": "Session used by the legacy fallback dispatch path when the subagent runtime is unavailable."
+      }
+    },
+    "required": [
+      "broker"
+    ]
+  }
+}

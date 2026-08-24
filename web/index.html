@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent Mesh Control</title>
+<style>
+:root{--navy:#092B4C;--blue:#1D4AFF;--bg:#F5F7FA;--card:#fff;--border:#D8DEE9;--ok:#0E9F6E;--err:#E02424;--mono:ui-monospace,Menlo,monospace}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--navy);font-size:14px}
+header{background:var(--navy);color:#fff;padding:0 24px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap}
+header h1{font-size:15px;font-weight:700;padding:13px 0}
+nav{display:flex;gap:2px}
+nav a{color:#B9C6DA;text-decoration:none;font-size:13px;font-weight:600;padding:16px 13px;border-bottom:3px solid transparent;cursor:pointer}
+nav a:hover{color:#fff}
+nav a.active{color:#fff;border-bottom-color:var(--blue)}
+.hstatus{display:flex;align-items:center;gap:7px;font-size:12px}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--err);display:inline-block}
+.dot.on{background:var(--ok)}
+main{max-width:1100px;margin:20px auto;padding:0 20px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:16px}
+.card h2{font-size:14.5px;font-weight:700;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center}
+button{background:var(--blue);color:#fff;border:0;border-radius:8px;padding:9px 16px;font-size:13px;font-weight:600;cursor:pointer}
+button:hover{opacity:.88}
+button.ghost{background:#fff;color:var(--blue);border:1.5px solid var(--blue)}
+button.danger{background:var(--err)}
+button:disabled{opacity:.4;cursor:not-allowed}
+input,select,textarea{width:100%;border:1px solid var(--border);border-radius:8px;padding:9px;font-size:13px;font-family:var(--mono);background:#fff;color:var(--navy)}
+textarea{min-height:110px;resize:vertical}
+label{font-size:12px;font-weight:700;color:#48566B;display:block;margin:12px 0 4px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.hint{font-size:11.5px;color:#6B788E}
+.empty{color:#6B788E;font-size:13px;padding:14px;text-align:center}
+pre.json{background:#0B1D33;color:#C9E3FF;font-family:var(--mono);font-size:11.8px;padding:12px;border-radius:8px;overflow:auto;max-height:300px;white-space:pre-wrap;word-break:break-word}
+.stat{display:flex;gap:22px;flex-wrap:wrap;font-size:13px}
+.stat b{font-family:var(--mono)}
+.cap{border:1px solid var(--border);border-radius:10px;padding:14px;margin:8px 0;background:#FBFCFE}
+.svc{font-family:var(--mono);color:var(--blue);font-weight:700;font-size:13px}
+.desc{font-size:12.5px;color:#48566B;margin:5px 0;line-height:1.45}
+.job{border:1px solid var(--border);border-left:3px solid var(--blue);border-radius:0 10px 10px 0;padding:12px;margin:10px 0;background:#fff}
+.job.done{border-left-color:var(--ok)}.job.error{border-left-color:var(--err)}
+.jhead{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.jid{font-family:var(--mono);font-size:12.5px;font-weight:700}
+.pill{font-size:11px;font-weight:700;padding:3px 10px;border-radius:99px}
+.pill.running{background:#FFF6E5;color:#C27803}.pill.done{background:#E6F6EF;color:var(--ok)}.pill.error{background:#FDE8E8;color:var(--err)}
+details summary{cursor:pointer;color:var(--blue);font-size:12px}
+#toast{position:fixed;bottom:20px;right:20px;background:var(--navy);color:#fff;padding:12px 18px;border-radius:10px;font-size:13px;display:none;max-width:480px;box-shadow:0 8px 30px rgba(9,43,76,.4);z-index:30}
+</style>
+</head>
+<body>
+<header>
+  <h1>🔌 Agent Mesh <span style="font-weight:400;opacity:.7;font-size:11.5px">· plugin frontend</span></h1>
+  <nav>
+    <a data-page="dashboard" class="active">Dashboard</a>
+    <a data-page="portfolio">Portfolio</a>
+    <a data-page="invoke">Invoke</a>
+    <a data-page="jobs">Jobs</a>
+    <a data-page="config">Config</a>
+  </nav>
+  <div class="hstatus"><span class="dot" id="hdot"></span><span id="htxt">…</span></div>
+</header>
+<main><div id="page"></div></main>
+<div id="toast"></div>
+
+<script>
+const $=id=>document.getElementById(id);
+const API=location.pathname.startsWith('/mqtt-bridge')?'/mqtt-bridge/ui/api':'/api';
+let profile=null, status=null, jobs=null, page='dashboard';
+const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+const toast=(m,ms=3000)=>{const t=$('toast');t.textContent=m;t.style.display='block';clearTimeout(t._h);t._h=setTimeout(()=>t.style.display='none',ms);};
+const fmtUp=ms=>ms>0?Math.round(ms/1000)+'s':'—';
+
+// Auth token for the SSE stream (EventSource cannot set headers).
+const TOKEN=new URLSearchParams(location.search).get('token')||'';
+const q=p=>TOKEN?`${p}${p.includes('?')?'&':'?'}token=${encodeURIComponent(TOKEN)}`:p;
+
+function setConn(ok,txt){
+  $('hdot').className='dot'+(ok?' on':'');
+  $('htxt').textContent=txt;
+}
+// Re-render on push, but never yank the page out from under someone who is
+// typing into the Invoke or Config forms.
+function renderIfSafe(){ if(page==='invoke'||page==='config')return; render(); }
+
+async function refresh(){
+  try{
+    profile=await fetch(q(`${API}/profile`)).then(r=>r.json());
+    status=await fetch(q(`${API}/status`)).then(r=>r.json());
+    jobs=await fetch(q(`${API}/jobs`)).then(r=>r.json());
+    setConn(profile.broker?.connected,profile.broker?.connected?'plugin connected':'plugin disconnected');
+    render();
+  }catch(e){ setConn(false,'api unreachable'); }
+}
+
+// ── Push transport: SSE. Falls back to polling only if the stream dies. ──
+let es=null, pollTimer=null;
+function startPollingFallback(){
+  if(pollTimer)return;
+  pollTimer=setInterval(refresh,2500);
+  setConn(false,'reconnecting (polling)');
+}
+function stopPollingFallback(){ if(pollTimer){clearInterval(pollTimer);pollTimer=null;} }
+
+function connectStream(){
+  try{ es=new EventSource(q(`${API}/events`)); }
+  catch(e){ return startPollingFallback(); }
+
+  es.addEventListener('status',e=>{
+    status=JSON.parse(e.data);
+    if(profile)profile.broker={connected:status.connected,stats:{rx:status.rx,tx:status.tx,connectedAt:Date.now()-(status.uptimeMs||0)}};
+    setConn(status.connected,status.connected?'plugin connected':'plugin disconnected');
+    renderIfSafe();
+  });
+  es.addEventListener('profile',e=>{ profile=Object.assign(profile||{},JSON.parse(e.data)); renderIfSafe(); });
+  es.addEventListener('snapshot',e=>{ jobs=JSON.parse(e.data); renderIfSafe(); });
+  es.addEventListener('job',e=>{
+    const rec=JSON.parse(e.data);
+    if(!jobs)jobs={active:[],history:[]};
+    const i=jobs.history.findIndex(j=>j.jobId===rec.jobId);
+    if(i>=0)jobs.history[i]=rec; else jobs.history.unshift(rec);
+    if(page==='jobs'||page==='dashboard')render();
+  });
+  es.onopen=()=>{ stopPollingFallback(); };
+  es.onerror=()=>{
+    // EventSource retries on its own; poll meanwhile so the panel stays live.
+    if(es&&es.readyState===2){ es=null; startPollingFallback(); setTimeout(connectStream,5000); }
+    else setConn(false,'stream reconnecting…');
+  };
+}
+
+function render(){
+  const el=$('page');
+  if(page==='dashboard'){
+    el.innerHTML=`<div class="card"><h2>🩺 Plugin status</h2><div class="stat">
+      <span>Broker: <b>${profile.broker?.connected?'✅ connected':'❌ disconnected'}</b></span>
+      <span>Uptime: <b>${fmtUp(profile.broker?.stats?.connectedAt?Date.now()-profile.broker.stats.connectedAt:0)}</b></span>
+      <span>Reconnects: <b>${status?.reconnects??'—'}</b></span>
+      <span>MQTT rx/tx: <b>${profile.broker?.stats?.rx??0}/${profile.broker?.stats?.tx??0}</b></span>
+      <span>Capabilities: <b>${profile.capabilities?.length??'—'}</b></span>
+      <span>Active jobs: <b>${(status?.activeJobs??[]).length}</b></span>
+      <span>Panel transport: <b>${es&&es.readyState===1?'⚡ SSE push':'↻ polling'}</b></span>
+      <span>Protocol: <b>${esc(profile.protocolVersion||status?.protocolVersion||'—')}</b></span>
+      <span>Owner: <b>${profile.ownerPolicy?.required?'required':'optional'}${profile.ownerPolicy?.verified?' + verified':''}</b></span>
+    </div>${status?.lastError?`<p class="hint" style="margin-top:8px;color:var(--err)">last error: ${esc(status.lastError)}</p>`:''}</div>
+    <div class="card"><h2>⚡ Quick review</h2>
+      <div class="row"><input id="qRepo" placeholder="repo (owner/name)" style="flex:1;min-width:220px" >
+      <input id="qPr" placeholder="pr number" style="max-width:110px">
+      <button onclick="quickReview()">Review PR</button></div></div>`;
+  }
+  else if(page==='portfolio'){
+    const caps=profile.capabilities||[];
+    el.innerHTML=`<div class="card"><h2>📡 ${esc(profile.displayName||profile.agentId)} <span class="hint">${caps.length} services · proto ${esc(profile.protocolVersion||'1.0')}</span></h2>
+    ${caps.map(c=>`<div class="cap"><div class="svc">${esc(c.service)}</div>
+      <div class="desc">${esc(c.description||'')}</div>
+      <div class="hint">⏱ ${esc(c.avgLatency||'—')} · handler ${esc(c.handler||'session')}</div>
+      <details style="margin-top:6px"><summary>request schema</summary><pre class="json" style="max-height:180px">${esc(JSON.stringify(c.requestSchema,null,1))}</pre></details>
+      <button class="ghost" style="margin-top:8px" onclick="useSvc('${esc(c.service)}')">Use →</button></div>`).join('')||'<div class="empty">no capabilities</div>'}</div>`;
+  }
+  else if(page==='invoke'){
+    const caps=profile.capabilities||[];
+    el.innerHTML=`<div class="card"><h2>🚀 Invoke</h2>
+      <label>Service</label><select id="invSvc">${caps.map(c=>`<option>${esc(c.service)}</option>`).join('')}</select>
+      <label>Args (JSON)</label><textarea id="invArgs">{}</textarea>
+      <label>Requested by</label><input id="invBy" value="web-ui">
+      <div style="margin-top:12px"><button onclick="doInvoke()">⚡ Invoke</button> <span class="hint" id="invInfo"></span></div></div>`;
+    fillArgs();
+  }
+  else if(page==='jobs'){
+    const hist=jobs?.history||[];
+    el.innerHTML=`<div class="card"><h2>📥 Jobs <span class="hint">${hist.length} recent</span></h2>
+    ${hist.map(j=>{
+      const running=j.state==='accepted'||j.state==='started';
+      const bad=j.state==='error'||j.state==='timeout'||j.state==='rejected'||j.state==='cancelled';
+      return `<div class="job ${bad?'error':j.state==='done'?'done':''}"><div class="jhead"><span class="jid">${esc(j.jobId)}</span>
+      <span class="hint">${esc(j.service||'')} · ${esc(j.owner||j.requestedBy||'—')} · ${new Date(j.updatedAt).toLocaleTimeString()}</span>
+      <span class="pill ${j.state==='done'?'done':bad?'error':'running'}">${esc(j.state)}</span>
+      ${running?`<button class="danger" style="padding:4px 10px;font-size:11px" onclick="cancelJob('${esc(j.jobId)}')">Cancel</button>`:''}</div>
+      <pre class="json" style="max-height:220px">${esc(j.result?JSON.stringify(j.result,null,2):(j.lastEvent||'…'))}</pre></div>`;
+    }).join('')||'<div class="empty">no jobs yet</div>'}</div>`;
+  }
+  else if(page==='config'){
+    const caps=profile.capabilities||[];
+    el.innerHTML=`<div class="card"><h2>➕ Add capability</h2>
+      <label>Service name</label><input id="aName" placeholder="e.g. db.schema_review">
+      <label>Description</label><input id="aDesc">
+      <label>Prompt template ({placeholders} from args)</label><textarea id="aPrompt" style="min-height:70px">Do {{what}} in {{repo}}.</textarea>
+      <div style="margin-top:10px"><button onclick="addCap()">Add</button></div></div>
+    <div class="card"><h2>🗑 Remove</h2><select id="dSel">${caps.map(c=>`<option>${esc(c.service)}</option>`).join('')}</select>
+      <div style="margin-top:10px"><button class="danger" onclick="delCap()">Remove</button></div></div>`;
+  }
+}
+function sampleArgs(cap){
+  const a={};
+  for(const [k,v] of Object.entries(cap.requestSchema||{})){
+    const t=String(v),opt=t.includes('?')||t.includes('optional'),num=t.includes('number'),bool=t.includes('boolean');
+    if(k==='repo')a[k]='owner/repo';
+    else if(num)a[k]=1234;else if(bool)a[k]=false;else a[k]=opt?'':'replace-me';
+  }return a;
+}
+function fillArgs(){const c=(profile.capabilities||[]).find(x=>x.service===$('invSvc')?.value);if(c)$('invArgs').value=JSON.stringify(sampleArgs(c),null,2);}
+function useSvc(s){page='invoke';document.querySelectorAll('nav a').forEach(a=>a.classList.toggle('active',a.dataset.page==='invoke'));render();setTimeout(()=>{$('invSvc').value=s;fillArgs();},50);}
+async function apiPost(path,body){const r=await fetch(q(API+path),{method:'POST',headers:Object.assign({'Content-Type':'application/json'},TOKEN?{Authorization:'Bearer '+TOKEN}:{}),body:JSON.stringify(body)});return{ok:r.ok,data:await r.json()};}
+async function cancelJob(id){
+  if(!confirm('Cancel '+id+'?'))return;
+  const r=await apiPost('/cancel',{jobId:id,requestedBy:$('invBy')?.value||'web-ui'});
+  toast(r.ok?'🛑 cancelled '+id:'❌ not active');
+}
+async function quickReview(){
+  const args={repo:$('qRepo').value,pr:parseInt($('qPr').value)};
+  if(!args.pr)return toast('PR number required');
+  const r=await apiPost('/invoke',{service:'code.review',args});
+  toast(r.ok?`⚡ dispatched ${r.data.jobId}`:'❌ '+(r.data.error||'failed'));
+  if(r.ok)setTimeout(()=>{page='jobs';render();},500);
+}
+async function doInvoke(){
+  let args;try{args=JSON.parse($('invArgs').value);}catch(e){return toast('❌ invalid JSON args');}
+  const r=await apiPost('/invoke',{service:$('invSvc').value,args,requestedBy:$('invBy').value});
+  $('invInfo').textContent=r.ok?'dispatched: '+r.data.jobId:'❌ '+(r.data.error||'');
+  if(r.ok)toast('⚡ '+r.data.jobId);
+}
+async function addCap(){
+  if(!$('aName').value.trim())return toast('name required');
+  const r=await apiPost('/config',{action:'add_service',service:{service:$('aName').value.trim(),description:$('aDesc').value,handler:'session',prompt:$('aPrompt').value}});
+  toast(r.ok?'✅ added — portfolio updated':'❌ '+(r.data.error||''));
+  refresh();
+}
+async function delCap(){
+  if(!confirm('Remove '+$('dSel').value+'?'))return;
+  const r=await apiPost('/config',{action:'remove_service',service:$('dSel').value});
+  toast(r.ok?'✅ removed':'❌ '+(r.data.error||''));
+  refresh();
+}
+document.querySelectorAll('nav a').forEach(a=>a.onclick=()=>{page=a.dataset.page;document.querySelectorAll('nav a').forEach(x=>x.classList.toggle('active',x===a));render();});
+// Initial state over plain HTTP, then switch to the push stream.
+refresh().then(connectStream);
+</script>
+</body>
+</html>
