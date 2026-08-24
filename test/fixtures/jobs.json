@@ -1,0 +1,187 @@
+{
+  "active": [],
+  "history": [
+    {
+      "state": "done",
+      "createdAt": 1787593131258,
+      "events": [
+        {
+          "type": "duplicate",
+          "ts": 1787593131258
+        }
+      ],
+      "updatedAt": 1787593131258,
+      "jobId": "proto-test-2",
+      "result": {
+        "type": "duplicate",
+        "note": "jobId already active",
+        "jobId": "proto-test-2",
+        "owner": "testuser",
+        "ts": "2026-08-19T09:17:34.343Z"
+      },
+      "requestedBy": "alice",
+      "owner": "alice",
+      "finishedAt": 1787593131258
+    },
+    {
+      "state": "done",
+      "createdAt": 1787593131257,
+      "events": [
+        {
+          "type": "duplicate",
+          "ts": 1787593131257
+        }
+      ],
+      "updatedAt": 1787593131257,
+      "jobId": "proto-test-1",
+      "result": {
+        "type": "duplicate",
+        "note": "jobId already active",
+        "jobId": "proto-test-1",
+        "owner": "testuser",
+        "ts": "2026-08-19T09:16:00.102Z"
+      },
+      "requestedBy": "alice",
+      "owner": "alice",
+      "finishedAt": 1787593131257
+    },
+    {
+      "state": "error",
+      "createdAt": 1787593131187,
+      "events": [
+        {
+          "type": "error",
+          "note": "unknown service \"__probe__\"",
+          "ts": 1787593131187
+        }
+      ],
+      "updatedAt": 1787593131187,
+      "jobId": "job-mt7ie2c6",
+      "result": {
+        "type": "error",
+        "error": "unknown service \"__probe__\"",
+        "jobId": "job-mt7ie2c6",
+        "owner": "probe",
+        "ts": "2026-08-24T17:27:30.391Z"
+      },
+      "requestedBy": "alice",
+      "owner": "alice",
+      "finishedAt": 1787593131187
+    },
+    {
+      "state": "error",
+      "createdAt": 1787593131186,
+      "events": [
+        {
+          "type": "error",
+          "note": "unknown service \"__nonexistent__\"",
+          "ts": 1787593131186
+        }
+      ],
+      "updatedAt": 1787593131186,
+      "jobId": "job-mt792ixu",
+      "result": {
+        "type": "error",
+        "error": "unknown service \"__nonexistent__\"",
+        "jobId": "job-mt792ixu",
+        "owner": "probe",
+        "ts": "2026-08-24T13:06:35.491Z"
+      },
+      "requestedBy": "alice",
+      "owner": "alice",
+      "finishedAt": 1787593131186
+    },
+    {
+      "state": "done",
+      "createdAt": 1787593131184,
+      "events": [
+        {
+          "type": "review",
+          "ts": 1787593131184
+        }
+      ],
+      "updatedAt": 1787593131184,
+      "jobId": "rev-026",
+      "result": {
+        "type": "review",
+        "jobId": "rev-026",
+        "repo": "acme/web-app",
+        "pr": 2961,
+        "prTitle": "feat: control Atlas search pinning randomization via remote config",
+        "author": "ragaa07",
+        "prState": "MERGED",
+        "verdict": "APPROVE",
+        "summary": "Atlas search pinning-shuffle A/B kill-switch (atlas_search_pinning_shuffle_enabled, default true). Gate derivation verified against SearchCategoryListingsInteractor routing (same flag, no other legacy fallback); OFF-branch null parity and purifyNormalListings dedup consistency verified against ForSaleShuffler source. No blocking issues.",
+        "findings": [
+          {
+            "n": 1,
+            "severity": "minor",
+            "title": "Gate/route timing skew during RC flips",
+            "detail": "isPinningShuffleEnabled snapshots isNewListingsSearchApiEnabled() once per decorator (lazy), interactor re-reads it per loadPage; flag flip mid-screen can make variant and serving backend disagree transiently."
+          },
+          {
+            "n": 2,
+            "severity": "info",
+            "title": "Enum rename verified safe",
+            "detail": "NEW_LISTINGS_SEARCH_API -> ATLAS_SEARCH_ENABLED keeps keyValue enable_new_search_api; zero stale references repo-wide."
+          },
+          {
+            "n": 3,
+            "severity": "info",
+            "title": "Null/empty parity in OFF branches",
+            "detail": "ForSaleShuffler returns emptyList for null/empty buckets; .orEmpty() pass-throughs are behavior-identical for empty inputs."
+          },
+          {
+            "n": 4,
+            "severity": "info",
+            "title": "Dedup consistency preserved",
+            "detail": "pinnedShuffled StateFlows assigned in both branches; purifyNormalListings strips exactly the displayed pinned items in the OFF arm."
+          },
+          {
+            "n": 5,
+            "severity": "info",
+            "title": "Default polarity + experiment checklist",
+            "detail": "Default true = unreachable RC keeps today's ranking. Pre-experiment: create RC key, enable_new_search_api=true, add key to tracked_experiments."
+          },
+          {
+            "n": 6,
+            "severity": "info",
+            "title": "Duplicated pass-through branches",
+            "detail": "Three near-identical if(isPinningShuffleEnabled) branches could fold into the shuffler layer; single-gate design is defensible as-is."
+          }
+        ],
+        "stats": {
+          "additions": 58,
+          "deletions": 12,
+          "files": 6
+        },
+        "reviewFile": "reviews/pr-2961-review.md",
+        "reviewedAt": "2026-08-24T16:47:59+00:00"
+      },
+      "owner": "alice",
+      "finishedAt": 1787593131184,
+      "requestedBy": "alice"
+    },
+    {
+      "state": "done",
+      "createdAt": 1787593131182,
+      "events": [
+        {
+          "type": "already_reviewed",
+          "ts": 1787593131182
+        }
+      ],
+      "updatedAt": 1787593131182,
+      "jobId": "rev-025",
+      "result": {
+        "type": "already_reviewed",
+        "pr": 2960,
+        "repo": "acme/web-app",
+        "note": "review published and retained earlier this session; verdict COMMENT, 6 findings"
+      },
+      "owner": "alice",
+      "finishedAt": 1787593131182,
+      "requestedBy": "alice"
+    }
+  ]
+}

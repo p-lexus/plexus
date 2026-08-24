@@ -6,7 +6,8 @@
   "scripts": {
     "build": "tsc && npm run copy:assets",
     "copy:assets": "rm -rf dist/web && mkdir -p dist/web && cp -R web/. dist/web/ && cp services.example.json dist/ && { cp services.json dist/ 2>/dev/null || true; }",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node test/render-check.mjs"
   },
   "dependencies": {
     "mqtt": "^5.10.1",

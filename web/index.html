@@ -768,6 +768,48 @@ async function saveDraft() {
 }
 
 
+
+function sessionView() {
+  const s = status.session || {};
+  const op = status.ownerPolicy || profile.ownerPolicy || {};
+  return `
+  <div class="stack">
+    ${s.durable === false ? `<div class="warn-bar"><span>⚠</span><div><b>Durability degraded.</b> A client id collision forced a disambiguated session. Jobs published while this agent is offline are no longer queued.</div></div>` : ''}
+    <div class="panel">
+      <div class="panel-h"><span class="eyebrow">Broker session</span></div>
+      <div class="panel-b"><dl class="kv">
+        <dt>Client id</dt><dd>${esc(s.clientId || '—')}</dd>
+        <dt>Protocol</dt><dd>MQTT ${s.mqttVersion === 5 ? '5' : '3.1.1'} · mesh ${esc(status.protocolVersion || '—')}</dd>
+        <dt>Durable session</dt><dd>${s.durable === false ? 'no — jobs lost while offline' : 'yes — offline jobs are queued'}</dd>
+        <dt>Keepalive</dt><dd>${esc(s.keepalive || '—')}s</dd>
+        <dt>Uptime</dt><dd>${dur(status.uptimeMs)} · ${status.reconnects} reconnect${status.reconnects === 1 ? '' : 's'}</dd>
+        <dt>Last error</dt><dd>${status.lastError ? esc(status.lastError) : 'none'}</dd>
+      </dl></div>
+    </div>
+    <div class="panel">
+      <div class="panel-h"><span class="eyebrow">Owner policy</span></div>
+      <div class="panel-b">
+        <dl class="kv">
+          <dt>requestedBy</dt><dd>${op.required ? 'required — unowned jobs are rejected' : 'optional — unowned jobs go to “public”'}</dd>
+          <dt>Verified</dt><dd>${op.verified ? 'yes — checked against broker identity' : 'no — self-declared, not authenticated'}</dd>
+        </dl>
+        ${!op.verified ? `<p class="note" style="margin-top:11px">Owner scoping is a convention here: anyone with broker credentials can claim any owner. Enable <code>mesh.verifyOwner</code> once the broker injects <code>client_username</code>.</p>` : ''}
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-h"><span class="eyebrow">Subscribe</span></div>
+      <div class="panel-b stack" style="gap:6px">
+        ${[['your jobs', `${status.meshRoot}/jobs/<your-name>/#`],
+           ['results only', `${status.meshRoot}/jobs/<your-name>/+/result`],
+           ['dispatch', `${status.meshRoot}/commands/${status.agentId}/invoke`],
+           ['catalog', `${status.meshRoot}/registry/${status.agentId}/profile`]]
+          .map(([k, t]) => `<div class="topic"><b>${esc(k)}</b><span>${esc(t)}</span>
+            <button class="btn quiet small" style="margin-left:auto" data-copy="${esc(t)}">Copy</button></div>`).join('')}
+      </div>
+    </div>
+  </div>`;
+}
+
 /* ── deployment variables ───────────────────────────────────────────────────
    Values are write-only from here: the API returns names, sources and a masked
    hint, never a value. Managing them needs web.auth configured — an open

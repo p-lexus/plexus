@@ -1,0 +1,33 @@
+{
+  "connected": true,
+  "uptimeMs": 412589,
+  "rx": 39,
+  "tx": 0,
+  "reconnects": 3,
+  "lastError": "connack timeout",
+  "activeJobs": [],
+  "agentId": "agent",
+  "meshRoot": "agents",
+  "protocolVersion": "1.2",
+  "session": {
+    "clientId": "openclaw-mqtt-bridge-example",
+    "mqttVersion": 4,
+    "keepalive": 30,
+    "durable": true
+  },
+  "ownerPolicy": {
+    "required": true,
+    "verified": false
+  },
+  "promptVars": [
+    {
+      "name": "SLACK_ALERT_RECIPIENTS",
+      "source": "config"
+    },
+    {
+      "name": "SLACK_REVIEW_RECIPIENTS",
+      "source": "config"
+    }
+  ],
+  "secretsAuth": true
+}

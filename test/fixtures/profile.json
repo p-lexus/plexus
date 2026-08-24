@@ -1,0 +1,140 @@
+{
+  "agentId": "agent",
+  "displayName": "Agent Mesh \u2014 Reference Agent",
+  "status": "online",
+  "protocolVersion": "1.2",
+  "capabilities": [
+    {
+      "service": "code.review",
+      "description": "Full PR review: diff analysis, verdict (APPROVE/REQUEST_CHANGES/COMMENT) with numbered findings and severity. Side-delivery: Slack DM to the configured reviewers.",
+      "requestSchema": {
+        "repo": "string (owner/name)",
+        "pr": "number",
+        "url": "string? (optional, overrides repo+pr)",
+        "force": "boolean? (re-review even if same state reviewed)",
+        "focus": "string? (what to concentrate on)"
+      },
+      "responseSchema": {
+        "type": "review | already_reviewed",
+        "verdict": "APPROVE | REQUEST_CHANGES | COMMENT",
+        "summary": "string",
+        "findings": "array of strings"
+      },
+      "avgLatency": "2-4 min",
+      "handler": "session",
+      "prompt": "Review pull request {{pr}} in {{repo}}. Fetch with: gh pr view/diff. Correctness first, then reuse/simplification/perfor"
+    },
+    {
+      "service": "repo.investigate",
+      "description": "Tech detective: trace a bug, behavior, or regression across a repo's code and git history. Returns a causal answer with file/line/commit evidence.",
+      "requestSchema": {
+        "repo": "string (owner/name)",
+        "question": "string (what to investigate)",
+        "context": "string? (links, error messages, extra context)"
+      },
+      "responseSchema": {
+        "type": "investigation",
+        "answer": "string (narrative with evidence)",
+        "evidence": "array of citations"
+      },
+      "avgLatency": "3-8 min",
+      "handler": "session",
+      "prompt": "Investigate in {{repo}}: {{question}}. Walk code + git history/blame, related PRs. Answer with the causal chain, citing "
+    },
+    {
+      "service": "build.diagnose",
+      "description": "CI/CD failure triage: read a failed pipeline run, classify root cause (code / flaky / infra / dependency), name the culprit or declare flaky with evidence.",
+      "requestSchema": {
+        "repo": "string (owner/name)",
+        "runId": "string? (workflow run id)",
+        "logBlob": "string? (raw logs if no runId access)",
+        "branch": "string?"
+      },
+      "responseSchema": {
+        "type": "diagnosis",
+        "classification": "code | flaky | infra | dependency | unknown",
+        "confidence": "high | medium | low",
+        "culprit": "string? (commit/test/file)",
+        "recommendation": "string (fix | rerun | quarantine ...)"
+      },
+      "avgLatency": "2-5 min",
+      "handler": "session",
+      "prompt": "Diagnose failed CI run {{runId}} in {{repo}} (branch {{branch}}). Fetch logs with gh run view --log-failed. Classify: co"
+    },
+    {
+      "service": "release.notes",
+      "description": "Generate release notes from a merged-PR range, grouped (Features/Fixes/Chores/Breaking) with PR links and risk flags.",
+      "requestSchema": {
+        "repo": "string (owner/name)",
+        "fromRef": "string (tag/branch/sha)",
+        "toRef": "string (tag/branch/sha, default: HEAD)"
+      },
+      "responseSchema": {
+        "type": "release_notes",
+        "markdown": "string",
+        "riskFlags": "array of strings"
+      },
+      "avgLatency": "1-3 min",
+      "handler": "session",
+      "prompt": "Generate release notes for {{repo}} from {{fromRef}} to {{toRef}}. Group Features/Fixes/Chores/Breaking with PR links; f"
+    },
+    {
+      "service": "alert.triage",
+      "description": "Alert intake: classify severity, dedupe against open work, attach deploy/PR context, return a ranked notice with recommended first action.",
+      "requestSchema": {
+        "source": "string (grafana | sentry | watchdog | ...)",
+        "payload": "object (alert body)",
+        "severity": "string?"
+      },
+      "responseSchema": {
+        "type": "triage",
+        "classification": "critical | high | medium | low | duplicate",
+        "context": "string",
+        "recommendedAction": "string"
+      },
+      "avgLatency": "1-2 min",
+      "handler": "session",
+      "prompt": "Triage this alert: {{payload}}. Classify severity, dedupe against recent work, attach deploy/PR context, recommend first"
+    },
+    {
+      "service": "docs.summarize",
+      "description": "Summarize any document, thread, or long PR discussion into decisions + action items with owners + open questions.",
+      "requestSchema": {
+        "content": "string? (raw text)",
+        "url": "string? (link to summarize)",
+        "audience": "string? (exec | engineering | general)"
+      },
+      "responseSchema": {
+        "type": "summary",
+        "decisions": "array",
+        "actionItems": "array",
+        "openQuestions": "array"
+      },
+      "avgLatency": "1-3 min",
+      "handler": "session",
+      "prompt": "Summarize: {{content}}{{url}}. Output decisions, action items with owners, open questions."
+    }
+  ],
+  "commands": [
+    "invoke",
+    "query",
+    "cancel",
+    "config"
+  ],
+  "executionModel": "transport in framework; logic in agent",
+  "ownerPolicy": {
+    "required": true,
+    "verified": false
+  },
+  "updatedAt": "2026-08-24T17:47:17.284Z",
+  "broker": {
+    "connected": true,
+    "stats": {
+      "rx": 39,
+      "tx": 0,
+      "reconnects": 3,
+      "connectedAt": 1787593224705,
+      "lastError": "connack timeout"
+    }
+  }
+}
