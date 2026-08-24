@@ -79,9 +79,9 @@ Then point OpenClaw at it — drop the directory in `~/.openclaw/extensions/` an
 ```jsonc
 {
   "plugins": {
-    "allow": ["agent-mesh-bridge"],
+    "allow": ["mqtt-bridge"],
     "entries": {
-      "agent-mesh-bridge": {
+      "mqtt-bridge": {
         "enabled": true,
         "config": {
           "broker": {
@@ -101,6 +101,9 @@ Then point OpenClaw at it — drop the directory in `~/.openclaw/extensions/` an
 ```
 
 Every option is documented in `openclaw.plugin.json`. Only `broker.url` is required.
+
+The config key is the plugin **id** from `openclaw.plugin.json` (`mqtt-bridge`), which is
+intentionally independent of the npm package name and the repository name.
 
 ### Client id and durability
 
