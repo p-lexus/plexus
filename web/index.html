@@ -232,6 +232,7 @@ details[open] summary{margin-bottom:8px}
   <div class="chrome-right">
     <div class="link" id="link"><span class="meter"><i></i><i></i><i></i></span><span id="linkTxt">connecting</span></div>
     <button class="icon-btn" id="themeBtn" title="Switch theme">Theme</button>
+    <button class="icon-btn" id="signOut" title="Forget the token on this browser" hidden>Sign out</button>
   </div>
 </header>
 <main id="view"></main>
@@ -241,8 +242,23 @@ details[open] summary{margin-bottom:8px}
 "use strict";
 const $ = (id) => document.getElementById(id);
 const API = location.pathname.startsWith('/mqtt-bridge') ? '/mqtt-bridge/ui/api' : '/api';
-const TOKEN = new URLSearchParams(location.search).get('token') || '';
+/* Token handling.
+   A token in the query string is accepted once, stored, then stripped from the
+   URL — leaving it there would persist a credential in browser history, in the
+   address bar, and in any screenshot of this page. Afterwards the bare URL
+   works. */
+let TOKEN = '';
+try { TOKEN = localStorage.getItem('mesh-token') || ''; } catch {}
+(() => {
+  const fromUrl = new URLSearchParams(location.search).get('token');
+  if (!fromUrl) return;
+  TOKEN = fromUrl;
+  try { localStorage.setItem('mesh-token', TOKEN); } catch {}
+  const clean = location.pathname + location.hash;
+  history.replaceState(null, '', clean);
+})();
 const q = (p) => TOKEN ? `${p}${p.includes('?') ? '&' : '?'}token=${encodeURIComponent(TOKEN)}` : p;
+function signOut() { TOKEN = ''; try { localStorage.removeItem('mesh-token'); } catch {} location.reload(); }
 
 let profile = null, status = null, jobs = { active: [], history: [] };
 let page = 'overview';
@@ -292,7 +308,13 @@ function copy(text, what) {
 }
 
 /* ── data ── */
-async function getJSON(p) { const r = await fetch(q(API + p)); if (!r.ok) throw new Error(r.status); return r.json(); }
+let needsAuth = false;
+async function getJSON(p) {
+  const r = await fetch(q(API + p));
+  if (r.status === 401) { needsAuth = true; throw new Error('401'); }
+  if (!r.ok) throw new Error(String(r.status));
+  return r.json();
+}
 async function post(p, body) {
   const r = await fetch(q(API + p), {
     method: 'POST',
@@ -306,10 +328,34 @@ async function post(p, body) {
 }
 async function loadAll() {
   try {
+    needsAuth = false;
     [profile, status, jobs] = await Promise.all([getJSON('/profile'), getJSON('/status'), getJSON('/jobs')]);
     setLink(status.connected);
     render();
-  } catch { setLink(false, 'api unreachable'); }
+  } catch {
+    if (needsAuth) { renderSignIn(); return; }
+    setLink(false, 'api unreachable');
+  }
+}
+
+function renderSignIn() {
+  setLink(false, 'not signed in');
+  $('nav').innerHTML = '';
+  $('view').innerHTML = `
+    <div class="panel" style="max-width:520px;margin:8vh auto 0">
+      <div class="panel-h"><span class="eyebrow">Sign in</span></div>
+      <div class="panel-b stack">
+        <p class="note">${TOKEN ? 'That token was not accepted. It may have been rotated.' :
+          'This panel is protected by a token.'} It is the <code>web.auth</code> value in your
+          plugin config, under <code>mqtt-bridge → config → web</code>.</p>
+        <div class="field"><label for="tok">Panel token</label>
+          <input id="tok" type="password" class="mono" autocomplete="current-password"
+                 placeholder="paste the token" autofocus></div>
+        <div class="rowflex"><button class="btn" id="tok-go">Sign in</button>
+          <span class="note">Stored in this browser — you will not need it again on this machine.</span></div>
+      </div>
+    </div>`;
+  $('tok')?.focus();
 }
 
 function setLink(up, txt) {
@@ -356,6 +402,7 @@ function startPoll() { if (!poll) { poll = setInterval(loadAll, 3000); setLink(f
 /* ── views ── */
 function render() {
   $('agentTag').textContent = status ? `${status.agentId} · ${status.meshRoot}` : '—';
+  $('signOut').hidden = !TOKEN;
   $('nav').innerHTML = PAGES.map(([k, label]) =>
     `<button data-p="${k}" aria-current="${page === k}">${label}</button>`).join('');
   const v = $('view');
@@ -857,6 +904,13 @@ document.addEventListener('click', async (e) => {
     if (!confirm(`Delete ${d.delvar}?\n\nPrompts referencing it will substitute empty on the next job.`)) return;
     saveVar(d.delvar, '', true);
   }
+  else if (t.id === 'tok-go') {
+    const v = $('tok').value.trim();
+    if (!v) return toast('Paste the token first');
+    TOKEN = v; try { localStorage.setItem('mesh-token', v); } catch {}
+    loadAll().then(() => { if (!needsAuth) { stream(); toast('Signed in'); } });
+  }
+  else if (t.id === 'signOut') signOut();
   else if (t.id === 'r-go') dispatch();
   else if (t.id === 'themeBtn') {
     const now = document.documentElement.getAttribute('data-theme')

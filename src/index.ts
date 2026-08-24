@@ -889,9 +889,14 @@ export default definePluginEntry({
         // On the standalone port, accept both /api/* and the gateway-style path
         if (!p.startsWith(base) && p.startsWith("/api/")) p = base + p;
 
-        if (!authorized(req, url)) {
+        // Guard the DATA, not the shell. The page itself carries no secrets —
+        // every value comes from /api/* — so serving it unauthenticated lets
+        // the panel present a sign-in screen instead of the browser showing a
+        // raw JSON 401 with no way forward.
+        const isApi = p.startsWith(`${base}/api/`);
+        if (isApi && !authorized(req, url)) {
           res.writeHead(401, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ ok: false, error: "unauthorized" }));
+          res.end(JSON.stringify({ ok: false, error: "unauthorized", authRequired: true }));
           return true;
         }
 
