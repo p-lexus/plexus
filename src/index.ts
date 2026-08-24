@@ -133,6 +133,13 @@ interface PluginConfig {
   web?: { enabled?: boolean; path?: string; auth?: string; port?: number };
 }
 
+/** One milestone on a job's timeline, as published to the events topic. */
+interface JobEvent {
+  type: string;
+  note?: string;
+  ts: number;
+}
+
 interface JobRecord {
   jobId: string;
   service?: string;
@@ -141,8 +148,19 @@ interface JobRecord {
   result?: unknown;
   requestedBy?: string;
   owner?: string;
+  /**
+   * Milestone history. Previously only the most recent event survived, which
+   * threw away exactly the information needed to answer "what did this job
+   * actually do?" — including requeues, the signal that matters most when a
+   * job misbehaves.
+   */
+  events?: JobEvent[];
+  createdAt?: number;
+  finishedAt?: number;
   updatedAt: number;
 }
+
+const TERMINAL_STATES = new Set(["done", "error", "duplicate", "timeout", "cancelled", "rejected"]);
 
 // ── Plugin Entry ───────────────────────────────────────
 
@@ -246,6 +264,16 @@ export default definePluginEntry({
 
     let client: mqtt.MqttClient | null = null;
     const stats = { rx: 0, tx: 0, reconnects: 0, connectedAt: 0, lastError: "" };
+    /**
+     * Connection facts the operator needs to trust the mesh. Mutable and
+     * populated once the transport is configured, so the HTTP layer can read
+     * it without depending on declaration order.
+     *
+     * `durable` is the one that matters: it goes false when a clientId
+     * collision forces a disambiguated session, which silently changes whether
+     * jobs published during downtime survive.
+     */
+    const session = { clientId: "", mqttVersion: 4, keepalive: 30, durable: true };
     const activeJobs = new Set<string>();
     // Jobs cancelled by a client. The mesh guarantees no further job traffic
     // after cancel_acknowledged, so any late executor publish is suppressed.
@@ -302,20 +330,35 @@ export default definePluginEntry({
         lastError: stats.lastError,
         activeJobs: [...activeJobs],
         agentId, meshRoot, protocolVersion: PROTOCOL_VERSION,
+        session: { ...session },
+        ownerPolicy: { required: requireOwner, verified: verifyOwner },
       };
     }
 
-    function recordJob(rec: Partial<JobRecord> & { jobId: string }) {
+    const MAX_JOB_EVENTS = 24;
+
+    function recordJob(
+      rec: Partial<JobRecord> & { jobId: string },
+      event?: { type: string; note?: string },
+    ) {
+      const now = Date.now();
       const existing = jobHistory.find((j) => j.jobId === rec.jobId);
       let merged: JobRecord;
       if (existing) {
-        Object.assign(existing, rec, { updatedAt: Date.now() });
+        Object.assign(existing, rec, { updatedAt: now });
         merged = existing;
       } else {
-        merged = { state: "accepted", updatedAt: Date.now(), ...rec } as JobRecord;
+        merged = { state: "accepted", createdAt: now, events: [], updatedAt: now, ...rec } as JobRecord;
         jobHistory.push(merged);
         if (jobHistory.length > MAX_HISTORY) jobHistory.shift();
       }
+      merged.createdAt ??= now;
+      if (event) {
+        (merged.events ??= []).push({ type: event.type, note: event.note, ts: now });
+        if (merged.events.length > MAX_JOB_EVENTS) merged.events.shift();
+      }
+      // Stamped once, so a late duplicate publish can't restart the clock.
+      if (TERMINAL_STATES.has(merged.state)) merged.finishedAt ??= now;
       sseBroadcast("job", merged);
     }
 
@@ -944,6 +987,9 @@ export default definePluginEntry({
 
     const protocolVersion = cfg.broker.protocolVersion ?? 4;
     const sessionExpirySeconds = cfg.broker.sessionExpirySeconds ?? 86_400;
+    session.clientId = baseClientId;
+    session.mqttVersion = protocolVersion;
+    session.keepalive = cfg.broker.keepalive ?? 30;
     // Kick-loop detector: a stable clientId is what makes the session durable,
     // but two instances sharing one id will fight over it. Surface that clearly
     // instead of letting it look like flaky networking.
@@ -1027,6 +1073,8 @@ export default definePluginEntry({
           .digest("hex")
           .slice(0, 4)}`;
         recentConnects.length = 0;
+        session.durable = false;
+        session.clientId = `${baseClientId}${idSuffix}`;
         alert(
           `mqtt-bridge: clientId collision on "${baseClientId}" — 5+ connects in 60s means another ` +
           `client holds this session and the broker is kicking us back and forth. Switching to ` +
@@ -1074,10 +1122,21 @@ export default definePluginEntry({
         if (cancelledJobs.has(jobId)) return;
 
         if (kind === "events") {
-          recordJob({ jobId, lastEvent: data?.type ?? raw.slice(0, 60), requestedBy: data?.owner, owner });
+          const type = String(data?.type ?? "message");
+          // note carries whatever the executor chose to say; fall back to a
+          // trimmed payload so a non-conforming publish still shows something.
+          const note = data?.note ?? data?.stage ?? data?.error ??
+            (data ? undefined : raw.slice(0, 120));
+          recordJob(
+            { jobId, lastEvent: type, requestedBy: data?.owner, owner },
+            { type, note: note ? String(note).slice(0, 240) : undefined },
+          );
           markAgentActivity(jobId); // any events publish = executor is alive
         } else {
-          recordJob({ jobId, result: data, state: data?.type === "error" ? "error" : "done", requestedBy: data?.owner, owner });
+          recordJob(
+            { jobId, result: data, state: data?.type === "error" ? "error" : "done", requestedBy: data?.owner, owner },
+            { type: String(data?.type ?? "result"), note: data?.error ? String(data.error).slice(0, 240) : undefined },
+          );
           activeJobs.delete(jobId);
           watchedJobs.delete(jobId); // terminal state — stop watching
         }

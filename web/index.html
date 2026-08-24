@@ -3,236 +3,682 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Agent Mesh Control</title>
+<title>Mesh Console</title>
 <style>
-:root{--navy:#092B4C;--blue:#1D4AFF;--bg:#F5F7FA;--card:#fff;--border:#D8DEE9;--ok:#0E9F6E;--err:#E02424;--mono:ui-monospace,Menlo,monospace}
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--navy);font-size:14px}
-header{background:var(--navy);color:#fff;padding:0 24px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap}
-header h1{font-size:15px;font-weight:700;padding:13px 0}
-nav{display:flex;gap:2px}
-nav a{color:#B9C6DA;text-decoration:none;font-size:13px;font-weight:600;padding:16px 13px;border-bottom:3px solid transparent;cursor:pointer}
-nav a:hover{color:#fff}
-nav a.active{color:#fff;border-bottom-color:var(--blue)}
-.hstatus{display:flex;align-items:center;gap:7px;font-size:12px}
-.dot{width:9px;height:9px;border-radius:50%;background:var(--err);display:inline-block}
-.dot.on{background:var(--ok)}
-main{max-width:1100px;margin:20px auto;padding:0 20px}
-.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:16px}
-.card h2{font-size:14.5px;font-weight:700;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center}
-button{background:var(--blue);color:#fff;border:0;border-radius:8px;padding:9px 16px;font-size:13px;font-weight:600;cursor:pointer}
-button:hover{opacity:.88}
-button.ghost{background:#fff;color:var(--blue);border:1.5px solid var(--blue)}
-button.danger{background:var(--err)}
-button:disabled{opacity:.4;cursor:not-allowed}
-input,select,textarea{width:100%;border:1px solid var(--border);border-radius:8px;padding:9px;font-size:13px;font-family:var(--mono);background:#fff;color:var(--navy)}
-textarea{min-height:110px;resize:vertical}
-label{font-size:12px;font-weight:700;color:#48566B;display:block;margin:12px 0 4px}
-.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-.hint{font-size:11.5px;color:#6B788E}
-.empty{color:#6B788E;font-size:13px;padding:14px;text-align:center}
-pre.json{background:#0B1D33;color:#C9E3FF;font-family:var(--mono);font-size:11.8px;padding:12px;border-radius:8px;overflow:auto;max-height:300px;white-space:pre-wrap;word-break:break-word}
-.stat{display:flex;gap:22px;flex-wrap:wrap;font-size:13px}
-.stat b{font-family:var(--mono)}
-.cap{border:1px solid var(--border);border-radius:10px;padding:14px;margin:8px 0;background:#FBFCFE}
-.svc{font-family:var(--mono);color:var(--blue);font-weight:700;font-size:13px}
-.desc{font-size:12.5px;color:#48566B;margin:5px 0;line-height:1.45}
-.job{border:1px solid var(--border);border-left:3px solid var(--blue);border-radius:0 10px 10px 0;padding:12px;margin:10px 0;background:#fff}
-.job.done{border-left-color:var(--ok)}.job.error{border-left-color:var(--err)}
-.jhead{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
-.jid{font-family:var(--mono);font-size:12.5px;font-weight:700}
-.pill{font-size:11px;font-weight:700;padding:3px 10px;border-radius:99px}
-.pill.running{background:#FFF6E5;color:#C27803}.pill.done{background:#E6F6EF;color:var(--ok)}.pill.error{background:#FDE8E8;color:var(--err)}
-details summary{cursor:pointer;color:var(--blue);font-size:12px}
-#toast{position:fixed;bottom:20px;right:20px;background:var(--navy);color:#fff;padding:12px 18px;border-radius:10px;font-size:13px;display:none;max-width:480px;box-shadow:0 8px 30px rgba(9,43,76,.4);z-index:30}
+/* ── Tokens ────────────────────────────────────────────────────────────────
+   Light palette on bare :root. Dark redefines TOKENS ONLY, guarded so an
+   explicit light choice beats a dark OS. Nothing below defines a colour
+   outside this block. Neutrals carry a teal bias so they read as chosen. */
+:root{
+  --ground:#F4F7F8; --surface:#FFFFFF; --surface-2:#EDF2F3; --sunken:#0D1A1F;
+  --ink:#0F1E24; --ink-2:#3C555E; --muted:#6B858E; --line:#DBE5E8; --line-2:#C7D6DA;
+  --accent:#0E7C86; --accent-ink:#FFFFFF; --accent-soft:#DDF0F1;
+  --ok:#1B7F4C; --ok-soft:#DEF1E6;
+  --run:#B45309; --run-soft:#FBEEDC;
+  --err:#B42318; --err-soft:#FBE4E2;
+  --hold:#5B53A5; --hold-soft:#E7E5F5;
+  --code:#CFE7EA;
+  --shadow:0 1px 2px rgba(15,30,36,.06), 0 8px 24px -12px rgba(15,30,36,.18);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#0A1317; --surface:#101E23; --surface-2:#16272D; --sunken:#070F12;
+    --ink:#E4EFF1; --ink-2:#AFC6CC; --muted:#7D979F; --line:#1D3037; --line-2:#274049;
+    --accent:#2FB3BE; --accent-ink:#04191C; --accent-soft:#0E3238;
+    --ok:#4ECB8B; --ok-soft:#0C2A1D;
+    --run:#E0A045; --run-soft:#2E2113;
+    --err:#F0736A; --err-soft:#331616;
+    --hold:#9C93E8; --hold-soft:#1D1B33;
+    --code:#BEDDE1;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 28px -14px rgba(0,0,0,.7);
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#0A1317; --surface:#101E23; --surface-2:#16272D; --sunken:#070F12;
+  --ink:#E4EFF1; --ink-2:#AFC6CC; --muted:#7D979F; --line:#1D3037; --line-2:#274049;
+  --accent:#2FB3BE; --accent-ink:#04191C; --accent-soft:#0E3238;
+  --ok:#4ECB8B; --ok-soft:#0C2A1D;
+  --run:#E0A045; --run-soft:#2E2113;
+  --err:#F0736A; --err-soft:#331616;
+  --hold:#9C93E8; --hold-soft:#1D1B33;
+  --code:#BEDDE1;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 28px -14px rgba(0,0,0,.7);
+}
+
+/* ── Base ── */
+*,*::before,*::after{box-sizing:border-box}
+*{margin:0}
+html{-webkit-text-size-adjust:100%}
+body{
+  background:var(--ground); color:var(--ink);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  font-size:14px; line-height:1.5;
+  /* No webfont: this panel is served locally and must work offline, so a CDN
+     face would risk a silent fallback. The mono stack carries the identity. */
+}
+:root{--mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace}
+code,kbd,.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+a{color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+/* ── Chrome ── */
+header{
+  position:sticky; top:0; z-index:20; background:var(--surface);
+  border-bottom:1px solid var(--line); display:flex; align-items:center;
+  gap:20px; padding:0 20px; flex-wrap:wrap;
+}
+.brand{display:flex;align-items:baseline;gap:9px;padding:14px 0;margin-right:2px}
+.brand b{font-size:14px;font-weight:650;letter-spacing:-.15px}
+.brand span{font-family:var(--mono);font-size:11px;color:var(--muted)}
+nav{display:flex;gap:1px;flex:1;min-width:200px}
+nav button{
+  background:none;border:0;border-bottom:2px solid transparent;color:var(--muted);
+  font:inherit;font-size:13px;font-weight:550;padding:15px 12px 13px;cursor:pointer;
+}
+nav button:hover{color:var(--ink)}
+nav button[aria-current="true"]{color:var(--ink);border-bottom-color:var(--accent)}
+.chrome-right{display:flex;align-items:center;gap:14px;padding:8px 0}
+
+/* Live link state: a signal meter, not a dot — bars animate only while
+   messages are actually arriving, so "connected but idle" reads differently
+   from "connected and busy". */
+.link{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-2)}
+.meter{display:flex;align-items:flex-end;gap:2px;height:14px}
+.meter i{width:3px;background:var(--line-2);border-radius:1px;height:35%}
+.meter i:nth-child(2){height:65%}
+.meter i:nth-child(3){height:100%}
+.link.up .meter i{background:var(--ok)}
+.link.down .meter i{background:var(--err);height:35%}
+.link.rx .meter i{animation:pulse .9s ease-in-out infinite}
+.link.rx .meter i:nth-child(2){animation-delay:.12s}
+.link.rx .meter i:nth-child(3){animation-delay:.24s}
+@keyframes pulse{0%,100%{opacity:.35}50%{opacity:1}}
+.icon-btn{
+  background:none;border:1px solid var(--line);border-radius:7px;color:var(--muted);
+  cursor:pointer;font:inherit;font-size:12px;line-height:1;padding:7px 9px;
+}
+.icon-btn:hover{color:var(--ink);border-color:var(--line-2)}
+
+main{max-width:1160px;margin:0 auto;padding:22px 20px 64px}
+
+/* ── Structure ── */
+.eyebrow{
+  font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--muted);
+}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:11px;box-shadow:var(--shadow)}
+.panel-h{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:13px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.panel-b{padding:16px}
+.stack{display:flex;flex-direction:column;gap:16px}
+.rowflex{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+
+/* Stat tiles: label above, figure dominant, context beneath. */
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:1px;background:var(--line);border-radius:11px;overflow:hidden;border:1px solid var(--line)}
+.tile{background:var(--surface);padding:13px 15px 14px;display:flex;flex-direction:column;gap:3px}
+.tile .v{font-family:var(--mono);font-size:21px;font-weight:600;letter-spacing:-.4px;line-height:1.15}
+.tile .c{font-size:11.5px;color:var(--muted)}
+.tile .v.ok{color:var(--ok)} .tile .v.err{color:var(--err)} .tile .v.run{color:var(--run)}
+
+/* ── Jobs ── */
+.job{border:1px solid var(--line);border-radius:10px;background:var(--surface);overflow:hidden}
+.job+.job{margin-top:9px}
+.job-h{display:grid;grid-template-columns:3px 1fr auto;align-items:stretch;gap:0}
+.stripe{background:var(--line-2)}
+.job.s-done .stripe{background:var(--ok)}
+.job.s-run  .stripe{background:var(--run)}
+.job.s-err  .stripe{background:var(--err)}
+.job.s-hold .stripe{background:var(--hold)}
+.job-main{padding:11px 14px;min-width:0}
+.job-top{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.jid{font-family:var(--mono);font-size:13px;font-weight:600}
+.job-meta{display:flex;gap:7px;flex-wrap:wrap;margin-top:4px;font-size:11.5px;color:var(--muted)}
+.job-meta .sep{color:var(--line-2)}
+.job-act{display:flex;align-items:center;gap:7px;padding:11px 12px}
+
+.chip{
+  display:inline-flex;align-items:center;gap:5px;border-radius:99px;padding:2.5px 9px;
+  font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.03em;
+  text-transform:uppercase;white-space:nowrap;
+}
+.chip.done{background:var(--ok-soft);color:var(--ok)}
+.chip.run{background:var(--run-soft);color:var(--run)}
+.chip.err{background:var(--err-soft);color:var(--err)}
+.chip.hold{background:var(--hold-soft);color:var(--hold)}
+.chip.plain{background:var(--surface-2);color:var(--ink-2)}
+.chip.accent{background:var(--accent-soft);color:var(--accent)}
+
+/* Timeline — the milestone history, previously discarded by the bridge. */
+.job-body{border-top:1px solid var(--line);padding:14px;display:grid;gap:14px;background:var(--surface-2)}
+.tl{display:flex;flex-direction:column;gap:0;position:relative}
+.tl-i{display:grid;grid-template-columns:11px 1fr;gap:10px;padding:0 0 11px;position:relative}
+.tl-i:last-child{padding-bottom:0}
+.tl-i::before{content:"";position:absolute;left:5px;top:12px;bottom:0;width:1px;background:var(--line-2)}
+.tl-i:last-child::before{display:none}
+.tl-dot{width:9px;height:9px;border-radius:50%;background:var(--line-2);margin-top:4px;z-index:1;border:2px solid var(--surface-2)}
+.tl-i.mark .tl-dot{background:var(--accent)}
+.tl-i.bad .tl-dot{background:var(--err)}
+.tl-i.warn .tl-dot{background:var(--run)}
+.tl-t{font-family:var(--mono);font-size:12px;font-weight:600}
+.tl-n{font-size:12px;color:var(--ink-2);margin-top:1px;overflow-wrap:anywhere}
+.tl-ts{font-family:var(--mono);font-size:10.5px;color:var(--muted);margin-top:2px}
+
+pre.payload{
+  background:var(--sunken);color:var(--code);font-family:var(--mono);font-size:11.5px;
+  line-height:1.55;padding:12px 13px;border-radius:8px;overflow-x:auto;max-height:340px;
+  overflow-y:auto;white-space:pre;
+}
+.topic{
+  display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--line);
+  border-radius:7px;padding:7px 9px;font-family:var(--mono);font-size:11.5px;color:var(--ink-2);
+  overflow-x:auto;
+}
+.topic b{color:var(--accent);font-weight:600}
+
+/* ── Forms ── */
+label{display:block;font-size:12px;font-weight:600;color:var(--ink-2);margin-bottom:5px}
+input,select,textarea{
+  width:100%;background:var(--surface);color:var(--ink);border:1px solid var(--line-2);
+  border-radius:8px;padding:8px 10px;font:inherit;font-size:13px;
+}
+input.mono,textarea{font-family:var(--mono);font-size:12.5px}
+textarea{min-height:132px;resize:vertical;line-height:1.55}
+input::placeholder,textarea::placeholder{color:var(--muted)}
+.field+.field{margin-top:13px}
+button.btn{
+  background:var(--accent);color:var(--accent-ink);border:0;border-radius:8px;
+  padding:9px 15px;font:inherit;font-size:13px;font-weight:600;cursor:pointer;
+}
+button.btn:hover{filter:brightness(1.08)}
+button.btn:disabled{opacity:.45;cursor:not-allowed;filter:none}
+button.btn.quiet{background:var(--surface);color:var(--ink-2);border:1px solid var(--line-2)}
+button.btn.quiet:hover{color:var(--ink);filter:none;border-color:var(--muted)}
+button.btn.danger{background:var(--err-soft);color:var(--err);border:1px solid transparent}
+button.btn.small{padding:5px 10px;font-size:12px}
+.filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.filters input{width:auto;flex:1;min-width:150px}
+.filters select{width:auto}
+
+.cap{border:1px solid var(--line);border-radius:10px;padding:14px;background:var(--surface)}
+.cap+.cap{margin-top:9px}
+.cap-n{font-family:var(--mono);font-size:13.5px;font-weight:650;color:var(--accent)}
+.cap-d{font-size:12.5px;color:var(--ink-2);margin:5px 0 9px;max-width:68ch}
+details summary{cursor:pointer;font-size:12px;color:var(--muted);font-weight:550}
+details summary:hover{color:var(--ink-2)}
+details[open] summary{margin-bottom:8px}
+
+.empty{padding:34px 16px;text-align:center;color:var(--muted);font-size:13px}
+.empty b{display:block;color:var(--ink-2);font-size:13.5px;margin-bottom:3px}
+.note{font-size:12px;color:var(--muted);max-width:70ch}
+.warn-bar{
+  display:flex;gap:9px;align-items:flex-start;background:var(--run-soft);color:var(--run);
+  border-radius:9px;padding:11px 13px;font-size:12.5px;
+}
+#toast{
+  position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--ink);
+  color:var(--ground);padding:11px 18px;border-radius:9px;font-size:13px;z-index:60;
+  box-shadow:var(--shadow);opacity:0;pointer-events:none;transition:opacity .16s
+}
+#toast.on{opacity:1}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:7px 16px;font-size:12.5px;align-items:baseline}
+.kv dt{color:var(--muted)}
+.kv dd{font-family:var(--mono);overflow-wrap:anywhere}
 </style>
 </head>
 <body>
 <header>
-  <h1>🔌 Agent Mesh <span style="font-weight:400;opacity:.7;font-size:11.5px">· plugin frontend</span></h1>
-  <nav>
-    <a data-page="dashboard" class="active">Dashboard</a>
-    <a data-page="portfolio">Portfolio</a>
-    <a data-page="invoke">Invoke</a>
-    <a data-page="jobs">Jobs</a>
-    <a data-page="config">Config</a>
-  </nav>
-  <div class="hstatus"><span class="dot" id="hdot"></span><span id="htxt">…</span></div>
+  <div class="brand"><b>Mesh Console</b><span id="agentTag">—</span></div>
+  <nav id="nav"></nav>
+  <div class="chrome-right">
+    <div class="link" id="link"><span class="meter"><i></i><i></i><i></i></span><span id="linkTxt">connecting</span></div>
+    <button class="icon-btn" id="themeBtn" title="Switch theme">Theme</button>
+  </div>
 </header>
-<main><div id="page"></div></main>
-<div id="toast"></div>
+<main id="view"></main>
+<div id="toast" role="status" aria-live="polite"></div>
 
 <script>
-const $=id=>document.getElementById(id);
-const API=location.pathname.startsWith('/mqtt-bridge')?'/mqtt-bridge/ui/api':'/api';
-let profile=null, status=null, jobs=null, page='dashboard';
-const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
-const toast=(m,ms=3000)=>{const t=$('toast');t.textContent=m;t.style.display='block';clearTimeout(t._h);t._h=setTimeout(()=>t.style.display='none',ms);};
-const fmtUp=ms=>ms>0?Math.round(ms/1000)+'s':'—';
+"use strict";
+const $ = (id) => document.getElementById(id);
+const API = location.pathname.startsWith('/mqtt-bridge') ? '/mqtt-bridge/ui/api' : '/api';
+const TOKEN = new URLSearchParams(location.search).get('token') || '';
+const q = (p) => TOKEN ? `${p}${p.includes('?') ? '&' : '?'}token=${encodeURIComponent(TOKEN)}` : p;
 
-// Auth token for the SSE stream (EventSource cannot set headers).
-const TOKEN=new URLSearchParams(location.search).get('token')||'';
-const q=p=>TOKEN?`${p}${p.includes('?')?'&':'?'}token=${encodeURIComponent(TOKEN)}`:p;
+let profile = null, status = null, jobs = { active: [], history: [] };
+let page = 'overview';
+let filter = { text: '', state: 'all' };
+const open = new Set();          // expanded job ids
 
-function setConn(ok,txt){
-  $('hdot').className='dot'+(ok?' on':'');
-  $('htxt').textContent=txt;
+const PAGES = [
+  ['overview', 'Overview'],
+  ['jobs', 'Jobs'],
+  ['run', 'Run a job'],
+  ['services', 'Services'],
+  ['session', 'Session'],
+];
+
+/* ── helpers ── */
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const toast = (m) => { const t = $('toast'); t.textContent = m; t.classList.add('on'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('on'), 2600); };
+
+function dur(ms) {
+  if (!(ms > 0)) return '—';
+  const s = Math.round(ms / 1000);
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + 'm ' + String(s % 60).padStart(2, '0') + 's';
+  return Math.floor(m / 60) + 'h ' + String(m % 60).padStart(2, '0') + 'm';
 }
-// Re-render on push, but never yank the page out from under someone who is
-// typing into the Invoke or Config forms.
-function renderIfSafe(){ if(page==='invoke'||page==='config')return; render(); }
+const clock = (ts) => ts ? new Date(ts).toLocaleTimeString([], { hour12: false }) : '';
+const ago = (ts) => ts ? dur(Date.now() - ts) + ' ago' : '—';
 
-async function refresh(){
-  try{
-    profile=await fetch(q(`${API}/profile`)).then(r=>r.json());
-    status=await fetch(q(`${API}/status`)).then(r=>r.json());
-    jobs=await fetch(q(`${API}/jobs`)).then(r=>r.json());
-    setConn(profile.broker?.connected,profile.broker?.connected?'plugin connected':'plugin disconnected');
+// One vocabulary for state, used by stripe, chip and tile alike.
+const RUNNING = new Set(['accepted', 'started']);
+const BAD = new Set(['error', 'timeout', 'rejected']);
+function tone(state) {
+  if (state === 'done') return 'done';
+  if (RUNNING.has(state)) return 'run';
+  if (BAD.has(state)) return 'err';
+  return 'hold';                      // cancelled, duplicate
+}
+const isRunning = (j) => RUNNING.has(j.state);
+
+function copy(text, what) {
+  navigator.clipboard?.writeText(text).then(
+    () => toast(`Copied ${what}`),
+    () => toast('Copy blocked by the browser'));
+}
+
+/* ── data ── */
+async function getJSON(p) { const r = await fetch(q(API + p)); if (!r.ok) throw new Error(r.status); return r.json(); }
+async function post(p, body) {
+  const r = await fetch(q(API + p), {
+    method: 'POST',
+    headers: Object.assign({ 'Content-Type': 'application/json' }, TOKEN ? { Authorization: 'Bearer ' + TOKEN } : {}),
+    body: JSON.stringify(body),
+  });
+  return { ok: r.ok, data: await r.json().catch(() => ({})) };
+}
+async function loadAll() {
+  try {
+    [profile, status, jobs] = await Promise.all([getJSON('/profile'), getJSON('/status'), getJSON('/jobs')]);
+    setLink(status.connected);
     render();
-  }catch(e){ setConn(false,'api unreachable'); }
+  } catch { setLink(false, 'api unreachable'); }
 }
 
-// ── Push transport: SSE. Falls back to polling only if the stream dies. ──
-let es=null, pollTimer=null;
-function startPollingFallback(){
-  if(pollTimer)return;
-  pollTimer=setInterval(refresh,2500);
-  setConn(false,'reconnecting (polling)');
+function setLink(up, txt) {
+  const el = $('link');
+  el.className = 'link ' + (up ? 'up' : 'down');
+  $('linkTxt').textContent = txt || (up ? 'connected' : 'offline');
 }
-function stopPollingFallback(){ if(pollTimer){clearInterval(pollTimer);pollTimer=null;} }
+let rxTimer = null;
+function flashRx() {
+  const el = $('link');
+  if (!el.classList.contains('up')) return;
+  el.classList.add('rx');
+  clearTimeout(rxTimer);
+  rxTimer = setTimeout(() => el.classList.remove('rx'), 1400);
+}
 
-function connectStream(){
-  try{ es=new EventSource(q(`${API}/events`)); }
-  catch(e){ return startPollingFallback(); }
-
-  es.addEventListener('status',e=>{
-    status=JSON.parse(e.data);
-    if(profile)profile.broker={connected:status.connected,stats:{rx:status.rx,tx:status.tx,connectedAt:Date.now()-(status.uptimeMs||0)}};
-    setConn(status.connected,status.connected?'plugin connected':'plugin disconnected');
-    renderIfSafe();
+/* ── live stream ── */
+let es = null, poll = null;
+function stream() {
+  try { es = new EventSource(q(API + '/events')); } catch { return startPoll(); }
+  es.addEventListener('status', (e) => {
+    status = Object.assign(status || {}, JSON.parse(e.data));
+    setLink(status.connected);
+    if (page === 'overview' || page === 'session') render();
   });
-  es.addEventListener('profile',e=>{ profile=Object.assign(profile||{},JSON.parse(e.data)); renderIfSafe(); });
-  es.addEventListener('snapshot',e=>{ jobs=JSON.parse(e.data); renderIfSafe(); });
-  es.addEventListener('job',e=>{
-    const rec=JSON.parse(e.data);
-    if(!jobs)jobs={active:[],history:[]};
-    const i=jobs.history.findIndex(j=>j.jobId===rec.jobId);
-    if(i>=0)jobs.history[i]=rec; else jobs.history.unshift(rec);
-    if(page==='jobs'||page==='dashboard')render();
+  es.addEventListener('profile', (e) => { profile = Object.assign(profile || {}, JSON.parse(e.data)); if (page === 'services' || page === 'overview') render(); });
+  es.addEventListener('snapshot', (e) => { jobs = JSON.parse(e.data); render(); });
+  es.addEventListener('job', (e) => {
+    const rec = JSON.parse(e.data);
+    jobs.history = jobs.history || [];
+    const i = jobs.history.findIndex((j) => j.jobId === rec.jobId);
+    if (i >= 0) jobs.history[i] = rec; else jobs.history.unshift(rec);
+    flashRx();
+    if (page === 'jobs' || page === 'overview') render();
   });
-  es.onopen=()=>{ stopPollingFallback(); };
-  es.onerror=()=>{
-    // EventSource retries on its own; poll meanwhile so the panel stays live.
-    if(es&&es.readyState===2){ es=null; startPollingFallback(); setTimeout(connectStream,5000); }
-    else setConn(false,'stream reconnecting…');
+  es.onopen = () => { if (poll) { clearInterval(poll); poll = null; } };
+  es.onerror = () => {
+    if (es && es.readyState === 2) { es = null; startPoll(); setTimeout(stream, 5000); }
+    else setLink(false, 'reconnecting');
   };
 }
+function startPoll() { if (!poll) { poll = setInterval(loadAll, 3000); setLink(false, 'polling'); } }
 
-function render(){
-  const el=$('page');
-  if(page==='dashboard'){
-    el.innerHTML=`<div class="card"><h2>🩺 Plugin status</h2><div class="stat">
-      <span>Broker: <b>${profile.broker?.connected?'✅ connected':'❌ disconnected'}</b></span>
-      <span>Uptime: <b>${fmtUp(profile.broker?.stats?.connectedAt?Date.now()-profile.broker.stats.connectedAt:0)}</b></span>
-      <span>Reconnects: <b>${status?.reconnects??'—'}</b></span>
-      <span>MQTT rx/tx: <b>${profile.broker?.stats?.rx??0}/${profile.broker?.stats?.tx??0}</b></span>
-      <span>Capabilities: <b>${profile.capabilities?.length??'—'}</b></span>
-      <span>Active jobs: <b>${(status?.activeJobs??[]).length}</b></span>
-      <span>Panel transport: <b>${es&&es.readyState===1?'⚡ SSE push':'↻ polling'}</b></span>
-      <span>Protocol: <b>${esc(profile.protocolVersion||status?.protocolVersion||'—')}</b></span>
-      <span>Owner: <b>${profile.ownerPolicy?.required?'required':'optional'}${profile.ownerPolicy?.verified?' + verified':''}</b></span>
-    </div>${status?.lastError?`<p class="hint" style="margin-top:8px;color:var(--err)">last error: ${esc(status.lastError)}</p>`:''}</div>
-    <div class="card"><h2>⚡ Quick review</h2>
-      <div class="row"><input id="qRepo" placeholder="repo (owner/name)" style="flex:1;min-width:220px" >
-      <input id="qPr" placeholder="pr number" style="max-width:110px">
-      <button onclick="quickReview()">Review PR</button></div></div>`;
+/* ── views ── */
+function render() {
+  $('agentTag').textContent = status ? `${status.agentId} · ${status.meshRoot}` : '—';
+  $('nav').innerHTML = PAGES.map(([k, label]) =>
+    `<button data-p="${k}" aria-current="${page === k}">${label}</button>`).join('');
+  const v = $('view');
+  if (!profile || !status) { v.innerHTML = `<div class="panel"><div class="empty">Connecting to the bridge…</div></div>`; return; }
+  v.innerHTML = ({ overview, jobs: jobsView, run: runView, services, session: sessionView })[page]();
+  if (page === 'run') fillArgs();
+}
+
+function overview() {
+  const h = jobs.history || [];
+  const live = h.filter(isRunning);
+  const done = h.filter((j) => j.state === 'done');
+  const bad = h.filter((j) => BAD.has(j.state));
+  const requeued = h.filter((j) => (j.events || []).some((e) => e.type === 'requeued'));
+  const durations = done.filter((j) => j.finishedAt && j.createdAt).map((j) => j.finishedAt - j.createdAt);
+  const median = durations.length ? durations.slice().sort((a, b) => a - b)[Math.floor(durations.length / 2)] : 0;
+
+  return `
+  <div class="stack">
+    ${status.connected ? '' : `<div class="warn-bar"><span>⚠</span><div><b>The bridge is not connected to the broker.</b> Jobs published now are queued by the broker and delivered when it reconnects${status.lastError ? ` — last error: ${esc(status.lastError)}` : ''}.</div></div>`}
+    ${status.session && status.session.durable === false ? `<div class="warn-bar"><span>⚠</span><div><b>Session durability is degraded.</b> A client id collision forced a new session, so jobs published while this agent is offline will not be queued. Set a distinct <code>broker.clientId</code> and restart.</div></div>` : ''}
+    ${requeued.length ? `<div class="warn-bar"><span>⚠</span><div><b>${requeued.length} job${requeued.length > 1 ? 's were' : ' was'} re-dispatched by the watchdog.</b> That means an executor finished without publishing a result. Open the job to see its timeline.</div></div>` : ''}
+
+    <div class="tiles">
+      <div class="tile"><span class="eyebrow">Running</span><span class="v ${live.length ? 'run' : ''}">${live.length}</span><span class="c">${live.length ? esc(live[0].jobId) : 'idle'}</span></div>
+      <div class="tile"><span class="eyebrow">Completed</span><span class="v ok">${done.length}</span><span class="c">median ${dur(median)}</span></div>
+      <div class="tile"><span class="eyebrow">Failed</span><span class="v ${bad.length ? 'err' : ''}">${bad.length}</span><span class="c">${bad.length ? esc(bad[0].state) + ' most recent' : 'none'}</span></div>
+      <div class="tile"><span class="eyebrow">Uptime</span><span class="v">${dur(status.uptimeMs)}</span><span class="c">${status.reconnects} reconnect${status.reconnects === 1 ? '' : 's'}</span></div>
+      <div class="tile"><span class="eyebrow">Messages in</span><span class="v">${status.rx}</span><span class="c">${status.tx} published</span></div>
+      <div class="tile"><span class="eyebrow">Services</span><span class="v">${(profile.capabilities || []).length}</span><span class="c">protocol ${esc(status.protocolVersion || '—')}</span></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-h"><span class="eyebrow">Live activity</span>
+        <button class="btn quiet small" data-go="jobs">All jobs</button></div>
+      <div class="panel-b">${h.length ? h.slice(0, 6).map(jobCard).join('') : emptyJobs()}</div>
+    </div>
+  </div>`;
+}
+
+function emptyJobs() {
+  return `<div class="empty"><b>No jobs yet</b>Dispatch one from <em>Run a job</em>, or publish to
+    <code>${esc(status.meshRoot)}/commands/${esc(status.agentId)}/invoke</code>.</div>`;
+}
+
+function jobsView() {
+  let h = (jobs.history || []).slice();
+  if (filter.state !== 'all') {
+    h = h.filter((j) => filter.state === 'running' ? isRunning(j)
+      : filter.state === 'failed' ? BAD.has(j.state) : j.state === filter.state);
   }
-  else if(page==='portfolio'){
-    const caps=profile.capabilities||[];
-    el.innerHTML=`<div class="card"><h2>📡 ${esc(profile.displayName||profile.agentId)} <span class="hint">${caps.length} services · proto ${esc(profile.protocolVersion||'1.0')}</span></h2>
-    ${caps.map(c=>`<div class="cap"><div class="svc">${esc(c.service)}</div>
-      <div class="desc">${esc(c.description||'')}</div>
-      <div class="hint">⏱ ${esc(c.avgLatency||'—')} · handler ${esc(c.handler||'session')}</div>
-      <details style="margin-top:6px"><summary>request schema</summary><pre class="json" style="max-height:180px">${esc(JSON.stringify(c.requestSchema,null,1))}</pre></details>
-      <button class="ghost" style="margin-top:8px" onclick="useSvc('${esc(c.service)}')">Use →</button></div>`).join('')||'<div class="empty">no capabilities</div>'}</div>`;
+  if (filter.text) {
+    const t = filter.text.toLowerCase();
+    h = h.filter((j) => [j.jobId, j.service, j.owner, j.requestedBy].some((x) => String(x || '').toLowerCase().includes(t)));
   }
-  else if(page==='invoke'){
-    const caps=profile.capabilities||[];
-    el.innerHTML=`<div class="card"><h2>🚀 Invoke</h2>
-      <label>Service</label><select id="invSvc">${caps.map(c=>`<option>${esc(c.service)}</option>`).join('')}</select>
-      <label>Args (JSON)</label><textarea id="invArgs">{}</textarea>
-      <label>Requested by</label><input id="invBy" value="web-ui">
-      <div style="margin-top:12px"><button onclick="doInvoke()">⚡ Invoke</button> <span class="hint" id="invInfo"></span></div></div>`;
-    fillArgs();
+  return `
+  <div class="stack">
+    <div class="panel">
+      <div class="panel-h">
+        <div class="filters" style="flex:1">
+          <input id="f-text" class="mono" placeholder="Filter by job id, service or owner    /" value="${esc(filter.text)}">
+          <select id="f-state">
+            ${[['all', 'All states'], ['running', 'Running'], ['done', 'Completed'], ['failed', 'Failed'], ['cancelled', 'Cancelled']]
+              .map(([v, l]) => `<option value="${v}"${filter.state === v ? ' selected' : ''}>${l}</option>`).join('')}
+          </select>
+        </div>
+        <span class="eyebrow">${h.length} of ${(jobs.history || []).length}</span>
+      </div>
+      <div class="panel-b">${h.length ? h.map(jobCard).join('') : `<div class="empty"><b>Nothing matches</b>Try a different filter.</div>`}</div>
+    </div>
+  </div>`;
+}
+
+function jobCard(j) {
+  const t = tone(j.state);
+  const expanded = open.has(j.jobId);
+  const elapsed = j.finishedAt ? j.finishedAt - j.createdAt : Date.now() - (j.createdAt || Date.now());
+  const events = j.events || [];
+  const requeues = events.filter((e) => e.type === 'requeued').length;
+  const topic = `${status.meshRoot}/jobs/${j.owner || 'public'}/${j.jobId}`;
+  const verdict = j.result && (j.result.verdict || j.result.type);
+
+  return `
+  <div class="job s-${t}">
+    <div class="job-h">
+      <div class="stripe"></div>
+      <div class="job-main">
+        <div class="job-top">
+          <span class="jid">${esc(j.jobId)}</span>
+          <span class="chip ${t}">${esc(j.state)}</span>
+          ${verdict ? `<span class="chip plain">${esc(verdict)}</span>` : ''}
+          ${requeues ? `<span class="chip err" title="Re-dispatched by the watchdog">requeued ×${requeues}</span>` : ''}
+        </div>
+        <div class="job-meta">
+          <span class="mono">${esc(j.service || 'unknown service')}</span><span class="sep">·</span>
+          <span>owner <span class="mono">${esc(j.owner || j.requestedBy || 'public')}</span></span><span class="sep">·</span>
+          <span>${isRunning(j) ? 'running for' : 'took'} <span class="mono">${dur(elapsed)}</span></span><span class="sep">·</span>
+          <span>${esc(ago(j.updatedAt))}</span>
+        </div>
+      </div>
+      <div class="job-act">
+        ${isRunning(j) ? `<button class="btn danger small" data-cancel="${esc(j.jobId)}">Cancel</button>` : ''}
+        <button class="btn quiet small" data-toggle="${esc(j.jobId)}">${expanded ? 'Hide' : 'Details'}</button>
+      </div>
+    </div>
+    ${expanded ? `
+    <div class="job-body">
+      <div>
+        <div class="eyebrow" style="margin-bottom:9px">Timeline</div>
+        ${events.length ? `<div class="tl">${events.map(tlItem).join('')}</div>`
+          : `<p class="note">No milestones recorded. The executor publishes these to the events topic as it works.</p>`}
+      </div>
+      <div>
+        <div class="eyebrow" style="margin-bottom:7px">Topics</div>
+        <div class="topic"><b>events</b><span>${esc(topic)}/events</span>
+          <button class="btn quiet small" style="margin-left:auto" data-copy="${esc(topic)}/events">Copy</button></div>
+        <div class="topic" style="margin-top:6px"><b>result</b><span>${esc(topic)}/result</span>
+          <button class="btn quiet small" style="margin-left:auto" data-copy="${esc(topic)}/result">Copy</button></div>
+      </div>
+      ${j.result ? `<div>
+        <div class="eyebrow" style="margin-bottom:7px">Result</div>
+        <pre class="payload">${esc(JSON.stringify(j.result, null, 2))}</pre></div>` : ''}
+    </div>` : ''}
+  </div>`;
+}
+
+function tlItem(e) {
+  const bad = /error|timeout|failed/i.test(e.type);
+  const warn = /requeu|cancel|duplicate/i.test(e.type);
+  const mark = /result|review|done|ready/i.test(e.type);
+  return `<div class="tl-i ${bad ? 'bad' : warn ? 'warn' : mark ? 'mark' : ''}">
+    <span class="tl-dot"></span>
+    <div><div class="tl-t">${esc(e.type)}</div>
+      ${e.note ? `<div class="tl-n">${esc(e.note)}</div>` : ''}
+      <div class="tl-ts">${esc(clock(e.ts))}</div></div>
+  </div>`;
+}
+
+function runView() {
+  const caps = profile.capabilities || [];
+  if (!caps.length) return `<div class="panel"><div class="empty"><b>No services</b>Add one under Services.</div></div>`;
+  return `
+  <div class="stack">
+    <div class="panel">
+      <div class="panel-h"><span class="eyebrow">Dispatch a job</span></div>
+      <div class="panel-b">
+        <div class="field"><label for="r-svc">Service</label>
+          <select id="r-svc">${caps.map((c) => `<option>${esc(c.service)}</option>`).join('')}</select></div>
+        <div class="field"><label for="r-by">Requested by</label>
+          <input id="r-by" class="mono" value="web-ui">
+          <p class="note" style="margin-top:5px">Scopes the job. You receive results on
+            <code>${esc(status.meshRoot)}/jobs/&lt;requested-by&gt;/#</code>.</p></div>
+        <div class="field"><label for="r-args">Arguments</label>
+          <textarea id="r-args" spellcheck="false">{}</textarea></div>
+        <div class="rowflex" style="margin-top:14px">
+          <button class="btn" id="r-go">Dispatch</button>
+          <span class="note" id="r-out"></span>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function services() {
+  const caps = profile.capabilities || [];
+  return `
+  <div class="stack">
+    <div class="panel">
+      <div class="panel-h"><span class="eyebrow">${caps.length} service${caps.length === 1 ? '' : 's'}</span>
+        <span class="note">Published to <code>${esc(status.meshRoot)}/registry/${esc(status.agentId)}/profile</code></span></div>
+      <div class="panel-b">
+        ${caps.map((c) => `
+          <div class="cap">
+            <div class="rowflex" style="justify-content:space-between">
+              <span class="cap-n">${esc(c.service)}</span>
+              <div class="rowflex">
+                ${c.avgLatency ? `<span class="chip plain">${esc(c.avgLatency)}</span>` : ''}
+                <button class="btn quiet small" data-use="${esc(c.service)}">Run</button>
+                <button class="btn danger small" data-del="${esc(c.service)}">Remove</button>
+              </div>
+            </div>
+            <p class="cap-d">${esc(c.description || '')}</p>
+            <details><summary>Request schema</summary>
+              <pre class="payload">${esc(JSON.stringify(c.requestSchema || {}, null, 2))}</pre></details>
+          </div>`).join('') || `<div class="empty"><b>No services</b>Add one below.</div>`}
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-h"><span class="eyebrow">Add a service</span></div>
+      <div class="panel-b">
+        <div class="field"><label for="a-name">Name</label>
+          <input id="a-name" class="mono" placeholder="db.schema_review"></div>
+        <div class="field"><label for="a-desc">What it does</label>
+          <input id="a-desc" placeholder="Review a migration for lock risk and index coverage"></div>
+        <div class="field"><label for="a-prompt">Prompt template</label>
+          <textarea id="a-prompt" spellcheck="false">Review migration {{migration}} in {{repo}}.</textarea>
+          <p class="note" style="margin-top:5px"><code>{{name}}</code> is filled from the job arguments.
+            <code>${'$'}{VAR}</code> is filled from <code>mesh.promptVars</code> or the environment — use it for
+            deployment values so they never reach the published catalog.</p></div>
+        <div class="rowflex" style="margin-top:14px"><button class="btn" id="a-go">Add service</button></div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function sessionView() {
+  const s = status.session || {};
+  const op = status.ownerPolicy || profile.ownerPolicy || {};
+  return `
+  <div class="stack">
+    ${s.durable === false ? `<div class="warn-bar"><span>⚠</span><div><b>Durability degraded.</b> A client id collision forced a disambiguated session. Jobs published while this agent is offline are no longer queued.</div></div>` : ''}
+    <div class="panel">
+      <div class="panel-h"><span class="eyebrow">Broker session</span></div>
+      <div class="panel-b"><dl class="kv">
+        <dt>Client id</dt><dd>${esc(s.clientId || '—')}</dd>
+        <dt>Protocol</dt><dd>MQTT ${s.mqttVersion === 5 ? '5' : '3.1.1'} · mesh ${esc(status.protocolVersion || '—')}</dd>
+        <dt>Durable session</dt><dd>${s.durable === false ? 'no — jobs lost while offline' : 'yes — offline jobs are queued'}</dd>
+        <dt>Keepalive</dt><dd>${esc(s.keepalive || '—')}s</dd>
+        <dt>Uptime</dt><dd>${dur(status.uptimeMs)} · ${status.reconnects} reconnect${status.reconnects === 1 ? '' : 's'}</dd>
+        <dt>Last error</dt><dd>${status.lastError ? esc(status.lastError) : 'none'}</dd>
+      </dl></div>
+    </div>
+    <div class="panel">
+      <div class="panel-h"><span class="eyebrow">Owner policy</span></div>
+      <div class="panel-b">
+        <dl class="kv">
+          <dt>requestedBy</dt><dd>${op.required ? 'required — unowned jobs are rejected' : 'optional — unowned jobs go to “public”'}</dd>
+          <dt>Verified</dt><dd>${op.verified ? 'yes — checked against broker identity' : 'no — self-declared, not authenticated'}</dd>
+        </dl>
+        ${!op.verified ? `<p class="note" style="margin-top:11px">Owner scoping is a convention here: anyone with broker credentials can claim any owner. Enable <code>mesh.verifyOwner</code> once the broker injects <code>client_username</code>.</p>` : ''}
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-h"><span class="eyebrow">Subscribe</span></div>
+      <div class="panel-b stack" style="gap:6px">
+        ${[['your jobs', `${status.meshRoot}/jobs/<your-name>/#`],
+           ['results only', `${status.meshRoot}/jobs/<your-name>/+/result`],
+           ['dispatch', `${status.meshRoot}/commands/${status.agentId}/invoke`],
+           ['catalog', `${status.meshRoot}/registry/${status.agentId}/profile`]]
+          .map(([k, t]) => `<div class="topic"><b>${esc(k)}</b><span>${esc(t)}</span>
+            <button class="btn quiet small" style="margin-left:auto" data-copy="${esc(t)}">Copy</button></div>`).join('')}
+      </div>
+    </div>
+  </div>`;
+}
+
+/* ── actions ── */
+function sampleArgs(cap) {
+  const out = {};
+  for (const [k, v] of Object.entries(cap.requestSchema || {})) {
+    const t = String(v), optional = t.includes('?');
+    if (optional) continue;                       // keep the starting payload minimal
+    out[k] = t.includes('number') ? 0 : t.includes('boolean') ? false : '';
   }
-  else if(page==='jobs'){
-    const hist=jobs?.history||[];
-    el.innerHTML=`<div class="card"><h2>📥 Jobs <span class="hint">${hist.length} recent</span></h2>
-    ${hist.map(j=>{
-      const running=j.state==='accepted'||j.state==='started';
-      const bad=j.state==='error'||j.state==='timeout'||j.state==='rejected'||j.state==='cancelled';
-      return `<div class="job ${bad?'error':j.state==='done'?'done':''}"><div class="jhead"><span class="jid">${esc(j.jobId)}</span>
-      <span class="hint">${esc(j.service||'')} · ${esc(j.owner||j.requestedBy||'—')} · ${new Date(j.updatedAt).toLocaleTimeString()}</span>
-      <span class="pill ${j.state==='done'?'done':bad?'error':'running'}">${esc(j.state)}</span>
-      ${running?`<button class="danger" style="padding:4px 10px;font-size:11px" onclick="cancelJob('${esc(j.jobId)}')">Cancel</button>`:''}</div>
-      <pre class="json" style="max-height:220px">${esc(j.result?JSON.stringify(j.result,null,2):(j.lastEvent||'…'))}</pre></div>`;
-    }).join('')||'<div class="empty">no jobs yet</div>'}</div>`;
+  return out;
+}
+function fillArgs() {
+  const cap = (profile.capabilities || []).find((c) => c.service === $('r-svc')?.value);
+  if (cap && $('r-args')) $('r-args').value = JSON.stringify(sampleArgs(cap), null, 2);
+}
+async function dispatch() {
+  let args;
+  try { args = JSON.parse($('r-args').value || '{}'); }
+  catch { $('r-out').textContent = 'Arguments must be valid JSON.'; return; }
+  const by = $('r-by').value.trim();
+  if (!by) { $('r-out').textContent = 'Requested by is required — it scopes the job to you.'; return; }
+  const btn = $('r-go'); btn.disabled = true; btn.textContent = 'Dispatching…';
+  const r = await post('/invoke', { service: $('r-svc').value, args, requestedBy: by });
+  btn.disabled = false; btn.textContent = 'Dispatch';
+  if (r.ok) { toast('Dispatched ' + r.data.jobId); open.add(r.data.jobId); page = 'jobs'; await loadAll(); }
+  else $('r-out').textContent = r.data.error || 'Dispatch failed.';
+}
+
+document.addEventListener('click', async (e) => {
+  const t = e.target.closest('button'); if (!t) return;
+  const d = t.dataset;
+  if (d.p) { page = d.p; render(); }
+  else if (d.go) { page = d.go; render(); }
+  else if (d.toggle) { open.has(d.toggle) ? open.delete(d.toggle) : open.add(d.toggle); render(); }
+  else if (d.copy) copy(d.copy, 'topic');
+  else if (d.cancel) {
+    if (!confirm(`Cancel ${d.cancel}?\n\nThe mesh publishes a terminal result immediately and ignores anything the executor sends afterwards. Work already running may still finish internally.`)) return;
+    const r = await post('/cancel', { jobId: d.cancel, requestedBy: 'web-ui' });
+    toast(r.ok ? 'Cancelled ' + d.cancel : 'That job is no longer active');
+    loadAll();
   }
-  else if(page==='config'){
-    const caps=profile.capabilities||[];
-    el.innerHTML=`<div class="card"><h2>➕ Add capability</h2>
-      <label>Service name</label><input id="aName" placeholder="e.g. db.schema_review">
-      <label>Description</label><input id="aDesc">
-      <label>Prompt template ({placeholders} from args)</label><textarea id="aPrompt" style="min-height:70px">Do {{what}} in {{repo}}.</textarea>
-      <div style="margin-top:10px"><button onclick="addCap()">Add</button></div></div>
-    <div class="card"><h2>🗑 Remove</h2><select id="dSel">${caps.map(c=>`<option>${esc(c.service)}</option>`).join('')}</select>
-      <div style="margin-top:10px"><button class="danger" onclick="delCap()">Remove</button></div></div>`;
+  else if (d.use) { page = 'run'; render(); const s = $('r-svc'); if (s) { s.value = d.use; fillArgs(); } }
+  else if (d.del) {
+    if (!confirm(`Remove ${d.del}?\n\nIt disappears from the published catalog immediately.`)) return;
+    const r = await post('/config', { action: 'remove_service', service: d.del });
+    toast(r.ok ? 'Removed ' + d.del : (r.data.error || 'Could not remove it'));
+    loadAll();
   }
-}
-function sampleArgs(cap){
-  const a={};
-  for(const [k,v] of Object.entries(cap.requestSchema||{})){
-    const t=String(v),opt=t.includes('?')||t.includes('optional'),num=t.includes('number'),bool=t.includes('boolean');
-    if(k==='repo')a[k]='owner/repo';
-    else if(num)a[k]=1234;else if(bool)a[k]=false;else a[k]=opt?'':'replace-me';
-  }return a;
-}
-function fillArgs(){const c=(profile.capabilities||[]).find(x=>x.service===$('invSvc')?.value);if(c)$('invArgs').value=JSON.stringify(sampleArgs(c),null,2);}
-function useSvc(s){page='invoke';document.querySelectorAll('nav a').forEach(a=>a.classList.toggle('active',a.dataset.page==='invoke'));render();setTimeout(()=>{$('invSvc').value=s;fillArgs();},50);}
-async function apiPost(path,body){const r=await fetch(q(API+path),{method:'POST',headers:Object.assign({'Content-Type':'application/json'},TOKEN?{Authorization:'Bearer '+TOKEN}:{}),body:JSON.stringify(body)});return{ok:r.ok,data:await r.json()};}
-async function cancelJob(id){
-  if(!confirm('Cancel '+id+'?'))return;
-  const r=await apiPost('/cancel',{jobId:id,requestedBy:$('invBy')?.value||'web-ui'});
-  toast(r.ok?'🛑 cancelled '+id:'❌ not active');
-}
-async function quickReview(){
-  const args={repo:$('qRepo').value,pr:parseInt($('qPr').value)};
-  if(!args.pr)return toast('PR number required');
-  const r=await apiPost('/invoke',{service:'code.review',args});
-  toast(r.ok?`⚡ dispatched ${r.data.jobId}`:'❌ '+(r.data.error||'failed'));
-  if(r.ok)setTimeout(()=>{page='jobs';render();},500);
-}
-async function doInvoke(){
-  let args;try{args=JSON.parse($('invArgs').value);}catch(e){return toast('❌ invalid JSON args');}
-  const r=await apiPost('/invoke',{service:$('invSvc').value,args,requestedBy:$('invBy').value});
-  $('invInfo').textContent=r.ok?'dispatched: '+r.data.jobId:'❌ '+(r.data.error||'');
-  if(r.ok)toast('⚡ '+r.data.jobId);
-}
-async function addCap(){
-  if(!$('aName').value.trim())return toast('name required');
-  const r=await apiPost('/config',{action:'add_service',service:{service:$('aName').value.trim(),description:$('aDesc').value,handler:'session',prompt:$('aPrompt').value}});
-  toast(r.ok?'✅ added — portfolio updated':'❌ '+(r.data.error||''));
-  refresh();
-}
-async function delCap(){
-  if(!confirm('Remove '+$('dSel').value+'?'))return;
-  const r=await apiPost('/config',{action:'remove_service',service:$('dSel').value});
-  toast(r.ok?'✅ removed':'❌ '+(r.data.error||''));
-  refresh();
-}
-document.querySelectorAll('nav a').forEach(a=>a.onclick=()=>{page=a.dataset.page;document.querySelectorAll('nav a').forEach(x=>x.classList.toggle('active',x===a));render();});
-// Initial state over plain HTTP, then switch to the push stream.
-refresh().then(connectStream);
+  else if (t.id === 'r-go') dispatch();
+  else if (t.id === 'a-go') {
+    const name = $('a-name').value.trim();
+    if (!name) return toast('Give the service a name');
+    const r = await post('/config', {
+      action: 'add_service',
+      service: { service: name, description: $('a-desc').value, handler: 'session', prompt: $('a-prompt').value },
+    });
+    toast(r.ok ? 'Added ' + name : (r.data.error || 'Could not add it'));
+    loadAll();
+  }
+  else if (t.id === 'themeBtn') {
+    const now = document.documentElement.getAttribute('data-theme')
+      || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    const next = now === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    try { localStorage.setItem('mesh-theme', next); } catch {}
+  }
+});
+
+document.addEventListener('input', (e) => {
+  if (e.target.id === 'f-text') { filter.text = e.target.value; const p = e.target.selectionStart; render(); const n = $('f-text'); if (n) { n.focus(); n.setSelectionRange(p, p); } }
+  if (e.target.id === 'f-state') { filter.state = e.target.value; render(); }
+  if (e.target.id === 'r-svc') fillArgs();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === '/' && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) {
+    e.preventDefault(); page = 'jobs'; render(); $('f-text')?.focus();
+  }
+});
+
+try { const saved = localStorage.getItem('mesh-theme'); if (saved) document.documentElement.setAttribute('data-theme', saved); } catch {}
+loadAll().then(stream);
+setInterval(() => { if (page === 'overview' || page === 'jobs') render(); }, 15000);  // keeps relative times honest
 </script>
 </body>
 </html>
