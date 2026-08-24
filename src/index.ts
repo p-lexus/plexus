@@ -486,12 +486,19 @@ export default definePluginEntry({
       // WhatsApp-style push. No enqueueSystemEvent/heartbeat dependency, so a
       // busy or failing main session turn can never swallow the job.
       const subagentSessionKey = `agent:main:subagent:mesh-${jobId}`;
+      // NOTE: you are already the isolated executor. This message is delivered
+      // by subagent.run() into a dedicated session, so the work must happen
+      // HERE. Delegating to a nested subagent would let this run settle while
+      // the real work continues elsewhere — which the watchdog correctly reads
+      // as "finished without a result" and re-dispatches, duplicating the job.
       const report =
-        `EXECUTION: spawn an isolated subagent (sessions_spawn, mode run, model GLM) to execute this job — do NOT run it inline in the main session.\n` +
+        `EXECUTION: you are the isolated executor for this job — run it here, in this session. ` +
+        `Do NOT spawn a nested subagent: this run ending is what signals the job is finished, so ` +
+        `delegating would cause the bridge to re-dispatch and duplicate the work.\n` +
         `PROGRESS: publish a milestone to ${meshRoot}/jobs/${owner}/${jobId}/events at least every 2 minutes (type: started, analyzing, result-ready, …).\n` +
-        `RESULT: publish the terminal payload to ${meshRoot}/jobs/${owner}/${jobId}/result with retain=true and a "type" field ` +
+        `RESULT: publish the terminal payload to ${meshRoot}/jobs/${owner}/${jobId}/result with a "type" field ` +
         `(review | already_reviewed | error | duplicate). The bridge injects jobId/owner/ts and forces retain, but set "type" yourself.\n` +
-        `SCOPE: owner is "${owner}" — do NOT publish to the flat jobs/<jobId> topic; the bridge mirrors that for you.`;
+        `SCOPE: owner is "${owner}" — publish only to the owner-scoped topics above.`;
 
       let messageText: string;
       if (cap.prompt) {
@@ -613,10 +620,13 @@ export default definePluginEntry({
         }
 
         if (w.runId && !w.runSettled) continue;        // run in flight → alive by definition
-        if (!w.runId && !w.runSettled) {
-          // Fallback dispatch path (no runId): fall back to the silence heuristic.
-          if (now - w.lastAgentEventAt < REINJECT_AFTER_MS) continue;
-        }
+
+        // Run settled (or we never had a handle). Settlement alone is NOT
+        // sufficient grounds to re-dispatch: the terminal publish may still be
+        // in flight, and an executor that delegates can outlive the run that
+        // started it. Require genuine silence as well, so re-dispatch only
+        // happens when nothing has been heard from the executor at all.
+        if (now - w.lastAgentEventAt < REINJECT_AFTER_MS) continue;
 
         if (w.reinjections < MAX_REINJECTS) {
           const why = w.runId ? "run settled without publishing a result" : "no executor activity";
