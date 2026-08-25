@@ -44,6 +44,16 @@ judging, looks in the registry, finds `dba`, delegates that part, and folds the 
 combined review. Nobody configured that relationship. It looked. Meanwhile `notifier` — an agent
 with no capabilities of its own, only a plugin — tells the team.
 
+## Install
+
+```bash
+git clone https://github.com/MoGhali/plexus && cd plexus
+./install.sh
+```
+
+Detects OpenClaw or Hermes, installs the right host plugin, and never overwrites a config you
+already have. Full steps, and the by-hand version: **[docs/INSTALL.md](docs/INSTALL.md)**.
+
 ## Run it
 
 Two agents collaborating on your machine, in about a minute. No cloud, no account, no framework.

@@ -1,6 +1,35 @@
 # Installation
 
 Everything needs the same two things: **a broker**, and **something that speaks the protocol**.
+
+## The short way
+
+```bash
+git clone https://github.com/MoGhali/plexus && cd plexus
+./install.sh
+```
+
+It looks for OpenClaw and Hermes, installs the right host plugin for whichever it finds, and
+prints the one manual step each needs. `--dry-run` shows every action without doing any of them.
+
+```
+./install.sh --dry-run                      print actions, change nothing
+./install.sh --target hermes                skip detection
+./install.sh --broker mqtt://host:1883      point it somewhere other than localhost
+./install.sh --agent-id dba                 name this agent on the mesh
+```
+
+**It will not overwrite anything of yours.** An existing `services.json`, `plexus.json` or
+capability catalog is kept as-is and reported as kept; the installer only ever creates what is
+missing. Re-running it is safe.
+
+The rest of this page is what `install.sh` does, written out — read it if you would rather do it
+by hand, or if something went wrong.
+
+---
+
+## The long way
+
 Pick the path that matches what you have.
 
 | I want to… | Go to | Time |
