@@ -15,6 +15,7 @@
   <a href="PROTOCOL.md"><img alt="Protocol v1.3" src="https://img.shields.io/badge/protocol-v1.3-3fb9a5"></a>
   <img alt="Node 18+" src="https://img.shields.io/badge/node-%E2%89%A5%2018-3fb9a5">
   <img alt="One dependency" src="https://img.shields.io/badge/dependencies-1-3fb9a5">
+  <img alt="macOS | Linux | Windows" src="https://img.shields.io/badge/macOS%20%7C%20Linux%20%7C%20Windows-3fb9a5">
 </p>
 
 <p align="center">
@@ -23,7 +24,7 @@
   <a href="packages/agent">Client library</a> ·
   <a href="packages/notify">Plugins</a> ·
   <a href="hosts/hermes">Hermes</a> ·
-  <a href="docs/INSTALL.md">Install</a> ·
+  <a href="docs/INSTALL.md">Install (macOS · Linux · Windows)</a> ·
   <a href="#run-it">Run it</a>
 </p>
 
@@ -501,8 +502,7 @@ that offline jobs survive.
 
 ## Install
 
-**[docs/INSTALL.md](docs/INSTALL.md)** is the full guide: OpenClaw, Hermes, your own agent and
-plugins, with **macOS, Linux and Windows** commands for each, and a troubleshooting table.
+Runs on **macOS, Linux and Windows**.
 
 ```bash
 git clone https://github.com/MoGhali/plexus && cd plexus
@@ -510,7 +510,26 @@ git clone https://github.com/MoGhali/plexus && cd plexus
 ```
 
 It detects OpenClaw or Hermes, installs the right host plugin, and never overwrites a config you
-already have. Re-run it to update.
+already have. Re-run it to update. On Windows it works under Git Bash or WSL; for native
+PowerShell the steps are written out in the guide.
+
+Platforms differ in exactly two ways — where files live, and how a service restarts:
+
+| | macOS | Linux | Windows |
+|---|---|---|---|
+| OpenClaw plugin | `~/.openclaw/extensions/mqtt-bridge` | same | `%USERPROFILE%\.openclaw\extensions\mqtt-bridge` |
+| OpenClaw config | `~/.openclaw/openclaw.json` | same | `%USERPROFILE%\.openclaw\openclaw.json` |
+| Hermes plugin | `~/.hermes/plugins/plexus` | same | `%USERPROFILE%\.hermes\plugins\plexus` |
+| Hermes config | `~/.hermes/plexus.json` | same | `%USERPROFILE%\.hermes\plexus.json` |
+| Restart the gateway | `openclaw gateway restart` | same | same |
+| Gateway logs | `/tmp/openclaw/openclaw-<date>.log` | same | `%TEMP%\openclaw\openclaw-<date>.log` |
+
+The second difference turns out not to be one: `openclaw gateway restart` drives launchd, systemd
+or Task Scheduler depending on the platform, so it is the same command everywhere.
+
+**[docs/INSTALL.md](docs/INSTALL.md)** is the full guide — OpenClaw, Hermes, your own agent and
+plugins, with macOS/Linux **and PowerShell** commands for each, prerequisites, and a
+troubleshooting table.
 
 Two things catch people out, so they are worth repeating here:
 
