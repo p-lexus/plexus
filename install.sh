@@ -184,14 +184,19 @@ restart_gateway() {
     return 0
   }
 
-  old_pid="$(pgrep -f 'openclaw.*gateway' | head -1 || true)"
-  if [ "$(uname -s)" = "Darwin" ]; then
-    run launchctl kickstart -k "gui/$(id -u)/ai.openclaw.gateway" >/dev/null 2>&1 \
-      || { warn "launchctl restart failed — restart it however you normally do"; return 1; }
-  else
-    run systemctl --user restart openclaw-gateway \
-      || { warn "systemctl restart failed — restart it however you normally do"; return 1; }
+  # `openclaw gateway restart` drives launchd, systemd or schtasks depending on
+  # the platform, so this is the same command on macOS, Linux and Windows.
+  # The service-manager calls below are only a fallback for older CLIs.
+  if command -v openclaw >/dev/null 2>&1; then
+    run openclaw gateway restart >/dev/null 2>&1 && { ok "gateway restarted"; return 0; }
+    warn "openclaw gateway restart failed — trying the service manager directly"
   fi
+
+  old_pid="$(pgrep -f 'openclaw.*gateway' | head -1 || true)"
+  case "$(uname -s)" in
+    Darwin) run launchctl kickstart -k "gui/$(id -u)/ai.openclaw.gateway" >/dev/null 2>&1 ;;
+    *)      run systemctl --user restart openclaw-gateway >/dev/null 2>&1 ;;
+  esac || { warn "could not restart automatically — restart it however you normally do"; return 1; }
 
   [ "$DRY_RUN" -eq 1 ] && return 0
   n=0

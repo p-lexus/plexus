@@ -52,7 +52,11 @@ git clone https://github.com/MoGhali/plexus && cd plexus
 ```
 
 Detects OpenClaw or Hermes, installs the right host plugin, and never overwrites a config you
-already have. Full steps, and the by-hand version: **[docs/INSTALL.md](docs/INSTALL.md)**.
+already have. Re-run it to update — it restarts the gateway only if the compiled output actually
+changed.
+
+**[docs/INSTALL.md](docs/INSTALL.md)** has the by-hand steps for **macOS, Linux and Windows**,
+both platforms, plus a troubleshooting table.
 
 ## Run it
 
@@ -581,8 +585,9 @@ gateway from starting at all.
 ### 4. Restart and verify
 
 ```bash
-launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway     # macOS
-# systemctl --user restart openclaw-gateway                 # Linux
+openclaw config validate     # an invalid config stops the gateway starting at all
+openclaw gateway restart     # drives launchd, systemd or schtasks — same on every platform
+openclaw gateway status
 ```
 
 > **Plugin code changes need a restart.** The gateway caches the loaded module, so a rebuilt
@@ -605,9 +610,15 @@ An installed agent is a clone of this repo, so updates arrive through git rather
 the install:
 
 ```bash
+./install.sh --yes --target openclaw     # pulls, builds, restarts only if the code changed
+```
+
+or by hand:
+
+```bash
 cd ~/.openclaw/extensions/mqtt-bridge
-git pull && npm run build
-launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway
+git pull && npm install && npm run build
+openclaw config validate && openclaw gateway restart
 ```
 
 **Plugin code requires the restart.** The gateway caches the loaded module, so a rebuilt `dist/`

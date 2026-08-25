@@ -50,8 +50,8 @@ By hand, if you prefer:
 ```bash
 cd ~/.openclaw/extensions/mqtt-bridge
 git pull && npm run build
-openclaw config validate                                 # an invalid config stops the gateway
-launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway  # only if the code changed
+openclaw config validate    # an invalid config stops the gateway starting at all
+openclaw gateway restart    # only if the code changed; portable across macOS/Linux/Windows
 ```
 
 Editing the installed copy directly means the next `git pull` either conflicts or silently
