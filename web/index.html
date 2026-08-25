@@ -72,6 +72,7 @@ header{
 }
 .brand{display:flex;align-items:baseline;gap:9px;padding:14px 0;margin-right:2px}
 .brand b{font-size:14px;font-weight:650;letter-spacing:-.15px}
+.brand .mark{color:var(--accent);flex:none;align-self:center}
 .brand span{font-family:var(--mono);font-size:11px;color:var(--muted)}
 nav{display:flex;gap:1px;flex:1;min-width:200px}
 nav button{
@@ -229,7 +230,12 @@ details[open] summary{margin-bottom:8px}
 </head>
 <body>
 <header>
-  <div class="brand"><b>Plexus</b><span id="agentTag">—</span></div>
+  <div class="brand">
+    <svg class="mark" width="16" height="16" viewBox="0 0 64 64" fill="none" stroke="currentColor"
+         stroke-width="7" stroke-linecap="square" aria-hidden="true">
+      <path d="M12 12 L26 26"/><path d="M38 38 L52 52"/>
+      <path d="M52 12 L38 26"/><path d="M26 38 L12 52"/>
+    </svg><b>Plexus</b><span id="agentTag">—</span></div>
   <nav id="nav"></nav>
   <div class="chrome-right">
     <div class="link" id="link"><span class="meter"><i></i><i></i><i></i></span><span id="linkTxt">connecting</span></div>

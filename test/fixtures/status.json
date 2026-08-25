@@ -10,7 +10,7 @@
   ],
   "agentId": "agent",
   "meshRoot": "agents",
-  "protocolVersion": "1.2",
+  "protocolVersion": "1.3",
   "session": {
     "clientId": "openclaw-mqtt-bridge-9f3c1a77b2",
     "mqttVersion": 4,
