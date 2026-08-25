@@ -13,27 +13,32 @@
     .amber{fill:var(--amber)}
     .red{fill:var(--red)}
     .green{fill:var(--green)}
-    .l{opacity:0;animation-duration:5.91s;animation-iteration-count:infinite;animation-timing-function:steps(1,end)}
+    /* Base state is VISIBLE, and the animation hides lines before revealing
+       them. If animations never run — a paused tab, a renderer that does not
+       animate images, a reduced-motion setting — the reader still gets the
+       whole transcript. The opposite default fails to a blank terminal, which
+       reads as broken rather than as an animation that has not started. */
+    .l{opacity:1;animation-duration:5.91s;animation-iteration-count:infinite;animation-timing-function:steps(1,end)}
     @media (prefers-reduced-motion: reduce){.l{opacity:1;animation:none}}
-    @keyframes r0{0%,1.86%{opacity:0}2.21%,100%{opacity:1}}
-    @keyframes r1{0%,3.72%{opacity:0}4.07%,100%{opacity:1}}
-    @keyframes r2{0%,5.58%{opacity:0}5.93%,100%{opacity:1}}
-    @keyframes r3{0%,7.44%{opacity:0}7.79%,100%{opacity:1}}
-    @keyframes r4{0%,15.06%{opacity:0}15.41%,100%{opacity:1}}
-    @keyframes r5{0%,16.92%{opacity:0}17.27%,100%{opacity:1}}
-    @keyframes r6{0%,18.78%{opacity:0}19.13%,100%{opacity:1}}
-    @keyframes r7{0%,23.92%{opacity:0}24.27%,100%{opacity:1}}
-    @keyframes r8{0%,25.78%{opacity:0}26.13%,100%{opacity:1}}
-    @keyframes r9{0%,32.65%{opacity:0}33.00%,100%{opacity:1}}
-    @keyframes r10{0%,34.51%{opacity:0}34.86%,100%{opacity:1}}
-    @keyframes r11{0%,36.37%{opacity:0}36.72%,100%{opacity:1}}
-    @keyframes r12{0%,38.23%{opacity:0}38.58%,100%{opacity:1}}
-    @keyframes r13{0%,40.09%{opacity:0}40.44%,100%{opacity:1}}
-    @keyframes r14{0%,48.57%{opacity:0}48.92%,100%{opacity:1}}
-    @keyframes r15{0%,50.43%{opacity:0}50.78%,100%{opacity:1}}
-    @keyframes r16{0%,52.29%{opacity:0}52.64%,100%{opacity:1}}
-    @keyframes r17{0%,54.15%{opacity:0}54.50%,100%{opacity:1}}
-    @keyframes r18{0%,56.01%{opacity:0}56.36%,100%{opacity:1}}
+    @keyframes r0{0%,9%{opacity:1}9.40%,10.20%{opacity:0}10.55%,100%{opacity:1}}
+    @keyframes r1{0%,9%{opacity:1}9.40%,10.20%{opacity:0}10.55%,100%{opacity:1}}
+    @keyframes r2{0%,9%{opacity:1}9.40%,10.20%{opacity:0}10.55%,100%{opacity:1}}
+    @keyframes r3{0%,9%{opacity:1}9.40%,10.20%{opacity:0}10.55%,100%{opacity:1}}
+    @keyframes r4{0%,9%{opacity:1}9.40%,15.09%{opacity:0}15.44%,100%{opacity:1}}
+    @keyframes r5{0%,9%{opacity:1}9.40%,16.95%{opacity:0}17.30%,100%{opacity:1}}
+    @keyframes r6{0%,9%{opacity:1}9.40%,18.82%{opacity:0}19.17%,100%{opacity:1}}
+    @keyframes r7{0%,9%{opacity:1}9.40%,23.91%{opacity:0}24.26%,100%{opacity:1}}
+    @keyframes r8{0%,9%{opacity:1}9.40%,25.77%{opacity:0}26.12%,100%{opacity:1}}
+    @keyframes r9{0%,9%{opacity:1}9.40%,32.62%{opacity:0}32.97%,100%{opacity:1}}
+    @keyframes r10{0%,9%{opacity:1}9.40%,34.48%{opacity:0}34.83%,100%{opacity:1}}
+    @keyframes r11{0%,9%{opacity:1}9.40%,36.35%{opacity:0}36.70%,100%{opacity:1}}
+    @keyframes r12{0%,9%{opacity:1}9.40%,38.21%{opacity:0}38.56%,100%{opacity:1}}
+    @keyframes r13{0%,9%{opacity:1}9.40%,40.07%{opacity:0}40.42%,100%{opacity:1}}
+    @keyframes r14{0%,9%{opacity:1}9.40%,48.56%{opacity:0}48.91%,100%{opacity:1}}
+    @keyframes r15{0%,9%{opacity:1}9.40%,50.42%{opacity:0}50.77%,100%{opacity:1}}
+    @keyframes r16{0%,9%{opacity:1}9.40%,52.28%{opacity:0}52.63%,100%{opacity:1}}
+    @keyframes r17{0%,9%{opacity:1}9.40%,54.15%{opacity:0}54.50%,100%{opacity:1}}
+    @keyframes r18{0%,9%{opacity:1}9.40%,56.01%{opacity:0}56.36%,100%{opacity:1}}
   </style>
   <rect class="bg" width="1160" height="471" rx="10"/>
   <rect class="chrome" width="1160" height="32" rx="10"/>
@@ -43,7 +48,7 @@
   <circle cx="56" cy="16" r="5" fill="#5fbf8a"/>
   <text class="d" x="76" y="21" style="font-size:11.5px;opacity:1;animation:none">node examples/with-plugins.mjs</text>
   <text class="l" x="22" y="73" style="animation-name:r1">  <tspan class="b">Plexus</tspan> <tspan class="d">— agents do the work, a plugin tells the team</tspan></text>
-  <text class="l" x="22" y="94" style="animation-name:r2"><tspan class="d">  broker mqtt://localhost:1883   root plexus-record-mt8q4xyd</tspan></text>
+  <text class="l" x="22" y="94" style="animation-name:r2"><tspan class="d">  broker mqtt://localhost:1883   root plexus-record-mt93shyd</tspan></text>
   <text class="l" x="22" y="157" style="animation-name:r5"><tspan class="d"> 0.5s</tspan>  <tspan class="teal">alice    </tspan> invoke <tspan class="b">code.review</tspan> <tspan class="d">{ repo: acme/web-app, pr: 42 }</tspan></text>
   <text class="l" x="22" y="178" style="animation-name:r6"><tspan class="d"> 0.5s</tspan>  <tspan class="teal">reviewer </tspan> reviewing <tspan class="b">acme/web-app#42</tspan></text>
   <text class="l" x="22" y="199" style="animation-name:r7"><tspan class="d"> 0.8s</tspan>  <tspan class="teal">reviewer </tspan> found a migration — delegating that part</text>
@@ -52,7 +57,7 @@
   <text class="l" x="22" y="262" style="animation-name:r10"><tspan class="d">         ALTER on users without CONCURRENTLY — locks writes for the whole rebuild</tspan></text>
   <text class="l" x="22" y="283" style="animation-name:r11"><tspan class="d"> 1.2s</tspan>  <tspan class="amber">notify   </tspan> <tspan class="b">Changes requested on acme/web-app#42</tspan></text>
   <text class="l" x="22" y="304" style="animation-name:r12"><tspan class="d">         Application logic is fine. Blocking on the migration: ALTER on users without CONCURRENTLY — locks writes for the whole rebuild</tspan></text>
-  <text class="l" x="22" y="325" style="animation-name:r13"><tspan class="d">         reviewed for alice · job job-e7cb2edd6387</tspan></text>
+  <text class="l" x="22" y="325" style="animation-name:r13"><tspan class="d">         reviewed for alice · job job-b471efb612b3</tspan></text>
   <text class="l" x="22" y="367" style="animation-name:r15"><tspan class="d"> 1.7s</tspan>  <tspan class="teal">alice    </tspan> <tspan class="b">← REQUEST_CHANGES</tspan></text>
   <text class="l" x="22" y="409" style="animation-name:r17">  <tspan class="d">Two agents did the work. A plugin told the team. Neither knows the other exists.</tspan></text>
 </svg>

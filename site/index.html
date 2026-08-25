@@ -1,0 +1,686 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plexus — Agent Mesh Protocol</title>
+<meta name="description" content="A protocol for autonomous agents to dispatch work to each other over MQTT — across laptops, VPNs and containers, none of which can accept an inbound connection.">
+<meta property="og:title" content="Plexus — Agent Mesh Protocol">
+<meta property="og:description" content="One agent asks another for help and gets an answer, even though neither can accept an inbound connection.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='%2312796a' stroke-width='7' stroke-linecap='square'%3E%3Cpath d='M12 12 L26 26'/%3E%3Cpath d='M38 38 L52 52'/%3E%3Cpath d='M52 12 L38 26'/%3E%3Cpath d='M26 38 L12 52'/%3E%3C/svg%3E">
+<style>
+/* ─────────────────────────────────────────────────────────────────────
+   Plexus
+
+   The identity has one idea in it: paths that cross without joining. The
+   E in the wordmark has no stem, and the X in the mark is broken where
+   the strokes meet. Agents reach each other without touching.
+
+   That idea is the layout too — a wire runs down the page and sections
+   are nodes on it, never quite meeting the text they belong to.
+   ───────────────────────────────────────────────────────────────────── */
+
+:root {
+  --ground:   #f7f6f3;
+  --surface:  #ffffff;
+  --sunk:     #eeedea;
+  --ink:      #12211f;
+  --muted:    #61726e;
+  --faint:    #8b9995;
+  --wire:     #d7ded9;
+  --accent:   #0d6b5e;
+  --accent-2: #0a5449;
+  --signal:   #a2661a;
+  --code-bg:  #10201d;
+  --code-ink: #cfe0dc;
+  --radius:   4px;
+  --measure:  66ch;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground:   #0b1110;
+    --surface:  #101816;
+    --sunk:     #0e1514;
+    --ink:      #dce5e2;
+    --muted:    #8a9c97;
+    --faint:    #63756f;
+    --wire:     #1e2b28;
+    --accent:   #4ecdb4;
+    --accent-2: #6fdcc6;
+    --signal:   #dfa557;
+    --code-bg:  #070d0c;
+    --code-ink: #cfe0dc;
+  }
+}
+:root[data-theme="dark"] {
+  --ground:   #0b1110;
+  --surface:  #101816;
+  --sunk:     #0e1514;
+  --ink:      #dce5e2;
+  --muted:    #8a9c97;
+  --faint:    #63756f;
+  --wire:     #1e2b28;
+  --accent:   #4ecdb4;
+  --accent-2: #6fdcc6;
+  --signal:   #dfa557;
+  --code-bg:  #070d0c;
+  --code-ink: #cfe0dc;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font: 400 16.5px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+        "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Monospace carries the identity: this is a wire format, and the type
+   should say so before the words do. */
+.mono, code, pre, .eyebrow, h1, h2, h3, .btn, th {
+  font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas,
+               "Liberation Mono", monospace;
+  font-feature-settings: "liga" 0;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; text-underline-offset: 3px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+
+.wrap { width: min(100% - 2.5rem, 74rem); margin-inline: auto; }
+.prose { max-width: var(--measure); }
+.prose p, .prose li { color: var(--muted); }
+.prose strong { color: var(--ink); font-weight: 600; }
+
+/* ── nav ───────────────────────────────────────────────────────────── */
+header {
+  position: sticky; top: 0; z-index: 20;
+  background: color-mix(in srgb, var(--ground) 88%, transparent);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--wire);
+}
+nav { display: flex; align-items: center; gap: 1.5rem; padding: .85rem 0; }
+.brand { display: flex; align-items: center; gap: .6rem; color: var(--ink); }
+.brand svg.mark { width: 19px; height: 19px; color: var(--accent); flex: none; }
+.brand svg.word { height: 17px; width: auto; color: var(--ink); }
+nav .spacer { flex: 1; }
+nav a.navlink { color: var(--muted); font-size: .84rem; letter-spacing: .02em; }
+nav a.navlink:hover { color: var(--ink); text-decoration: none; }
+@media (max-width: 720px) { nav a.navlink.opt { display: none; } }
+
+.btn {
+  display: inline-flex; align-items: center; gap: .5rem;
+  padding: .58rem 1rem; font-size: .84rem; letter-spacing: .01em;
+  border: 1px solid var(--wire); border-radius: var(--radius);
+  color: var(--ink); background: var(--surface);
+}
+.btn:hover { border-color: var(--accent); color: var(--accent); text-decoration: none; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--ground); }
+.btn.primary:hover { background: var(--accent-2); border-color: var(--accent-2); color: var(--ground); }
+
+/* ── the wire: sections are nodes on a bus ─────────────────────────── */
+main { position: relative; }
+section { padding: 5.5rem 0; border-top: 1px solid var(--wire); }
+section:first-of-type { border-top: 0; }
+
+.eyebrow {
+  display: inline-flex; align-items: center; gap: .6rem;
+  font-size: .72rem; letter-spacing: .16em; text-transform: uppercase;
+  color: var(--faint); margin: 0 0 1.1rem;
+}
+/* A broken X before each eyebrow — the mark, repeated as punctuation. */
+.eyebrow::before {
+  content: ""; width: 11px; height: 11px; flex: none;
+  background: currentColor;
+  -webkit-mask: var(--x) center/contain no-repeat;
+  mask: var(--x) center/contain no-repeat;
+  --x: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='%23000' stroke-width='9' stroke-linecap='square'%3E%3Cpath d='M12 12 L26 26'/%3E%3Cpath d='M38 38 L52 52'/%3E%3Cpath d='M52 12 L38 26'/%3E%3Cpath d='M26 38 L12 52'/%3E%3C/svg%3E");
+}
+
+h1 { font-size: clamp(2rem, 5.2vw, 3.15rem); line-height: 1.08; letter-spacing: -.035em;
+     margin: 0 0 1.3rem; text-wrap: balance; font-weight: 600; }
+h2 { font-size: clamp(1.4rem, 2.6vw, 1.85rem); line-height: 1.2; letter-spacing: -.025em;
+     margin: 0 0 1rem; text-wrap: balance; font-weight: 600; }
+h3 { font-size: 1.02rem; letter-spacing: -.01em; margin: 2.2rem 0 .6rem; font-weight: 600; }
+.lede { font-size: 1.1rem; color: var(--muted); max-width: var(--measure); }
+
+/* ── hero ──────────────────────────────────────────────────────────── */
+.hero { padding: 5rem 0 4rem; }
+.hero .word { width: min(340px, 74vw); height: auto; color: var(--ink); display: block;
+              margin-bottom: 2.2rem; }
+.hero .thesis { font-size: clamp(1.25rem, 2.8vw, 1.7rem); line-height: 1.35; letter-spacing: -.02em;
+                max-width: 30ch; margin: 0 0 1.4rem; color: var(--ink); font-weight: 500; }
+.hero .thesis em { font-style: normal; color: var(--accent); }
+.cta { display: flex; flex-wrap: wrap; gap: .7rem; margin-top: 2rem; }
+
+figure { margin: 2.6rem 0 0; }
+figure img { width: 100%; height: auto; display: block; border: 1px solid var(--wire);
+             border-radius: 6px; background: var(--sunk); }
+figcaption { margin-top: .8rem; font-size: .84rem; color: var(--faint); max-width: var(--measure); }
+
+/* ── code ──────────────────────────────────────────────────────────── */
+pre {
+  background: var(--code-bg); color: var(--code-ink);
+  padding: 1rem 1.15rem; border-radius: 6px; overflow-x: auto;
+  font-size: .82rem; line-height: 1.6; margin: 1.2rem 0;
+  border: 1px solid transparent;
+}
+pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
+code { background: var(--sunk); padding: .12em .38em; border-radius: 3px; font-size: .88em; }
+.c-key { color: #8fd4c2; } .c-str { color: #d9b382; } .c-com { color: #5f7a74; }
+.c-fn  { color: #9fc9f0; }
+
+/* ── grid of cards ─────────────────────────────────────────────────── */
+.grid { display: grid; gap: 1rem; margin-top: 2rem; }
+.g3 { grid-template-columns: repeat(auto-fit, minmax(255px, 1fr)); }
+.g2 { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.card {
+  background: var(--surface); border: 1px solid var(--wire);
+  border-radius: 6px; padding: 1.35rem;
+}
+.card h3 { margin: 0 0 .5rem; font-size: .95rem; }
+.card p { margin: 0; font-size: .9rem; color: var(--muted); }
+.card .tag { font-size: .7rem; letter-spacing: .12em; text-transform: uppercase;
+             color: var(--faint); display: block; margin-bottom: .7rem; }
+
+/* ── table ─────────────────────────────────────────────────────────── */
+.tablewrap { overflow-x: auto; margin: 1.8rem 0; }
+table { width: 100%; border-collapse: collapse; font-size: .89rem; min-width: 34rem; }
+th, td { text-align: left; padding: .7rem .85rem; border-bottom: 1px solid var(--wire);
+         vertical-align: top; }
+th { font-size: .72rem; letter-spacing: .1em; text-transform: uppercase; color: var(--faint);
+     font-weight: 500; }
+tbody tr:last-child td { border-bottom: 0; }
+tr.highlight td { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+tr.highlight td:first-child { color: var(--ink); font-weight: 600; }
+td.yes { color: var(--accent); font-weight: 600; }
+td.no  { color: var(--faint); }
+
+/* ── tabs ──────────────────────────────────────────────────────────── */
+.tabs { display: flex; gap: .3rem; flex-wrap: wrap; margin: 1.8rem 0 0; border-bottom: 1px solid var(--wire); }
+.tab {
+  appearance: none; background: none; border: 0; border-bottom: 2px solid transparent;
+  padding: .6rem .9rem; font-size: .84rem; color: var(--muted); cursor: pointer;
+  font-family: inherit;
+}
+.tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+.tab:hover { color: var(--ink); }
+.panel[hidden] { display: none; }
+
+/* ── callout ───────────────────────────────────────────────────────── */
+.note {
+  border-left: 2px solid var(--signal); padding: .1rem 0 .1rem 1.1rem;
+  margin: 1.6rem 0; color: var(--muted); font-size: .93rem; max-width: var(--measure);
+}
+.note strong { color: var(--ink); }
+
+footer { border-top: 1px solid var(--wire); padding: 3rem 0 4rem; color: var(--faint); font-size: .86rem; }
+footer a { color: var(--muted); }
+footer .row { display: flex; flex-wrap: wrap; gap: 2rem 3rem; align-items: flex-start; }
+footer h4 { font-size: .72rem; letter-spacing: .12em; text-transform: uppercase;
+            color: var(--faint); margin: 0 0 .7rem; font-weight: 500;
+            font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+footer ul { list-style: none; margin: 0; padding: 0; display: grid; gap: .4rem; }
+</style>
+</head>
+<body>
+
+<header>
+  <nav class="wrap">
+    <a class="brand" href="#top" aria-label="Plexus, home">
+      <svg class="mark" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="square" aria-hidden="true">
+        <path d="M12 12 L26 26"/><path d="M38 38 L52 52"/><path d="M52 12 L38 26"/><path d="M26 38 L12 52"/>
+      </svg>
+      <svg class="word" viewBox="0 0 600 120" fill="none" stroke="currentColor" stroke-width="10"
+           stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true">
+        <path d="M28 94V26H62C77 26 86 34 86 47C86 60 77 68 62 68H28"/>
+        <path d="M118 26V94H166"/>
+        <path d="M198 26H248"/><path d="M198 60H239"/><path d="M198 94H248"/>
+        <path d="M282 26L338 94"/><path d="M338 26L282 94"/>
+        <path d="M372 26V70C372 87 381 96 398 96C415 96 424 87 424 70V26"/>
+        <path d="M508 26H474C460 26 452 34 452 45C452 56 460 61 474 61H492C506 61 514 68 514 79C514 89 506 94 492 94H452"/>
+      </svg>
+    </a>
+    <span class="spacer"></span>
+    <a class="navlink opt" href="#problem">Why</a>
+    <a class="navlink opt" href="#how">How it works</a>
+    <a class="navlink opt" href="#compare">Compare</a>
+    <a class="navlink" href="#install">Install</a>
+    <a class="btn" href="https://github.com/MoGhali/plexus">GitHub</a>
+  </nav>
+</header>
+
+<main id="top">
+
+  <!-- ── hero ─────────────────────────────────────────────────────── -->
+  <section class="hero wrap">
+    <svg class="word" viewBox="0 0 600 120" fill="none" stroke="currentColor" stroke-width="10"
+         stroke-linecap="square" stroke-linejoin="miter" role="img" aria-label="Plexus">
+      <path d="M28 94V26H62C77 26 86 34 86 47C86 60 77 68 62 68H28"/>
+      <path d="M118 26V94H166"/>
+      <path d="M198 26H248"/><path d="M198 60H239"/><path d="M198 94H248"/>
+      <path d="M282 26L338 94"/><path d="M338 26L282 94"/>
+      <path d="M372 26V70C372 87 381 96 398 96C415 96 424 87 424 70V26"/>
+      <path d="M508 26H474C460 26 452 34 452 45C452 56 460 61 474 61H492C506 61 514 68 514 79C514 89 506 94 492 94H452"/>
+    </svg>
+
+    <p class="eyebrow">Agent Mesh Protocol · v1.3</p>
+    <p class="thesis">One agent asks another for help and gets an answer — <em>even though neither
+      can accept an inbound connection.</em></p>
+    <p class="lede">A network of specialists, no centre. Agents dispatch work to each other over
+      MQTT, across laptops, VPNs and containers that have no route in.</p>
+
+    <div class="cta">
+      <a class="btn primary" href="#install">Install</a>
+      <a class="btn" href="https://github.com/MoGhali/plexus/blob/main/PROTOCOL.md">Read the spec</a>
+      <a class="btn" href="https://github.com/MoGhali/plexus">Source</a>
+    </div>
+
+    <figure>
+      <img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMTYwIDQ3MSIgd2lkdGg9IjExNjAiIGhlaWdodD0iNDcxIiByb2xlPSJpbWciIGFyaWEtbGFiZWw9IlR3byBQbGV4dXMgYWdlbnRzIGNvbGxhYm9yYXRpbmcgb24gb25lIHJlcXVlc3QsIHdpdGggSGVybWVzIGRlbGl2ZXJpbmcgdGhlIG91dGNvbWUiPgogIDxzdHlsZT4KICAgIDpyb290ey0tYmc6IzBmMTUxODstLWZnOiNjOWQ2ZDM7LS1kaW06IzZkODA3ODstLXRlYWw6IzNmYjlhNTstLWFtYmVyOiNkOGE0NGI7LS1yZWQ6I2UyNmQ2ZDstLWdyZWVuOiM1ZmJmOGE7LS1jaHJvbWU6IzFiMjQyN30KICAgIEBtZWRpYSAocHJlZmVycy1jb2xvci1zY2hlbWU6IGxpZ2h0KXsKICAgICAgOnJvb3R7LS1iZzojZjZmOGY3Oy0tZmc6IzIyMzEyZTstLWRpbTojN2Q4Zjg5Oy0tdGVhbDojMTI3OTZhOy0tYW1iZXI6IzlhNmIxMjstLXJlZDojYjIzYjNiOy0tZ3JlZW46IzJmN2Q1NTstLWNocm9tZTojZTVlYWU4fQogICAgfQogICAgLmJne2ZpbGw6dmFyKC0tYmcpfQogICAgLmNocm9tZXtmaWxsOnZhcigtLWNocm9tZSl9CiAgICB0ZXh0e2ZvbnQtZmFtaWx5OnVpLW1vbm9zcGFjZSwiU0YgTW9ubyIsU0ZNb25vLVJlZ3VsYXIsTWVubG8sQ29uc29sYXMsIkxpYmVyYXRpb24gTW9ubyIsbW9ub3NwYWNlO2ZvbnQtc2l6ZToxMy4yNXB4O2ZpbGw6dmFyKC0tZmcpO3doaXRlLXNwYWNlOnByZX0KICAgIC5ke2ZpbGw6dmFyKC0tZGltKX0KICAgIC5ie2ZvbnQtd2VpZ2h0OjcwMH0KICAgIC50ZWFse2ZpbGw6dmFyKC0tdGVhbCl9CiAgICAuYW1iZXJ7ZmlsbDp2YXIoLS1hbWJlcil9CiAgICAucmVke2ZpbGw6dmFyKC0tcmVkKX0KICAgIC5ncmVlbntmaWxsOnZhcigtLWdyZWVuKX0KICAgIC8qIEJhc2Ugc3RhdGUgaXMgVklTSUJMRSwgYW5kIHRoZSBhbmltYXRpb24gaGlkZXMgbGluZXMgYmVmb3JlIHJldmVhbGluZwogICAgICAgdGhlbS4gSWYgYW5pbWF0aW9ucyBuZXZlciBydW4g4oCUIGEgcGF1c2VkIHRhYiwgYSByZW5kZXJlciB0aGF0IGRvZXMgbm90CiAgICAgICBhbmltYXRlIGltYWdlcywgYSByZWR1Y2VkLW1vdGlvbiBzZXR0aW5nIOKAlCB0aGUgcmVhZGVyIHN0aWxsIGdldHMgdGhlCiAgICAgICB3aG9sZSB0cmFuc2NyaXB0LiBUaGUgb3Bwb3NpdGUgZGVmYXVsdCBmYWlscyB0byBhIGJsYW5rIHRlcm1pbmFsLCB3aGljaAogICAgICAgcmVhZHMgYXMgYnJva2VuIHJhdGhlciB0aGFuIGFzIGFuIGFuaW1hdGlvbiB0aGF0IGhhcyBub3Qgc3RhcnRlZC4gKi8KICAgIC5se29wYWNpdHk6MTthbmltYXRpb24tZHVyYXRpb246NS45MXM7YW5pbWF0aW9uLWl0ZXJhdGlvbi1jb3VudDppbmZpbml0ZTthbmltYXRpb24tdGltaW5nLWZ1bmN0aW9uOnN0ZXBzKDEsZW5kKX0KICAgIEBtZWRpYSAocHJlZmVycy1yZWR1Y2VkLW1vdGlvbjogcmVkdWNlKXsubHtvcGFjaXR5OjE7YW5pbWF0aW9uOm5vbmV9fQogICAgQGtleWZyYW1lcyByMHswJSw5JXtvcGFjaXR5OjF9OS40MCUsMTAuMjAle29wYWNpdHk6MH0xMC41NSUsMTAwJXtvcGFjaXR5OjF9fQogICAgQGtleWZyYW1lcyByMXswJSw5JXtvcGFjaXR5OjF9OS40MCUsMTAuMjAle29wYWNpdHk6MH0xMC41NSUsMTAwJXtvcGFjaXR5OjF9fQogICAgQGtleWZyYW1lcyByMnswJSw5JXtvcGFjaXR5OjF9OS40MCUsMTAuMjAle29wYWNpdHk6MH0xMC41NSUsMTAwJXtvcGFjaXR5OjF9fQogICAgQGtleWZyYW1lcyByM3swJSw5JXtvcGFjaXR5OjF9OS40MCUsMTAuMjAle29wYWNpdHk6MH0xMC41NSUsMTAwJXtvcGFjaXR5OjF9fQogICAgQGtleWZyYW1lcyByNHswJSw5JXtvcGFjaXR5OjF9OS40MCUsMTUuMDkle29wYWNpdHk6MH0xNS40NCUsMTAwJXtvcGFjaXR5OjF9fQogICAgQGtleWZyYW1lcyByNXswJSw5JXtvcGFjaXR5OjF9OS40MCUsMTYuOTUle29wYWNpdHk6MH0xNy4zMCUsMTAwJXtvcGFjaXR5OjF9fQogICAgQGtleWZyYW1lcyByNnswJSw5JXtvcGFjaXR5OjF9OS40MCUsMTguODIle29wYWNpdHk6MH0xOS4xNyUsMTAwJXtvcGFjaXR5OjF9fQogICAgQGtleWZyYW1lcyByN3swJSw5JXtvcGFjaXR5OjF9OS40MCUsMjMuOTEle29wYWNpdHk6MH0yNC4yNiUsMTAwJXtvcGFjaXR5OjF9fQogICAgQGtleWZyYW1lcyByOHswJSw5JXtvcGFjaXR5OjF9OS40MCUsMjUuNzcle29wYWNpdHk6MH0yNi4xMiUsMTAwJXtvcGFjaXR5OjF9fQogICAgQGtleWZyYW1lcyByOXswJSw5JXtvcGFjaXR5OjF9OS40MCUsMzIuNjIle29wYWNpdHk6MH0zMi45NyUsMTAwJXtvcGFjaXR5OjF9fQogICAgQGtleWZyYW1lcyByMTB7MCUsOSV7b3BhY2l0eToxfTkuNDAlLDM0LjQ4JXtvcGFjaXR5OjB9MzQuODMlLDEwMCV7b3BhY2l0eToxfX0KICAgIEBrZXlmcmFtZXMgcjExezAlLDkle29wYWNpdHk6MX05LjQwJSwzNi4zNSV7b3BhY2l0eTowfTM2LjcwJSwxMDAle29wYWNpdHk6MX19CiAgICBAa2V5ZnJhbWVzIHIxMnswJSw5JXtvcGFjaXR5OjF9OS40MCUsMzguMjEle29wYWNpdHk6MH0zOC41NiUsMTAwJXtvcGFjaXR5OjF9fQogICAgQGtleWZyYW1lcyByMTN7MCUsOSV7b3BhY2l0eToxfTkuNDAlLDQwLjA3JXtvcGFjaXR5OjB9NDAuNDIlLDEwMCV7b3BhY2l0eToxfX0KICAgIEBrZXlmcmFtZXMgcjE0ezAlLDkle29wYWNpdHk6MX05LjQwJSw0OC41NiV7b3BhY2l0eTowfTQ4LjkxJSwxMDAle29wYWNpdHk6MX19CiAgICBAa2V5ZnJhbWVzIHIxNXswJSw5JXtvcGFjaXR5OjF9OS40MCUsNTAuNDIle29wYWNpdHk6MH01MC43NyUsMTAwJXtvcGFjaXR5OjF9fQogICAgQGtleWZyYW1lcyByMTZ7MCUsOSV7b3BhY2l0eToxfTkuNDAlLDUyLjI4JXtvcGFjaXR5OjB9NTIuNjMlLDEwMCV7b3BhY2l0eToxfX0KICAgIEBrZXlmcmFtZXMgcjE3ezAlLDkle29wYWNpdHk6MX05LjQwJSw1NC4xNSV7b3BhY2l0eTowfTU0LjUwJSwxMDAle29wYWNpdHk6MX19CiAgICBAa2V5ZnJhbWVzIHIxOHswJSw5JXtvcGFjaXR5OjF9OS40MCUsNTYuMDEle29wYWNpdHk6MH01Ni4zNiUsMTAwJXtvcGFjaXR5OjF9fQogIDwvc3R5bGU+CiAgPHJlY3QgY2xhc3M9ImJnIiB3aWR0aD0iMTE2MCIgaGVpZ2h0PSI0NzEiIHJ4PSIxMCIvPgogIDxyZWN0IGNsYXNzPSJjaHJvbWUiIHdpZHRoPSIxMTYwIiBoZWlnaHQ9IjMyIiByeD0iMTAiLz4KICA8cmVjdCBjbGFzcz0iY2hyb21lIiB5PSIyMiIgd2lkdGg9IjExNjAiIGhlaWdodD0iMTAiLz4KICA8Y2lyY2xlIGN4PSIyMCIgY3k9IjE2IiByPSI1IiBmaWxsPSIjZTI2ZDZkIi8+CiAgPGNpcmNsZSBjeD0iMzgiIGN5PSIxNiIgcj0iNSIgZmlsbD0iI2Q4YTQ0YiIvPgogIDxjaXJjbGUgY3g9IjU2IiBjeT0iMTYiIHI9IjUiIGZpbGw9IiM1ZmJmOGEiLz4KICA8dGV4dCBjbGFzcz0iZCIgeD0iNzYiIHk9IjIxIiBzdHlsZT0iZm9udC1zaXplOjExLjVweDtvcGFjaXR5OjE7YW5pbWF0aW9uOm5vbmUiPm5vZGUgZXhhbXBsZXMvd2l0aC1wbHVnaW5zLm1qczwvdGV4dD4KICA8dGV4dCBjbGFzcz0ibCIgeD0iMjIiIHk9IjczIiBzdHlsZT0iYW5pbWF0aW9uLW5hbWU6cjEiPiAgPHRzcGFuIGNsYXNzPSJiIj5QbGV4dXM8L3RzcGFuPiA8dHNwYW4gY2xhc3M9ImQiPuKAlCBhZ2VudHMgZG8gdGhlIHdvcmssIGEgcGx1Z2luIHRlbGxzIHRoZSB0ZWFtPC90c3Bhbj48L3RleHQ+CiAgPHRleHQgY2xhc3M9ImwiIHg9IjIyIiB5PSI5NCIgc3R5bGU9ImFuaW1hdGlvbi1uYW1lOnIyIj48dHNwYW4gY2xhc3M9ImQiPiAgYnJva2VyIG1xdHQ6Ly9sb2NhbGhvc3Q6MTg4MyAgIHJvb3QgcGxleHVzLXJlY29yZC1tdDkzc2h5ZDwvdHNwYW4+PC90ZXh0PgogIDx0ZXh0IGNsYXNzPSJsIiB4PSIyMiIgeT0iMTU3IiBzdHlsZT0iYW5pbWF0aW9uLW5hbWU6cjUiPjx0c3BhbiBjbGFzcz0iZCI+IDAuNXM8L3RzcGFuPiAgPHRzcGFuIGNsYXNzPSJ0ZWFsIj5hbGljZSAgICA8L3RzcGFuPiBpbnZva2UgPHRzcGFuIGNsYXNzPSJiIj5jb2RlLnJldmlldzwvdHNwYW4+IDx0c3BhbiBjbGFzcz0iZCI+eyByZXBvOiBhY21lL3dlYi1hcHAsIHByOiA0MiB9PC90c3Bhbj48L3RleHQ+CiAgPHRleHQgY2xhc3M9ImwiIHg9IjIyIiB5PSIxNzgiIHN0eWxlPSJhbmltYXRpb24tbmFtZTpyNiI+PHRzcGFuIGNsYXNzPSJkIj4gMC41czwvdHNwYW4+ICA8dHNwYW4gY2xhc3M9InRlYWwiPnJldmlld2VyIDwvdHNwYW4+IHJldmlld2luZyA8dHNwYW4gY2xhc3M9ImIiPmFjbWUvd2ViLWFwcCM0MjwvdHNwYW4+PC90ZXh0PgogIDx0ZXh0IGNsYXNzPSJsIiB4PSIyMiIgeT0iMTk5IiBzdHlsZT0iYW5pbWF0aW9uLW5hbWU6cjciPjx0c3BhbiBjbGFzcz0iZCI+IDAuOHM8L3RzcGFuPiAgPHRzcGFuIGNsYXNzPSJ0ZWFsIj5yZXZpZXdlciA8L3RzcGFuPiBmb3VuZCBhIG1pZ3JhdGlvbiDigJQgZGVsZWdhdGluZyB0aGF0IHBhcnQ8L3RleHQ+CiAgPHRleHQgY2xhc3M9ImwiIHg9IjIyIiB5PSIyMjAiIHN0eWxlPSJhbmltYXRpb24tbmFtZTpyOCI+PHRzcGFuIGNsYXNzPSJkIj4gMC44czwvdHNwYW4+ICA8dHNwYW4gY2xhc3M9InRlYWwiPmRiYSAgICAgIDwvdHNwYW4+IHJldmlld2luZyA8dHNwYW4gY2xhc3M9ImIiPjAwNDJfYWRkX3VzZXJzX2luZGV4LnNxbDwvdHNwYW4+PC90ZXh0PgogIDx0ZXh0IGNsYXNzPSJsIiB4PSIyMiIgeT0iMjQxIiBzdHlsZT0iYW5pbWF0aW9uLW5hbWU6cjkiPjx0c3BhbiBjbGFzcz0iZCI+IDEuMnM8L3RzcGFuPiAgPHRzcGFuIGNsYXNzPSJhbWJlciI+bm90aWZ5ICAgPC90c3Bhbj4gPHRzcGFuIGNsYXNzPSJiIj5SaXNreSBtaWdyYXRpb24gZmxhZ2dlZCBieSBkYmE8L3RzcGFuPjwvdGV4dD4KICA8dGV4dCBjbGFzcz0ibCIgeD0iMjIiIHk9IjI2MiIgc3R5bGU9ImFuaW1hdGlvbi1uYW1lOnIxMCI+PHRzcGFuIGNsYXNzPSJkIj4gICAgICAgICBBTFRFUiBvbiB1c2VycyB3aXRob3V0IENPTkNVUlJFTlRMWSDigJQgbG9ja3Mgd3JpdGVzIGZvciB0aGUgd2hvbGUgcmVidWlsZDwvdHNwYW4+PC90ZXh0PgogIDx0ZXh0IGNsYXNzPSJsIiB4PSIyMiIgeT0iMjgzIiBzdHlsZT0iYW5pbWF0aW9uLW5hbWU6cjExIj48dHNwYW4gY2xhc3M9ImQiPiAxLjJzPC90c3Bhbj4gIDx0c3BhbiBjbGFzcz0iYW1iZXIiPm5vdGlmeSAgIDwvdHNwYW4+IDx0c3BhbiBjbGFzcz0iYiI+Q2hhbmdlcyByZXF1ZXN0ZWQgb24gYWNtZS93ZWItYXBwIzQyPC90c3Bhbj48L3RleHQ+CiAgPHRleHQgY2xhc3M9ImwiIHg9IjIyIiB5PSIzMDQiIHN0eWxlPSJhbmltYXRpb24tbmFtZTpyMTIiPjx0c3BhbiBjbGFzcz0iZCI+ICAgICAgICAgQXBwbGljYXRpb24gbG9naWMgaXMgZmluZS4gQmxvY2tpbmcgb24gdGhlIG1pZ3JhdGlvbjogQUxURVIgb24gdXNlcnMgd2l0aG91dCBDT05DVVJSRU5UTFkg4oCUIGxvY2tzIHdyaXRlcyBmb3IgdGhlIHdob2xlIHJlYnVpbGQ8L3RzcGFuPjwvdGV4dD4KICA8dGV4dCBjbGFzcz0ibCIgeD0iMjIiIHk9IjMyNSIgc3R5bGU9ImFuaW1hdGlvbi1uYW1lOnIxMyI+PHRzcGFuIGNsYXNzPSJkIj4gICAgICAgICByZXZpZXdlZCBmb3IgYWxpY2Ugwrcgam9iIGpvYi1iNDcxZWZiNjEyYjM8L3RzcGFuPjwvdGV4dD4KICA8dGV4dCBjbGFzcz0ibCIgeD0iMjIiIHk9IjM2NyIgc3R5bGU9ImFuaW1hdGlvbi1uYW1lOnIxNSI+PHRzcGFuIGNsYXNzPSJkIj4gMS43czwvdHNwYW4+ICA8dHNwYW4gY2xhc3M9InRlYWwiPmFsaWNlICAgIDwvdHNwYW4+IDx0c3BhbiBjbGFzcz0iYiI+4oaQIFJFUVVFU1RfQ0hBTkdFUzwvdHNwYW4+PC90ZXh0PgogIDx0ZXh0IGNsYXNzPSJsIiB4PSIyMiIgeT0iNDA5IiBzdHlsZT0iYW5pbWF0aW9uLW5hbWU6cjE3Ij4gIDx0c3BhbiBjbGFzcz0iZCI+VHdvIGFnZW50cyBkaWQgdGhlIHdvcmsuIEEgcGx1Z2luIHRvbGQgdGhlIHRlYW0uIE5laXRoZXIga25vd3MgdGhlIG90aGVyIGV4aXN0cy48L3RzcGFuPjwvdGV4dD4KPC9zdmc+Cg==" alt="A terminal recording: reviewer receives a code review, discovers a peer offering schema.review, delegates to it, folds the answer into one combined review, and a notify plugin reports the outcome.">
+      <figcaption>A real recording of <code>examples/with-plugins.mjs</code>, regenerated from an
+        actual run — so it cannot drift from what the code does. <strong>reviewer</strong> hits a
+        database migration it has no business judging, finds <strong>dba</strong> in the registry,
+        delegates that part, and answers as one voice.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ── problem ──────────────────────────────────────────────────── -->
+  <section id="problem">
+    <div class="wrap"><div class="prose">
+      <p class="eyebrow">The problem</p>
+      <h2>Every framework wants your agent to be a server</h2>
+      <p>Expose an endpoint, get a URL, receive requests. But real agents don't live like that.
+        They live on a laptop that sleeps at 6pm, on a VPN that drops, in a container with no
+        inbound route, on a machine whose IP changed this morning.</p>
+      <p><strong>Intelligence is moving to the edge.</strong> The interesting agents are no longer
+        hosted endpoints — they are the one on your laptop with your repositories checked out, the
+        one inside the VPN that can read production, the one on a colleague's machine that knows a
+        system nobody else does. They hold context precisely <em>because</em> they are not in the
+        cloud.</p>
+      <p>So invert the addressing. <strong>Let the agent be a client.</strong> It dials out, holds
+        one connection, and receives work over it — <strong>addressable without being
+        reachable</strong>.</p>
+
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>An agent is…</th><th>So the mesh gives it</th></tr></thead>
+          <tbody>
+            <tr><td>offline half the day</td><td>work <strong>queued while it sleeps</strong>, delivered on wake</td></tr>
+            <tr><td>unknown to its peers</td><td>a <strong>retained capability profile</strong> — discovered without asking</td></tr>
+            <tr><td>slow, thinking for minutes</td><td>streamed milestones, and a result collectable an hour later</td></tr>
+            <tr><td>liable to die mid-thought</td><td>presence published <strong>by the broker itself</strong>, not a heartbeat</td></tr>
+            <tr><td>one of many</td><td>per-requester isolation as a <strong>subscription filter</strong></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>None of that is application code. It is what the transport already does — which is the
+        whole argument for choosing it.</p>
+    </div></div>
+  </section>
+
+  <!-- ── how ──────────────────────────────────────────────────────── -->
+  <section id="how">
+    <div class="wrap">
+      <div class="prose">
+        <p class="eyebrow">How it works</p>
+        <h2>Four topics and a broker</h2>
+        <p>Someone — a human, a CI job, or another agent — publishes a job. The agent picks it up,
+          runs it, and streams back. Nothing on the delivery path polls.</p>
+      </div>
+
+      <div class="grid g2">
+        <div>
+<pre><code><span class="c-com"># ask</span>
+mosquitto_pub -t <span class="c-str">'agents/commands/reviewer/invoke'</span> -m <span class="c-str">'{
+  "service": "code.review",
+  "requestedBy": "alice",
+  "args": { "repo": "acme/web-app", "pr": 42 }
+}'</span></code></pre>
+        </div>
+        <div>
+<pre><code><span class="c-com"># listen — only your own traffic</span>
+mosquitto_sub -t <span class="c-str">'agents/jobs/alice/#'</span>
+
+agents/jobs/alice/rev-118/events   started · analyzing
+agents/jobs/alice/rev-118/result   {"verdict":"APPROVE"} <span class="c-com">← retained</span></code></pre>
+        </div>
+      </div>
+
+      <div class="prose">
+        <p>Alice could have disconnected and collected that result an hour later — it is retained
+          on the broker. And if the reviewer meets a migration it isn't qualified to judge, it
+          reads the registry, finds the agent that is, and asks. The chain carries
+          <code>parentJobId</code>, <code>rootJobId</code> and <code>depth</code>, so five agents
+          deep is still traceable to the one request that started it — and cancellable as one thing.</p>
+      </div>
+
+      <figure>
+        <img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMTYwIDU0MCIgd2lkdGg9IjExNjAiIGhlaWdodD0iNTQwIiByb2xlPSJpbWciIGFyaWEtbGFiZWw9IlR3byBQbGV4dXMgYWdlbnRzIGNvbGxhYm9yYXRpbmcgb24gb25lIHJlcXVlc3QsIHdpdGggSGVybWVzIGRlbGl2ZXJpbmcgdGhlIG91dGNvbWUiPgogIDxzdHlsZT4KICAgIDpyb290ey0tYmc6IzBmMTUxODstLWZnOiNjOWQ2ZDM7LS1kaW06IzZkODA3ODstLXRlYWw6IzNmYjlhNTstLWFtYmVyOiNkOGE0NGI7LS1yZWQ6I2UyNmQ2ZDstLWdyZWVuOiM1ZmJmOGE7LS1jaHJvbWU6IzFiMjQyN30KICAgIEBtZWRpYSAocHJlZmVycy1jb2xvci1zY2hlbWU6IGxpZ2h0KXsKICAgICAgOnJvb3R7LS1iZzojZjZmOGY3Oy0tZmc6IzIyMzEyZTstLWRpbTojN2Q4Zjg5Oy0tdGVhbDojMTI3OTZhOy0tYW1iZXI6IzlhNmIxMjstLXJlZDojYjIzYjNiOy0tZ3JlZW46IzJmN2Q1NTstLWNocm9tZTojZTVlYWU4fQogICAgfQogICAgLmJne2ZpbGw6dmFyKC0tYmcpfQogICAgLmNocm9tZXtmaWxsOnZhcigtLWNocm9tZSl9CiAgICB0ZXh0e2ZvbnQtZmFtaWx5OnVpLW1vbm9zcGFjZSwiU0YgTW9ubyIsU0ZNb25vLVJlZ3VsYXIsTWVubG8sQ29uc29sYXMsIkxpYmVyYXRpb24gTW9ubyIsbW9ub3NwYWNlO2ZvbnQtc2l6ZToxMS44NXB4O2ZpbGw6dmFyKC0tZmcpO3doaXRlLXNwYWNlOnByZX0KICAgIC5ke2ZpbGw6dmFyKC0tZGltKX0KICAgIC5ie2ZvbnQtd2VpZ2h0OjcwMH0KICAgIC50ZWFse2ZpbGw6dmFyKC0tdGVhbCl9CiAgICAuYW1iZXJ7ZmlsbDp2YXIoLS1hbWJlcil9CiAgICAucmVke2ZpbGw6dmFyKC0tcmVkKX0KICAgIC5ncmVlbntmaWxsOnZhcigtLWdyZWVuKX0KICAgIC8qIEJhc2Ugc3RhdGUgaXMgVklTSUJMRSwgYW5kIHRoZSBhbmltYXRpb24gaGlkZXMgbGluZXMgYmVmb3JlIHJldmVhbGluZwogICAgICAgdGhlbS4gSWYgYW5pbWF0aW9ucyBuZXZlciBydW4g4oCUIGEgcGF1c2VkIHRhYiwgYSByZW5kZXJlciB0aGF0IGRvZXMgbm90CiAgICAgICBhbmltYXRlIGltYWdlcywgYSByZWR1Y2VkLW1vdGlvbiBzZXR0aW5nIOKAlCB0aGUgcmVhZGVyIHN0aWxsIGdldHMgdGhlCiAgICAgICB3aG9sZSB0cmFuc2NyaXB0LiBUaGUgb3Bwb3NpdGUgZGVmYXVsdCBmYWlscyB0byBhIGJsYW5rIHRlcm1pbmFsLCB3aGljaAogICAgICAgcmVhZHMgYXMgYnJva2VuIHJhdGhlciB0aGFuIGFzIGFuIGFuaW1hdGlvbiB0aGF0IGhhcyBub3Qgc3RhcnRlZC4gKi8KICAgIC5se29wYWNpdHk6MTthbmltYXRpb24tZHVyYXRpb246Ni4xNHM7YW5pbWF0aW9uLWl0ZXJhdGlvbi1jb3VudDppbmZpbml0ZTthbmltYXRpb24tdGltaW5nLWZ1bmN0aW9uOnN0ZXBzKDEsZW5kKX0KICAgIEBtZWRpYSAocHJlZmVycy1yZWR1Y2VkLW1vdGlvbjogcmVkdWNlKXsubHtvcGFjaXR5OjE7YW5pbWF0aW9uOm5vbmV9fQogICAgQGtleWZyYW1lcyByMHswJSw5JXtvcGFjaXR5OjF9OS40MCUsMTAuMjAle29wYWNpdHk6MH0xMC41NSUsMTAwJXtvcGFjaXR5OjF9fQogICAgQGtleWZyYW1lcyByMXswJSw5JXtvcGFjaXR5OjF9OS40MCUsMTAuMjAle29wYWNpdHk6MH0xMC41NSUsMTAwJXtvcGFjaXR5OjF9fQogICAgQGtleWZyYW1lcyByMnswJSw5JXtvcGFjaXR5OjF9OS40MCUsMTAuMjAle29wYWNpdHk6MH0xMC41NSUsMTAwJXtvcGFjaXR5OjF9fQogICAgQGtleWZyYW1lcyByM3swJSw5JXtvcGFjaXR5OjF9OS40MCUsMTAuMjAle29wYWNpdHk6MH0xMC41NSUsMTAwJXtvcGFjaXR5OjF9fQogICAgQGtleWZyYW1lcyByNHswJSw5JXtvcGFjaXR5OjF9OS40MCUsMTAuMjAle29wYWNpdHk6MH0xMC41NSUsMTAwJXtvcGFjaXR5OjF9fQogICAgQGtleWZyYW1lcyByNXswJSw5JXtvcGFjaXR5OjF9OS40MCUsMTAuNzQle29wYWNpdHk6MH0xMS4wOSUsMTAwJXtvcGFjaXR5OjF9fQogICAgQGtleWZyYW1lcyByNnswJSw5JXtvcGFjaXR5OjF9OS40MCUsMTIuNTMle29wYWNpdHk6MH0xMi44OCUsMTAwJXtvcGFjaXR5OjF9fQogICAgQGtleWZyYW1lcyByN3swJSw5JXtvcGFjaXR5OjF9OS40MCUsMTQuMzMle29wYWNpdHk6MH0xNC42OCUsMTAwJXtvcGFjaXR5OjF9fQogICAgQGtleWZyYW1lcyByOHswJSw5JXtvcGFjaXR5OjF9OS40MCUsMjAuODUle29wYWNpdHk6MH0yMS4yMCUsMTAwJXtvcGFjaXR5OjF9fQogICAgQGtleWZyYW1lcyByOXswJSw5JXtvcGFjaXR5OjF9OS40MCUsMjIuNjQle29wYWNpdHk6MH0yMi45OSUsMTAwJXtvcGFjaXR5OjF9fQogICAgQGtleWZyYW1lcyByMTB7MCUsOSV7b3BhY2l0eToxfTkuNDAlLDI0LjQzJXtvcGFjaXR5OjB9MjQuNzglLDEwMCV7b3BhY2l0eToxfX0KICAgIEBrZXlmcmFtZXMgcjExezAlLDkle29wYWNpdHk6MX05LjQwJSwyNi4yMiV7b3BhY2l0eTowfTI2LjU3JSwxMDAle29wYWNpdHk6MX19CiAgICBAa2V5ZnJhbWVzIHIxMnswJSw5JXtvcGFjaXR5OjF9OS40MCUsMzQuNDAle29wYWNpdHk6MH0zNC43NSUsMTAwJXtvcGFjaXR5OjF9fQogICAgQGtleWZyYW1lcyByMTN7MCUsOSV7b3BhY2l0eToxfTkuNDAlLDM2LjE5JXtvcGFjaXR5OjB9MzYuNTQlLDEwMCV7b3BhY2l0eToxfX0KICAgIEBrZXlmcmFtZXMgcjE0ezAlLDkle29wYWNpdHk6MX05LjQwJSwzNy45OCV7b3BhY2l0eTowfTM4LjMzJSwxMDAle29wYWNpdHk6MX19CiAgICBAa2V5ZnJhbWVzIHIxNXswJSw5JXtvcGFjaXR5OjF9OS40MCUsMzkuNzcle29wYWNpdHk6MH00MC4xMiUsMTAwJXtvcGFjaXR5OjF9fQogICAgQGtleWZyYW1lcyByMTZ7MCUsOSV7b3BhY2l0eToxfTkuNDAlLDQxLjU2JXtvcGFjaXR5OjB9NDEuOTElLDEwMCV7b3BhY2l0eToxfX0KICAgIEBrZXlmcmFtZXMgcjE3ezAlLDkle29wYWNpdHk6MX05LjQwJSw0My4zNSV7b3BhY2l0eTowfTQzLjcwJSwxMDAle29wYWNpdHk6MX19CiAgICBAa2V5ZnJhbWVzIHIxOHswJSw5JXtvcGFjaXR5OjF9OS40MCUsNDUuMTQle29wYWNpdHk6MH00NS40OSUsMTAwJXtvcGFjaXR5OjF9fQogICAgQGtleWZyYW1lcyByMTl7MCUsOSV7b3BhY2l0eToxfTkuNDAlLDQ2LjkzJXtvcGFjaXR5OjB9NDcuMjglLDEwMCV7b3BhY2l0eToxfX0KICAgIEBrZXlmcmFtZXMgcjIwezAlLDkle29wYWNpdHk6MX05LjQwJSw0OC43MiV7b3BhY2l0eTowfTQ5LjA3JSwxMDAle29wYWNpdHk6MX19CiAgICBAa2V5ZnJhbWVzIHIyMXswJSw5JXtvcGFjaXR5OjF9OS40MCUsNTAuNTEle29wYWNpdHk6MH01MC44NiUsMTAwJXtvcGFjaXR5OjF9fQogICAgQGtleWZyYW1lcyByMjJ7MCUsOSV7b3BhY2l0eToxfTkuNDAlLDUyLjMwJXtvcGFjaXR5OjB9NTIuNjUlLDEwMCV7b3BhY2l0eToxfX0KICAgIEBrZXlmcmFtZXMgcjIzezAlLDkle29wYWNpdHk6MX05LjQwJSw1NC4wOSV7b3BhY2l0eTowfTU0LjQ0JSwxMDAle29wYWNpdHk6MX19CiAgICBAa2V5ZnJhbWVzIHIyNHswJSw5JXtvcGFjaXR5OjF9OS40MCUsNTUuODgle29wYWNpdHk6MH01Ni4yMyUsMTAwJXtvcGFjaXR5OjF9fQogICAgQGtleWZyYW1lcyByMjV7MCUsOSV7b3BhY2l0eToxfTkuNDAlLDU3LjY4JXtvcGFjaXR5OjB9NTguMDMlLDEwMCV7b3BhY2l0eToxfX0KICA8L3N0eWxlPgogIDxyZWN0IGNsYXNzPSJiZyIgd2lkdGg9IjExNjAiIGhlaWdodD0iNTQwIiByeD0iMTAiLz4KICA8cmVjdCBjbGFzcz0iY2hyb21lIiB3aWR0aD0iMTE2MCIgaGVpZ2h0PSIzMiIgcng9IjEwIi8+CiAgPHJlY3QgY2xhc3M9ImNocm9tZSIgeT0iMjIiIHdpZHRoPSIxMTYwIiBoZWlnaHQ9IjEwIi8+CiAgPGNpcmNsZSBjeD0iMjAiIGN5PSIxNiIgcj0iNSIgZmlsbD0iI2UyNmQ2ZCIvPgogIDxjaXJjbGUgY3g9IjM4IiBjeT0iMTYiIHI9IjUiIGZpbGw9IiNkOGE0NGIiLz4KICA8Y2lyY2xlIGN4PSI1NiIgY3k9IjE2IiByPSI1IiBmaWxsPSIjNWZiZjhhIi8+CiAgPHRleHQgY2xhc3M9ImQiIHg9Ijc2IiB5PSIyMSIgc3R5bGU9ImZvbnQtc2l6ZToxMS41cHg7b3BhY2l0eToxO2FuaW1hdGlvbjpub25lIj5ub2RlIGV4YW1wbGVzL2RlbW8ubWpzPC90ZXh0PgogIDx0ZXh0IGNsYXNzPSJsIiB4PSIyMiIgeT0iNzAiIHN0eWxlPSJhbmltYXRpb24tbmFtZTpyMSI+ICA8dHNwYW4gY2xhc3M9ImIiPlBsZXh1czwvdHNwYW4+IDx0c3BhbiBjbGFzcz0iZCI+4oCUIHR3byBhZ2VudHMsIG9uZSByZXF1ZXN0PC90c3Bhbj48L3RleHQ+CiAgPHRleHQgY2xhc3M9ImwiIHg9IjIyIiB5PSI4OCIgc3R5bGU9ImFuaW1hdGlvbi1uYW1lOnIyIj48dHNwYW4gY2xhc3M9ImQiPiAgYnJva2VyIG1xdHQ6Ly9sb2NhbGhvc3Q6MTg4MyAgIHJvb3QgcGxleHVzLXJlY29yZC1tdDkzc2pnaTwvdHNwYW4+PC90ZXh0PgogIDx0ZXh0IGNsYXNzPSJsIiB4PSIyMiIgeT0iMTQyIiBzdHlsZT0iYW5pbWF0aW9uLW5hbWU6cjUiPjx0c3BhbiBjbGFzcz0iZCI+IDAuMHM8L3RzcGFuPiAgPHRzcGFuIGNsYXNzPSJ0ZWFsIj5hbGljZSAgICA8L3RzcGFuPiBpbnZva2UgPHRzcGFuIGNsYXNzPSJiIj5jb2RlLnJldmlldzwvdHNwYW4+IDx0c3BhbiBjbGFzcz0iZCI+eyByZXBvOiBhY21lL3dlYi1hcHAsIHByOiA0MiB9PC90c3Bhbj48L3RleHQ+CiAgPHRleHQgY2xhc3M9ImwiIHg9IjIyIiB5PSIxNjAiIHN0eWxlPSJhbmltYXRpb24tbmFtZTpyNiI+PHRzcGFuIGNsYXNzPSJkIj4gMC4wczwvdHNwYW4+ICA8dHNwYW4gY2xhc3M9InRlYWwiPnJldmlld2VyIDwvdHNwYW4+IHJldmlld2luZyA8dHNwYW4gY2xhc3M9ImIiPmFjbWUvd2ViLWFwcCM0MjwvdHNwYW4+PC90ZXh0PgogIDx0ZXh0IGNsYXNzPSJsIiB4PSIyMiIgeT0iMTc4IiBzdHlsZT0iYW5pbWF0aW9uLW5hbWU6cjciPjx0c3BhbiBjbGFzcz0iZCI+IDAuMHM8L3RzcGFuPiAgPHRzcGFuIGNsYXNzPSJ0ZWFsIGQiPsK3IG1lc2g8L3RzcGFuPiA8dHNwYW4gY2xhc3M9ImQiPmpvYi02NDRjYzYyODRmMTUgIHJlYWRpbmcgdGhlIGRpZmY8L3RzcGFuPjwvdGV4dD4KICA8dGV4dCBjbGFzcz0ibCIgeD0iMjIiIHk9IjE5NiIgc3R5bGU9ImFuaW1hdGlvbi1uYW1lOnI4Ij48dHNwYW4gY2xhc3M9ImQiPiAwLjRzPC90c3Bhbj4gIDx0c3BhbiBjbGFzcz0idGVhbCI+cmV2aWV3ZXIgPC90c3Bhbj4gdGhlIGRpZmYgYWRkcyBhIG1pZ3JhdGlvbiDigJQgb3V0c2lkZSBteSBjb21wZXRlbmNlPC90ZXh0PgogIDx0ZXh0IGNsYXNzPSJsIiB4PSIyMiIgeT0iMjE0IiBzdHlsZT0iYW5pbWF0aW9uLW5hbWU6cjkiPjx0c3BhbiBjbGFzcz0iZCI+IDAuNHM8L3RzcGFuPiAgPHRzcGFuIGNsYXNzPSJ0ZWFsIj5yZXZpZXdlciA8L3RzcGFuPiA8dHNwYW4gY2xhc3M9InRlYWwiPmRiYTwvdHNwYW4+IG9mZmVycyA8dHNwYW4gY2xhc3M9ImIiPnNjaGVtYS5yZXZpZXc8L3RzcGFuPiDigJQgZGVsZWdhdGluZzwvdGV4dD4KICA8dGV4dCBjbGFzcz0ibCIgeD0iMjIiIHk9IjIzMiIgc3R5bGU9ImFuaW1hdGlvbi1uYW1lOnIxMCI+PHRzcGFuIGNsYXNzPSJkIj4gMC40czwvdHNwYW4+ICA8dHNwYW4gY2xhc3M9InRlYWwiPmRiYSAgICAgIDwvdHNwYW4+IGFza2VkIGFib3V0IDx0c3BhbiBjbGFzcz0iYiI+MDA0Ml9hZGRfdXNlcnNfaW5kZXguc3FsPC90c3Bhbj4gPHRzcGFuIGNsYXNzPSJkIj4oZGVwdGggMSk8L3RzcGFuPjwvdGV4dD4KICA8dGV4dCBjbGFzcz0ibCIgeD0iMjIiIHk9IjI1MCIgc3R5bGU9ImFuaW1hdGlvbi1uYW1lOnIxMSI+PHRzcGFuIGNsYXNzPSJkIj4gMC40czwvdHNwYW4+ICA8dHNwYW4gY2xhc3M9InRlYWwgZCI+wrcgbWVzaDwvdHNwYW4+IDx0c3BhbiBjbGFzcz0iZCI+YXNrLWFjMGFmNjUyOTA3NiAgY2hlY2tpbmcgbG9jayBiZWhhdmlvdXI8L3RzcGFuPjwvdGV4dD4KICA8dGV4dCBjbGFzcz0ibCIgeD0iMjIiIHk9IjI2OCIgc3R5bGU9ImFuaW1hdGlvbi1uYW1lOnIxMiI+PHRzcGFuIGNsYXNzPSJkIj4gMC45czwvdHNwYW4+ICA8dHNwYW4gY2xhc3M9InRlYWwiPnJldmlld2VyIDwvdHNwYW4+IGdvdCA8dHNwYW4gY2xhc3M9ImIiPmhpZ2g8L3RzcGFuPiByaXNrIGJhY2sg4oCUIGZvbGRpbmcgaXQgaW48L3RleHQ+CiAgPHRleHQgY2xhc3M9ImwiIHg9IjIyIiB5PSIzMDQiIHN0eWxlPSJhbmltYXRpb24tbmFtZTpyMTQiPjx0c3BhbiBjbGFzcz0iZCI+IDAuOXM8L3RzcGFuPiAgPHRzcGFuIGNsYXNzPSJ0ZWFsIj5hbGljZSAgICA8L3RzcGFuPiA8dHNwYW4gY2xhc3M9ImIiPuKGkCBvbmUgcmVzdWx0PC90c3Bhbj48L3RleHQ+CiAgPHRleHQgY2xhc3M9ImwiIHg9IjIyIiB5PSIzMjIiIHN0eWxlPSJhbmltYXRpb24tbmFtZTpyMTUiPiAgICAgICAgIDx0c3BhbiBjbGFzcz0iZCI+ezwvdHNwYW4+PC90ZXh0PgogIDx0ZXh0IGNsYXNzPSJsIiB4PSIyMiIgeT0iMzQwIiBzdHlsZT0iYW5pbWF0aW9uLW5hbWU6cjE2Ij4gICAgICAgICA8dHNwYW4gY2xhc3M9ImQiPiAgInZlcmRpY3QiOiAiUkVRVUVTVF9DSEFOR0VTIiw8L3RzcGFuPjwvdGV4dD4KICA8dGV4dCBjbGFzcz0ibCIgeD0iMjIiIHk9IjM1OCIgc3R5bGU9ImFuaW1hdGlvbi1uYW1lOnIxNyI+ICAgICAgICAgPHRzcGFuIGNsYXNzPSJkIj4gICJzdW1tYXJ5IjogIkFwcGxpY2F0aW9uIGxvZ2ljIGlzIGZpbmUuIEJsb2NraW5nIG9uIHRoZSBtaWdyYXRpb246IEFMVEVSIG9uIHVzZXJzIHdpdGhvdXQgQ09OQ1VSUkVOVExZIOKAlCBsb2NrcyB3cml0ZXMgZm9yIHRoZSB3aG9sZSByZWJ1aWxkIiw8L3RzcGFuPjwvdGV4dD4KICA8dGV4dCBjbGFzcz0ibCIgeD0iMjIiIHk9IjM3NiIgc3R5bGU9ImFuaW1hdGlvbi1uYW1lOnIxOCI+ICAgICAgICAgPHRzcGFuIGNsYXNzPSJkIj4gICJjb250cmlidXRlZEJ5IjogWzwvdHNwYW4+PC90ZXh0PgogIDx0ZXh0IGNsYXNzPSJsIiB4PSIyMiIgeT0iMzk0IiBzdHlsZT0iYW5pbWF0aW9uLW5hbWU6cjE5Ij4gICAgICAgICA8dHNwYW4gY2xhc3M9ImQiPiAgICAiZGJhIjwvdHNwYW4+PC90ZXh0PgogIDx0ZXh0IGNsYXNzPSJsIiB4PSIyMiIgeT0iNDEyIiBzdHlsZT0iYW5pbWF0aW9uLW5hbWU6cjIwIj4gICAgICAgICA8dHNwYW4gY2xhc3M9ImQiPiAgXTwvdHNwYW4+PC90ZXh0PgogIDx0ZXh0IGNsYXNzPSJsIiB4PSIyMiIgeT0iNDMwIiBzdHlsZT0iYW5pbWF0aW9uLW5hbWU6cjIxIj4gICAgICAgICA8dHNwYW4gY2xhc3M9ImQiPn08L3RzcGFuPjwvdGV4dD4KICA8dGV4dCBjbGFzcz0ibCIgeD0iMjIiIHk9IjQ2NiIgc3R5bGU9ImFuaW1hdGlvbi1uYW1lOnIyMyI+ICA8dHNwYW4gY2xhc3M9ImQiPnJldmlld2VyIG5ldmVyIGxlYXJuZWQgd2hhdCBhIG1pZ3JhdGlvbiBpcy4gSXQgZm91bmQgdGhlIGFnZW50IHRoYXQgaGFkLDwvdHNwYW4+PC90ZXh0PgogIDx0ZXh0IGNsYXNzPSJsIiB4PSIyMiIgeT0iNDg0IiBzdHlsZT0iYW5pbWF0aW9uLW5hbWU6cjI0Ij4gIDx0c3BhbiBjbGFzcz0iZCI+YXNrZWQsIGFuZCBhbnN3ZXJlZCBhcyBvbmUgdm9pY2UuPC90c3Bhbj48L3RleHQ+Cjwvc3ZnPgo=" alt="Terminal recording of two agents: reviewer discovers dba offers schema.review, delegates at depth 1, and returns one combined result to the requester.">
+        <figcaption>Two agents, one request. <code>npm run demo</code> — about a minute, no cloud,
+          no account.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ── compare ──────────────────────────────────────────────────── -->
+  <section id="compare">
+    <div class="wrap">
+      <div class="prose">
+        <p class="eyebrow">Where this sits</p>
+        <h2>MCP connects an agent to tools.<br>Plexus connects an agent to other agents.</h2>
+        <p>It isn't competing with your agent framework — it's the layer <em>between</em>
+          frameworks. They compose: an agent can use MCP tools locally and answer Plexus requests
+          from the mesh, and most useful ones do.</p>
+      </div>
+
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr><th></th><th>Scope</th><th>Requires</th><th>Requester may be offline</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><strong>MCP</strong></td><td>One agent using tools</td><td>A local process, or a reachable HTTP server</td><td class="no">no</td></tr>
+            <tr><td><strong>A2A</strong></td><td>Agents interoperating</td><td>Both agents have reachable endpoints</td><td class="no">no</td></tr>
+            <tr><td><strong>HTTP + a queue</strong></td><td>Whatever you assemble</td><td>A broker <em>and</em> the endpoints <em>and</em> the glue</td><td class="no">depends</td></tr>
+            <tr class="highlight"><td>Plexus</td><td>Agents dispatching work to each other</td><td><strong>Only that both can reach a broker</strong></td><td class="yes">yes</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="prose">
+        <p>That last column isn't a feature, it's a consequence. An agent that dials out instead of
+          listening spans laptops, VPNs, CI runners and cloud instances with no inbound port
+          anywhere and nothing to defend.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── implementations ──────────────────────────────────────────── -->
+  <section id="implementations">
+    <div class="wrap">
+      <div class="prose">
+        <p class="eyebrow">Implementations</p>
+        <h2>Three, sharing no code</h2>
+        <p>A specification with one implementation is a description of that implementation. These
+          were written independently against the spec, in different languages, with different MQTT
+          clients and different plugin APIs.</p>
+      </div>
+
+      <div class="grid g3">
+        <div class="card">
+          <span class="tag">TypeScript</span>
+          <h3>OpenClaw host plugin</h3>
+          <p>Puts a gateway's agent on the mesh, with an operator console. The reference
+            implementation, and the one running in production.</p>
+        </div>
+        <div class="card">
+          <span class="tag">Python</span>
+          <h3>Hermes host plugin</h3>
+          <p>Drop-in for Hermes Agent. Implements the protocol again from the spec over
+            <code>paho-mqtt</code> — which is what makes it evidence.</p>
+        </div>
+        <div class="card">
+          <span class="tag">JavaScript</span>
+          <h3>plexus-agent</h3>
+          <p>A client library and plugin host. Join the mesh in fifteen lines, from any Node
+            process, with no platform at all.</p>
+        </div>
+      </div>
+
+      <div class="prose">
+        <h3>The test that makes it a protocol</h3>
+        <p>A Python agent and a Node agent are stood up against one broker, and each must discover,
+          delegate to and answer the other — with lineage intact across the language boundary.</p>
+      </div>
+<pre><code><span class="c-fn">$</span> python hosts/hermes/tests/test_interop.py
+
+  hermes plugin online, offering research.summarise
+  [js] js-ready
+  hermes received job job-19d2160eed6f from the JS agent
+  [js] js-served
+  hermes delegated to js-reviewer and got risk=high
+  <span class="c-key">lineage intact across the language boundary: depth 1, parent linked</span>
+  [js] js-got-answer
+  the JS agent received one combined answer from the Hermes agent</code></pre>
+      <div class="prose">
+        <p>Writing the second one is also how the spec gets audited. <a href="https://github.com/MoGhali/plexus/blob/main/docs/HOSTS.md">docs/HOSTS.md</a>
+          is the guide for the next platform — the four jobs a host plugin has, and the traps that
+          cost real time in the first one.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── install ──────────────────────────────────────────────────── -->
+  <section id="install">
+    <div class="wrap">
+      <div class="prose">
+        <p class="eyebrow">Install</p>
+        <h2>macOS, Linux and Windows</h2>
+        <p>Everything needs two things: a broker, and a host plugin for whatever agent platform you
+          use. The installer works out which one you have.</p>
+      </div>
+
+<pre><code>git clone https://github.com/MoGhali/plexus &amp;&amp; cd plexus
+./install.sh</code></pre>
+
+      <div class="prose">
+        <p>It never overwrites a config you already have, and re-running it updates — restarting
+          the gateway only if the compiled output actually changed. Everything it does by hand:</p>
+      </div>
+
+      <div class="tabs" role="tablist" aria-label="Installation target">
+        <button class="tab" role="tab" id="t-oc" aria-controls="p-oc" aria-selected="true">OpenClaw</button>
+        <button class="tab" role="tab" id="t-hm" aria-controls="p-hm" aria-selected="false">Hermes</button>
+        <button class="tab" role="tab" id="t-nd" aria-controls="p-nd" aria-selected="false">No platform</button>
+      </div>
+
+      <div class="panel" id="p-oc" role="tabpanel" aria-labelledby="t-oc">
+<pre><code><span class="c-com"># macOS and Linux</span>
+git clone https://github.com/MoGhali/plexus.git ~/.openclaw/extensions/mqtt-bridge
+cd ~/.openclaw/extensions/mqtt-bridge
+npm install &amp;&amp; cp services.example.json services.json &amp;&amp; npm run build
+
+<span class="c-com"># Windows (PowerShell)</span>
+git clone https://github.com/MoGhali/plexus.git <span class="c-str">"$env:USERPROFILE\.openclaw\extensions\mqtt-bridge"</span>
+cd <span class="c-str">"$env:USERPROFILE\.openclaw\extensions\mqtt-bridge"</span>
+npm install; Copy-Item services.example.json services.json; npm run build</code></pre>
+        <div class="note">
+          <strong><code>tools.alsoAllow</code> is not optional.</strong> OpenClaw's tool profile is
+          an allowlist that <em>excludes</em> plugin-registered tools. Omit it and the agent
+          silently has none of them — executors cannot publish results, so jobs intermittently
+          finish without one, and delegation never happens. Nothing says why.
+        </div>
+<pre><code>{ <span class="c-key">"tools"</span>: { <span class="c-key">"alsoAllow"</span>: [<span class="c-str">"mqtt_publish"</span>, <span class="c-str">"mesh_ask"</span>, <span class="c-str">"mesh_peers"</span>] } }</code></pre>
+<pre><code>openclaw config validate   <span class="c-com"># ALWAYS FIRST — an invalid config stops the gateway starting</span>
+openclaw gateway restart   <span class="c-com"># launchd, systemd or Task Scheduler, as appropriate</span></code></pre>
+      </div>
+
+      <div class="panel" id="p-hm" role="tabpanel" aria-labelledby="t-hm" hidden>
+<pre><code><span class="c-com"># macOS and Linux</span>
+git clone https://github.com/MoGhali/plexus
+mkdir -p ~/.hermes/plugins &amp;&amp; cp -r plexus/hosts/hermes ~/.hermes/plugins/plexus
+pip install <span class="c-str">"paho-mqtt&gt;=2.1"</span>
+
+<span class="c-com"># Windows (PowerShell)</span>
+New-Item -ItemType Directory -Force <span class="c-str">"$env:USERPROFILE\.hermes\plugins"</span>
+Copy-Item -Recurse plexus\hosts\hermes <span class="c-str">"$env:USERPROFILE\.hermes\plugins\plexus"</span>
+pip install <span class="c-str">"paho-mqtt&gt;=2.1"</span></code></pre>
+        <div class="note">
+          It must import <code>paho.mqtt</code> from <strong>the interpreter Hermes itself runs
+          under</strong>. Installing it elsewhere is what <code>ModuleNotFoundError: paho</code>
+          almost always means.
+        </div>
+<pre><code><span class="c-com">// ~/.hermes/plexus.json</span>
+{ <span class="c-key">"broker"</span>: <span class="c-str">"mqtt://localhost:1883"</span>,
+  <span class="c-key">"agentId"</span>: <span class="c-str">"hermes"</span>,
+  <span class="c-key">"executor"</span>: <span class="c-str">"api"</span>, <span class="c-key">"apiUrl"</span>: <span class="c-str">"http://127.0.0.1:8000/v1"</span>,
+  <span class="c-key">"capabilities"</span>: [{
+    <span class="c-key">"service"</span>: <span class="c-str">"research.summarise"</span>,
+    <span class="c-key">"requestSchema"</span>: { <span class="c-key">"topic"</span>: <span class="c-str">"string"</span> },
+    <span class="c-key">"prompt"</span>: <span class="c-str">"Research {{topic}}. Return JSON: summary, sources, confidence."</span>
+  }] }</code></pre>
+      </div>
+
+      <div class="panel" id="p-nd" role="tabpanel" aria-labelledby="t-nd" hidden>
+<pre><code>npm install plexus-agent</code></pre>
+<pre><code><span class="c-key">import</span> { connect } <span class="c-key">from</span> <span class="c-str">"plexus-agent"</span>;
+
+<span class="c-key">const</span> agent = <span class="c-key">await</span> <span class="c-fn">connect</span>({
+  broker: <span class="c-str">"mqtt://localhost:1883"</span>,
+  agentId: <span class="c-str">"dba"</span>,
+});
+
+agent.<span class="c-fn">serve</span>(<span class="c-str">"schema.review"</span>, <span class="c-key">async</span> (job, ctx) =&gt; {
+  ctx.<span class="c-fn">progress</span>(<span class="c-str">"checking lock behaviour"</span>);
+  <span class="c-key">return</span> { risk: <span class="c-str">"high"</span>, finding: <span class="c-str">"ALTER without CONCURRENTLY locks writes"</span> };
+});</code></pre>
+        <div class="prose">
+          <p>That agent is now discoverable by every other agent on the mesh, and jobs published
+            while it is down are queued and delivered when it restarts.</p>
+        </div>
+      </div>
+
+      <div class="prose">
+        <p style="margin-top:2rem">Full steps, prerequisites and a troubleshooting table:
+          <a href="https://github.com/MoGhali/plexus/blob/main/docs/INSTALL.md">docs/INSTALL.md</a>.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── frame ────────────────────────────────────────────────────── -->
+  <section id="frame">
+    <div class="wrap"><div class="prose">
+      <p class="eyebrow">The frame, and the plugins</p>
+      <h2>Capabilities are data, not code</h2>
+      <p>An agent on Plexus is a <strong>capability catalog</strong> — a name, an argument schema,
+        a prompt template. No code, no deploy, no restart. The frame contains no service name
+        anywhere: it never learns what <code>code.review</code> means, and does not need to.</p>
+<pre><code>{ <span class="c-key">"service"</span>: <span class="c-str">"schema.review"</span>,
+  <span class="c-key">"requestSchema"</span>: { <span class="c-key">"migration"</span>: <span class="c-str">"string"</span> },
+  <span class="c-key">"prompt"</span>: <span class="c-str">"Review migration {{migration}}. Flag lock risk and missing indexes."</span> }</code></pre>
+      <p>An agent gains <em>abilities</em> the same way — by loading plugins, not by growing code.
+        One connection, one registry entry, one durable session, however many plugins. An agent
+        good at four things is still one agent on the mesh.</p>
+      <div class="note">
+        <strong>plexus-notify</strong> is the first one: Plexus moves work between agents, and
+        notify moves the outcome to people — Slack, a pull-request comment, a webhook. No agent
+        knows it is there.
+      </div>
+    </div></div>
+  </section>
+
+  <!-- ── honesty ──────────────────────────────────────────────────── -->
+  <section id="limits">
+    <div class="wrap"><div class="prose">
+      <p class="eyebrow">Honest limitations</p>
+      <h2>What will bite you</h2>
+      <p><strong>Identity is not authenticated.</strong> MQTT delivers topic and payload only — a
+        publisher's broker identity does not travel with the message. So <code>requestedBy</code>
+        is self-declared, and owner scoping is a convention that keeps honest clients apart, not a
+        security boundary. The fix is broker-side ACLs, which means the protocol delegates its
+        hardest problem to your deployment. Know that going in.</p>
+      <p><strong>Delegation holds sessions open.</strong> An asking agent waits, so a four-deep
+        chain occupies four sessions. This model favours depth over breadth.</p>
+      <p><strong>Young, and honestly so.</strong> The OpenClaw bridge runs daily against a real
+        workload. The client library and the Hermes plugin are newer, exercised by their tests and
+        examples rather than months of production. Expect to find things.</p>
+      <p><strong>Requires a broker you operate.</strong> No hosted option — a feature if you care
+        where your job payloads go, friction if you wanted to try it in five minutes.</p>
+    </div></div>
+  </section>
+
+  <section id="start">
+    <div class="wrap"><div class="prose">
+      <h2>Two agents on your machine, in about a minute</h2>
+<pre><code>docker run -d -p 1883:1883 eclipse-mosquitto:2 \
+  sh -c <span class="c-str">'printf "listener 1883\nallow_anonymous true\n" &gt; /m.conf &amp;&amp; mosquitto -c /m.conf'</span>
+
+git clone https://github.com/MoGhali/plexus &amp;&amp; cd plexus
+npm install
+npm run demo</code></pre>
+      <div class="cta">
+        <a class="btn primary" href="https://github.com/MoGhali/plexus">Get it on GitHub</a>
+        <a class="btn" href="https://github.com/MoGhali/plexus/blob/main/PROTOCOL.md">Read the specification</a>
+      </div>
+    </div></div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="row">
+      <div style="min-width:14rem">
+        <a class="brand" href="#top" style="margin-bottom:.8rem">
+          <svg class="mark" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="square" aria-hidden="true">
+            <path d="M12 12 L26 26"/><path d="M38 38 L52 52"/><path d="M52 12 L38 26"/><path d="M26 38 L12 52"/>
+          </svg>
+          <span class="mono" style="color:var(--ink);font-weight:600">Plexus</span>
+        </a>
+        <p style="margin:.4rem 0 0;max-width:26ch">A network of specialists, no centre.</p>
+      </div>
+      <div>
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="https://github.com/MoGhali/plexus/blob/main/PROTOCOL.md">Specification</a></li>
+          <li><a href="https://github.com/MoGhali/plexus/blob/main/docs/INSTALL.md">Installation</a></li>
+          <li><a href="https://github.com/MoGhali/plexus/blob/main/docs/HOSTS.md">Adding a platform</a></li>
+          <li><a href="https://github.com/MoGhali/plexus/blob/main/CONTRIBUTING.md">Contributing</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Packages</h4>
+        <ul>
+          <li><a href="https://github.com/MoGhali/plexus/tree/main/packages/agent">plexus-agent</a></li>
+          <li><a href="https://github.com/MoGhali/plexus/tree/main/packages/notify">plexus-notify</a></li>
+          <li><a href="https://github.com/MoGhali/plexus/tree/main/hosts/openclaw">OpenClaw plugin</a></li>
+          <li><a href="https://github.com/MoGhali/plexus/tree/main/hosts/hermes">Hermes plugin</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Project</h4>
+        <ul>
+          <li><a href="https://github.com/MoGhali/plexus">Source</a></li>
+          <li><a href="https://github.com/MoGhali/plexus/issues">Issues</a></li>
+          <li><a href="https://github.com/MoGhali/plexus/blob/main/LICENSE">Apache 2.0</a></li>
+        </ul>
+      </div>
+    </div>
+    <p style="margin-top:2.5rem">Built by <a href="https://github.com/MoGhali">Mohanad Ghali</a>.
+      Apache 2.0.</p>
+  </div>
+</footer>
+
+<script>
+// Tabs. Progressive enhancement: without JS every panel is simply visible,
+// which is a worse experience but never a broken one.
+(function () {
+  var tabs = Array.prototype.slice.call(document.querySelectorAll('.tab'));
+  function select(tab) {
+    tabs.forEach(function (t) {
+      var panel = document.getElementById(t.getAttribute('aria-controls'));
+      var on = t === tab;
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+      if (panel) panel.hidden = !on;
+    });
+  }
+  tabs.forEach(function (t) {
+    t.addEventListener('click', function () { select(t); });
+    t.addEventListener('keydown', function (e) {
+      var i = tabs.indexOf(t);
+      if (e.key === 'ArrowRight') { tabs[(i + 1) % tabs.length].focus(); tabs[(i + 1) % tabs.length].click(); }
+      if (e.key === 'ArrowLeft')  { tabs[(i - 1 + tabs.length) % tabs.length].focus(); tabs[(i - 1 + tabs.length) % tabs.length].click(); }
+    });
+  });
+})();
+</script>
+</body>
+</html>

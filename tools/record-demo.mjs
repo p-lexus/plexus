@@ -116,9 +116,18 @@ const body = timed.map((line, i) => {
 
 // One keyframes per line: each holds at opacity 0 until its moment, then stays
 // visible for the rest of the loop. A shared animation cannot express that.
+//
+// The loop opens on a *poster* — the finished transcript, held briefly — before
+// clearing and replaying. Without it the first thing anyone sees is an empty
+// terminal that takes several seconds to say anything, which reads as broken
+// rather than as an animation about to start.
+const POSTER = 9;                                   // % of the loop spent on the poster
 const keyframes = timed.map((line, i) => {
-  const p = Math.min((line.at / total) * 100, 99.4).toFixed(2);
-  return `@keyframes r${i}{0%,${p}%{opacity:0}${(Number(p) + 0.35).toFixed(2)}%,100%{opacity:1}}`;
+  const p = Math.max(Math.min((line.at / total) * 100, 99.4), POSTER + 1.2).toFixed(2);
+  return `@keyframes r${i}{`
+    + `0%,${POSTER}%{opacity:1}`                    // poster: everything visible
+    + `${(POSTER + 0.4).toFixed(2)}%,${p}%{opacity:0}`   // cleared, waiting its turn
+    + `${(Number(p) + 0.35).toFixed(2)}%,100%{opacity:1}}`;
 }).join("\n    ");
 
 const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img" aria-label="Two Plexus agents collaborating on one request, with Hermes delivering the outcome">
@@ -136,7 +145,12 @@ const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${hei
     .amber{fill:var(--amber)}
     .red{fill:var(--red)}
     .green{fill:var(--green)}
-    .l{opacity:0;animation-duration:${total.toFixed(2)}s;animation-iteration-count:infinite;animation-timing-function:steps(1,end)}
+    /* Base state is VISIBLE, and the animation hides lines before revealing
+       them. If animations never run — a paused tab, a renderer that does not
+       animate images, a reduced-motion setting — the reader still gets the
+       whole transcript. The opposite default fails to a blank terminal, which
+       reads as broken rather than as an animation that has not started. */
+    .l{opacity:1;animation-duration:${total.toFixed(2)}s;animation-iteration-count:infinite;animation-timing-function:steps(1,end)}
     @media (prefers-reduced-motion: reduce){.l{opacity:1;animation:none}}
     ${keyframes}
   </style>
