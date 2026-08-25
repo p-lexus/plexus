@@ -8,6 +8,161 @@ arrives, results are pushed back at QoS 1 (retained), and the web panel receives
 Events. The only periodic timers left are a supervisory watchdog and a slow filesystem
 reconciler, neither of which carries a message.
 
+## Why MQTT, precisely
+
+Agents have the operational profile of edge devices: intermittent connectivity, no stable
+address, hardware the operator does not own, and lifecycles measured in minutes. That class of
+problem was solved fifteen years ago, and every mechanism this protocol needs already exists in
+the transport.
+
+| IoT pattern | Agent Mesh | Provided by |
+|---|---|---|
+| Device shadow, retained | Capability profile | `retain` on the registry topic |
+| Command topic | `commands/<agentId>/invoke` | directed publish |
+| Telemetry stream | `jobs/<owner>/<id>/events` | QoS 1, not retained |
+| Reported state | `jobs/<owner>/<id>/result` | `retain`, last write wins |
+| Last will and testament | Agent presence | broker publishes on unclean disconnect |
+| Durable session | Jobs queued while an agent sleeps | `clean: false` + QoS 1 |
+| Topic ACLs | Per-owner isolation | broker-enforced subscribe patterns |
+
+Nothing in MQTT cares whether the endpoint is a thermostat or a language model. That is the
+entire reason this works.
+
+## Delivery guarantees
+
+Stated exactly, because "reliable" means nothing on its own.
+
+| Message | Delivery | Retained | Notes |
+|---|---|---|---|
+| `invoke` | **at-least-once** | no | QoS 1. A redelivery after reconnect can duplicate a job; the bridge rejects a `jobId` already active |
+| `events` | **at-least-once** | no | A subscriber joining mid-job sees no earlier milestones. Progress is advisory, never a source of truth |
+| `result` | **at-least-once** | **yes** | Last write wins. Readable indefinitely by clients that connect afterwards |
+| `profile` / `status` | **at-least-once** | **yes** | Empty payload deletes the retained message and means the agent has left |
+
+**Ordering** holds per topic only. `events` and `result` are different topics: a terminal result
+may be observed before a milestone published earlier. Never infer sequence across topics — use
+the `ts` field.
+
+**Durability** covers the window in which an agent is disconnected, and depends entirely on the
+client id being stable. With a changing id every reconnect is a new session, and jobs published
+during the gap are lost with the old one.
+
+**Exactly-once is not offered.** MQTT QoS 2 would give it hop-by-hop and still not end-to-end,
+because an executor can complete work and die before publishing. Assume at-least-once and make
+capabilities idempotent.
+
+## Job lifecycle
+
+```
+                    ┌──────────┐
+   invoke ─────────▶│ accepted │
+                    └────┬─────┘
+                         │ executor dispatched
+                    ┌────▼─────┐
+              ┌─────│ started  │─────┐
+              │     └────┬─────┘     │
+   executor   │          │           │  cancel
+   publishes  │          │ watchdog: │
+   result     │          │ silent +  │
+              │          │ settled   │
+        ┌─────▼────┐ ┌───▼──────┐ ┌──▼────────┐
+        │   done   │ │ timeout  │ │ cancelled │
+        └──────────┘ └──────────┘ └───────────┘
+
+   rejected  ── refused before any work: unknown service, missing requestedBy,
+                depth exceeded, owner mismatch
+   duplicate ── a jobId already active
+```
+
+Terminal states are `done`, `error`, `timeout`, `cancelled`, `rejected`, `duplicate`. **Every
+path reaches one**, and each publishes a retained result — a client is never left waiting on a
+job that quietly stopped existing.
+
+`started` may be re-entered once per watchdog re-dispatch, bounded by `maxDepth`-independent
+retry limits. Re-entry is visible as a `requeued` event on the timeline.
+
+## Sequence
+
+A directed job:
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant B as Broker
+    participant A as Agent
+    C->>B: publish commands/agent/invoke
+    B->>A: deliver (QoS 1)
+    A->>B: jobs/alice/j1/events {accepted}
+    A->>A: run executor
+    A->>B: jobs/alice/j1/events {analyzing}
+    A->>B: jobs/alice/j1/result {verdict} [retained]
+    B->>C: deliver result
+    Note over C,B: client may disconnect and collect later — result is retained
+```
+
+Declared delegation — the bridge gathers dependencies *before* the executor starts:
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant A as reviewer
+    participant D as dba
+    C->>A: invoke code.review
+    A->>A: capability declares delegates[]
+    A->>D: invoke schema.review (parent=j1, depth=1)
+    D-->>A: result [retained]
+    Note over A: answer injected into the prompt
+    A->>A: executor starts, already holding the answer
+    A-->>C: one combined result
+```
+
+Dynamic delegation — the executor discovers the need mid-job:
+
+```mermaid
+sequenceDiagram
+    participant A as reviewer executor
+    participant D as dba
+    A->>A: reading diff, finds a migration
+    A->>A: mesh_peers() -> dba offers schema.review
+    A->>D: mesh_ask(dba, schema.review)
+    D-->>A: result
+    A->>A: folds it into the review
+```
+
+Cancel propagates down a chain without any agent knowing its shape:
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant A as reviewer
+    participant D as dba
+    participant S as security
+    C->>A: cancel j1
+    A->>A: publish cancelled result, suppress late output
+    A->>D: cancel (child of j1)
+    D->>S: cancel (child of its own job)
+    Note over C,S: each agent cancels only its own children
+```
+
+## Failure modes
+
+What actually happens, rather than what is hoped for.
+
+| Situation | Behaviour |
+|---|---|
+| **Broker unreachable** | Agent retries every 5s. Jobs published meanwhile are queued by the broker and delivered on reconnect, provided the client id is stable |
+| **Agent offline when a job is published** | Queued in its persistent session, delivered on reconnect. This is the main reason `clean: false` matters |
+| **Agent restarts mid-job** | In-memory job state is lost; the executor's own retained result still lands. The watchdog does not survive the restart, so a job whose executor also died goes unresolved |
+| **Executor finishes without publishing** | Watchdog re-dispatches after the silence window, up to twice, then publishes a terminal `error`. Re-dispatch can duplicate work if the capability is not idempotent |
+| **Executor never terminates** | `maxJobDurationMs` publishes a terminal error regardless of liveness |
+| **Peer never answers a delegated ask** | `askTimeoutMs` fails the ask. Declared: optional dependency degrades, required fails the job before the executor starts |
+| **Delegation cycle (A→B→A)** | `maxDepth` refuses **before publishing** — a cycle allowed to start would run until something else stopped it |
+| **Duplicate `jobId`** | Rejected with a `duplicate` result if already active. Note ids are not namespaced by asker, so two agents *can* collide |
+| **Unknown service** | Rejected with a terminal `error` naming the service |
+| **Missing `requestedBy`** | Rejected. The error goes to `jobs/public/<id>/result`, not the sender's scope — a client that omitted it will not see the rejection on its own filter |
+| **Result exceeds broker message limit** | Publish fails at the broker. No chunking exists; large payloads should be published elsewhere and referenced |
+| **Two agents share a client id** | Broker kicks each in turn. Detected at 5+ connects in 60s; the bridge takes a distinct id and reports degraded durability |
+
 ## Registry (retained)
 
 | Topic | Direction | Payload |

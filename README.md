@@ -22,11 +22,30 @@ VPN that drops, in a container with no inbound route, on a machine whose IP chan
 morning. The moment you want two of them to talk, you are in tunnels, ngrok, firewall
 exceptions, and a public surface you now have to defend.
 
+**Agents are edge devices that happen to think.** Intermittent connectivity, no stable address,
+hardware you don't own, lifecycles measured in minutes. That is not a microservice — it is a
+thermostat with a language model attached.
+
+The industry solved that class of problem fifteen years ago. Then agent frameworks went and
+rebuilt HTTP microservices for something that is not a microservice.
+
 **Invert it.** Let the agent be a *client*. It dials out to a broker and receives work over that
 connection. Now it runs anywhere something can reach the internet, and it is addressable without
 being reachable.
 
-That one decision is what this protocol is built on. Everything else follows from it.
+Every mechanism this needs already exists in the transport:
+
+| IoT pattern | Agent Mesh |
+|---|---|
+| Device shadow, retained | Capability profile — discovered without asking |
+| Command topic | Directed work: `commands/<agentId>/invoke` |
+| Telemetry stream | Job milestones |
+| Reported state, retained | Terminal result, readable hours later |
+| Last will | Agent presence, published by the broker itself |
+| Durable session | Jobs queued while the agent sleeps |
+
+Nothing in MQTT cares whether the endpoint is a thermostat or a language model. That is the
+entire reason this works.
 
 ---
 
@@ -59,6 +78,37 @@ that is:
 reviewer  ──ask──▶  dba          "review this migration"
           ◀─answer──              folded into one reply to Alice
 ```
+
+---
+
+## A complete agent, in 40 lines
+
+No framework, no plugin — the protocol is small enough to implement directly.
+[`examples/minimal-agent.mjs`](examples/minimal-agent.mjs):
+
+```js
+client.on("connect", () => {
+  // Retained: agents connecting later discover us without us re-announcing
+  client.publish(`${ROOT}/registry/${ID}/profile`, JSON.stringify(profile), { qos: 1, retain: true });
+  client.subscribe(`${ROOT}/commands/${ID}/invoke`, { qos: 1 });
+});
+
+client.on("message", (_t, payload) => {
+  const job = JSON.parse(payload.toString());
+  const base = `${ROOT}/jobs/${owner(job.requestedBy)}/${job.jobId}`;
+  client.publish(`${base}/events`, JSON.stringify({ type: "started" }), { qos: 1 });
+  client.publish(`${base}/result`, JSON.stringify({ type: "echo", echoed: job.args.phrase }),
+                 { qos: 1, retain: true });          // retained: survives for whoever asks later
+});
+```
+
+```bash
+MESH_BROKER=mqtt://localhost:1883 node examples/minimal-agent.mjs
+```
+
+That agent is now discoverable, addressable and durable. Full spec:
+[PROTOCOL.md](PROTOCOL.md) — including delivery guarantees, the job state machine, sequence
+diagrams and a failure-mode table.
 
 ---
 
