@@ -217,3 +217,26 @@ footer h4 { font-size: .72rem; letter-spacing: .12em; text-transform: uppercase;
             color: var(--faint); margin: 0 0 .7rem; font-weight: 500;
             font-family: ui-monospace, "SF Mono", Menlo, monospace; }
 footer ul { list-style: none; margin: 0; padding: 0; display: grid; gap: .4rem; }
+
+/* ── author ────────────────────────────────────────────────────────── */
+.author { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2.2rem;
+          align-items: start; margin-top: 1.5rem; }
+@media (max-width: 640px) { .author { grid-template-columns: 1fr; gap: 1.4rem; } }
+
+/* A monogram rather than a photograph: the mark is the identity here, and a
+   default avatar would read as a placeholder nobody got round to replacing. */
+.monogram {
+  width: 116px; height: 116px; flex: none; position: relative;
+  display: grid; place-items: center;
+  border: 1px solid var(--wire); border-radius: 8px; background: var(--surface);
+  color: var(--accent);
+}
+.monogram svg { position: absolute; inset: 0; width: 100%; height: 100%; opacity: .16; }
+.monogram span {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 1.9rem; font-weight: 600; letter-spacing: .06em;
+  color: var(--ink); position: relative;
+}
+.author-body p { color: var(--muted); max-width: var(--measure); }
+.author-role { font-family: ui-monospace, "SF Mono", Menlo, monospace;
+               font-size: .82rem; color: var(--faint); margin: 0 0 1.2rem; }

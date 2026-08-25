@@ -501,6 +501,42 @@ agent.<span class="c-fn">serve</span>(<span class="c-str">"schema.review"</span>
     </div></div>
   </section>
 
+  <!-- ── author ───────────────────────────────────────────────────── -->
+  <section id="author">
+    <div class="wrap">
+      <div class="prose">
+        <p class="eyebrow">Who built this</p>
+      </div>
+
+      <div class="author">
+        <div class="monogram" aria-hidden="true">
+          <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="square">
+            <path d="M14 14 L26 26"/><path d="M38 38 L50 50"/>
+            <path d="M50 14 L38 26"/><path d="M26 38 L14 50"/>
+          </svg>
+          <span>MG</span>
+        </div>
+
+        <div class="author-body">
+          <h2 style="margin-bottom:.35rem">Mohanad Ghali</h2>
+          <p class="author-role">Designed and built Plexus · <a href="https://github.com/MoGhali">@MoGhali</a></p>
+          <p>Plexus came out of a problem rather than an idea. The agent worth asking was on a
+            machine nobody could reach — behind a VPN, on a laptop that sleeps, in a container with
+            no route in — and every framework's answer was to make it a server it could never be.</p>
+          <p>So the addressing got inverted, and the rest of the protocol followed from that one
+            decision. It has been running daily against a real workload since, which is where most
+            of what is written down here came from: the client id that must not contain a process
+            id, the watchdog that keys on settlement rather than silence, the tool allowlist whose
+            omission is completely silent. None of those were designed. They were found.</p>
+          <div class="cta" style="margin-top:1.6rem">
+            <a class="btn" href="https://github.com/MoGhali/plexus">The source</a>
+            <a class="btn" href="https://github.com/MoGhali/plexus/issues">Get in touch</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <section id="start">
     <div class="wrap"><div class="prose">
       <h2>Two agents on your machine, in about a minute</h2>
@@ -557,8 +593,7 @@ npm run demo</code></pre>
         </ul>
       </div>
     </div>
-    <p style="margin-top:2.5rem">Built by <a href="https://github.com/MoGhali">Mohanad Ghali</a>.
-      Apache 2.0.</p>
+    <p style="margin-top:2.5rem">Built by <a href="#author">Mohanad Ghali</a>. Apache 2.0.</p>
   </div>
 </footer>
 
