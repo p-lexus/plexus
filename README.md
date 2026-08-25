@@ -23,6 +23,7 @@
   <a href="PROTOCOL.pdf">PDF</a> ·
   <a href="packages/agent">Client library</a> ·
   <a href="packages/notify">Plugins</a> ·
+  <a href="hosts/hermes">Hermes</a> ·
   <a href="#run-it">Run it</a>
 </p>
 
@@ -104,10 +105,11 @@ The protocol is the product. Everything else is one way of speaking it:
 | **[PROTOCOL.md](PROTOCOL.md)** | The specification — topics, payloads, guarantees | nothing |
 | **[`plexus-agent`](packages/agent)** | Client library + the plugin host. Join the mesh in ~15 lines | `mqtt` |
 | **[`plexus-notify`](packages/notify)** | A plugin: delivers outcomes to Slack, GitHub, webhooks | `plexus-agent` |
-| **[`src/`](src)** | Host plugin for OpenClaw — puts a gateway's agent on the mesh | OpenClaw |
+| **[`src/`](src)** | Host plugin for **OpenClaw** — puts a gateway's agent on the mesh | OpenClaw |
+| **[`hosts/hermes/`](hosts/hermes)** | Host plugin for **Hermes Agent** — Python, drop-in | `paho-mqtt` |
 | **[docs/HOSTS.md](docs/HOSTS.md)** | How to write a host plugin for another platform | — |
 
-**None of these is required.** The OpenClaw plugin is *one* participant, not the runtime, and the
+**None of these is required.** Each host plugin is *one* participant, not the runtime, and the
 [40-line example](examples/minimal-agent.mjs) uses no library at all. If you can open an MQTT
 connection, you can be on the mesh.
 
@@ -296,10 +298,34 @@ Two details worth stealing if you write a plugin of your own:
 ### Putting a whole platform on the mesh
 
 A **host plugin** is different: it teaches an entire agent platform to speak Plexus, so its agents
-can delegate to agents running on someone else's. [`src/`](src) does this for OpenClaw.
+can delegate to agents running on someone else's.
 
-**[docs/HOSTS.md](docs/HOSTS.md)** is the guide — the four jobs a host plugin has, the three
-questions to ask about your platform, and the traps that cost real time in the OpenClaw one.
+| Platform | Plugin | Language |
+|---|---|---|
+| [OpenClaw](https://openclaw.ai) | [`src/`](src) | TypeScript |
+| [Hermes Agent](https://hermes-agent.nousresearch.com) | [`hosts/hermes/`](hosts/hermes) | Python |
+| yours | [docs/HOSTS.md](docs/HOSTS.md) | |
+
+These two share no code — different languages, different MQTT clients, different plugin APIs,
+nothing in common but [PROTOCOL.md](PROTOCOL.md). CI stands them both up against one broker and
+checks that each can discover, delegate to and answer the other, with lineage intact across the
+language boundary:
+
+```
+  hermes plugin online, offering research.summarise
+  [js] js-ready
+  hermes received job job-19d2160eed6f from the JS agent
+  [js] js-served
+  hermes delegated to js-reviewer and got risk=high
+  lineage intact across the language boundary: depth 1, parent linked
+  [js] js-got-answer
+  the JS agent received one combined answer from the Hermes agent
+```
+
+That test is the difference between a specification and a description of one program.
+**[docs/HOSTS.md](docs/HOSTS.md)** is the guide for writing the next one — the four jobs a host
+plugin has, the three questions to ask about your platform, and the traps that cost real time in
+the OpenClaw one.
 
 ---
 
@@ -822,7 +848,15 @@ packages/
     ├── routes.js         matching and templating — pure
     └── channels.js       slack · github · webhook · file · console
 
-src/                      the OpenClaw plugin — one participant, not the runtime
+hosts/
+└── hermes/               host plugin for Hermes Agent — Python, second implementation
+    ├── __init__.py       register(ctx) — wiring only
+    ├── protocol.py       the mesh: durable session, discovery, delegation, lineage
+    ├── executor.py       the only Hermes-specific file: running an agent turn
+    ├── tools.py          mesh_publish · mesh_peers · mesh_ask · mesh_status
+    └── tests/            plugin tests + cross-language interop
+
+src/                      host plugin for OpenClaw — one participant, not the runtime
 ├── index.ts              plugin entry: guards, wiring, lifecycle
 ├── types.ts              domain types (no runtime imports)
 ├── config.ts             every default, in one place

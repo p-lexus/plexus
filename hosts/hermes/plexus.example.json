@@ -1,0 +1,42 @@
+{
+  "broker": "mqtt://localhost:1883",
+  "username": "${MQTT_USERNAME}",
+  "password": "${MQTT_PASSWORD}",
+
+  "root": "agents",
+  "agentId": "hermes",
+  "displayName": "Hermes — research and analysis",
+
+  "executor": "auto",
+  "apiUrl": "http://127.0.0.1:8000/v1",
+  "model": "hermes",
+
+  "maxDepth": 4,
+  "askTimeoutSeconds": 300,
+  "maxJobSeconds": 1800,
+
+  "promptVars": {
+    "TEAM_CHANNEL": "#research"
+  },
+
+  "capabilities": [
+    {
+      "service": "research.summarise",
+      "description": "Researches a topic and returns a sourced summary.",
+      "requestSchema": {
+        "topic": "string",
+        "depth": "string? (quick|thorough)"
+      },
+      "prompt": "Research {{topic}} at {{depth}} depth. Return JSON with keys: summary, sources (array of URLs), confidence. Notify ${TEAM_CHANNEL} only if you find something surprising."
+    },
+    {
+      "service": "code.explain",
+      "description": "Explains what a file or function does, and what it assumes.",
+      "requestSchema": {
+        "path": "string",
+        "symbol": "string?"
+      },
+      "prompt": "Read {{path}} and explain {{symbol}}. Return JSON with keys: purpose, assumptions (array), risks (array)."
+    }
+  ]
+}

@@ -23,3 +23,8 @@ services.json
 
 # panel-managed deployment variables (0600, never committed)
 mesh.local.json
+
+# python test env
+.venv*/
+__pycache__/
+*.pyc

@@ -1,0 +1,10 @@
+name: plexus
+version: "1.3.0"
+description: >-
+  Puts this Hermes agent on a Plexus mesh — other agents can discover its
+  capabilities and send it work, and it can delegate to them over MQTT.
+author: Mohanad Ghali
+homepage: https://github.com/MoGhali/plexus
+license: Apache-2.0
+requires:
+  - paho-mqtt>=2.1

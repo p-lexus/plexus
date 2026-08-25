@@ -61,6 +61,22 @@ jobs:
         env:
           PLEXUS_BROKER: mqtt://127.0.0.1:1883
 
+      # The Hermes host plugin is Python, so it is a genuinely independent
+      # implementation of the protocol. Running both against one broker is the
+      # only thing that proves PROTOCOL.md is a specification rather than a
+      # description of the JavaScript.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Hermes host plugin
+        run: |
+          python -m pip install --quiet "paho-mqtt>=2.1"
+          python hosts/hermes/tests/test_plugin.py
+          python hosts/hermes/tests/test_interop.py
+        env:
+          PLEXUS_TEST_BROKER: mqtt://127.0.0.1:1883
+
       - name: Check fixtures carry no real deployment data
         run: |
           if grep -rniE '(U0[0-9A-Z]{8,})|amazonaws\.com|\.elb\.' test/fixtures/; then
