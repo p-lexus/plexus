@@ -114,6 +114,19 @@ Because both are retained, an agent learns the entire mesh the moment it subscri
 announcement round, no waiting for peers to speak. An agent's own profile arrives on the
 wildcard and is ignored.
 
+### Requirement: the executor must have the tools
+
+Both forms depend on the host exposing the plugin's tools to the agent. Under OpenClaw that
+means `tools.alsoAllow` must list `mqtt_publish`, `mesh_ask` and `mesh_peers`, because a tool
+profile otherwise filters plugin tools out entirely.
+
+This fails quietly and is worth checking first: without `mqtt_publish` an executor cannot
+publish its result and jobs appear to hang or get re-dispatched by the watchdog; without
+`mesh_ask` dynamic delegation simply never occurs.
+
+Declared delegation still works without `mesh_ask`, because the bridge performs those asks
+itself — which is one reason to prefer it where the dependency is known in advance.
+
 ### Two ways to delegate
 
 They fail differently, so a deployment chooses with `mesh.delegation`.

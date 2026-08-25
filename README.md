@@ -173,6 +173,33 @@ In `~/.openclaw/openclaw.json`:
 The config key is the plugin **id** (`mqtt-bridge`), deliberately independent of the npm package
 name and the repository name. Only `broker.url` is required.
 
+### Allow the plugin's tools — required
+
+OpenClaw's `tools.profile` is an allowlist that **excludes plugin-registered tools**. Without
+this block the agent silently has none of them, and the symptoms are confusing rather than
+obvious: executors cannot publish results with `mqtt_publish`, so they improvise with shell
+commands and jobs intermittently finish without a result; and `mesh_ask` is simply absent, so
+dynamic delegation never happens and nothing says why.
+
+```jsonc
+{
+  "tools": {
+    "profile": "coding",
+    "alsoAllow": ["mqtt_publish", "mesh_ask", "mesh_peers"]
+  }
+}
+```
+
+Verify after restarting — this should list all three:
+
+```bash
+openclaw agent --agent main -m 'List every tool you have starting with "mesh" or "mqtt".'
+```
+
+Tool policy is **not** hot-reloadable: this needs a gateway restart, unlike other config
+changes. And always `openclaw config validate` before restarting — an invalid config stops the
+gateway from starting at all.
+
 ### 4. Restart and verify
 
 ```bash
