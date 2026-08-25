@@ -162,8 +162,8 @@ h3 { font-size: 1.02rem; letter-spacing: -.01em; margin: 2.2rem 0 .6rem; font-we
 .cta { display: flex; flex-wrap: wrap; gap: .7rem; margin-top: 2rem; }
 
 figure { margin: 2.6rem 0 0; }
-figure img { width: 100%; height: auto; display: block; border: 1px solid var(--wire);
-             border-radius: 6px; background: var(--sunk); }
+figure img, figure video { width: 100%; height: auto; display: block;
+             border: 1px solid var(--wire); border-radius: 6px; background: var(--sunk); }
 figcaption { margin-top: .8rem; font-size: .84rem; color: var(--faint); max-width: var(--measure); }
 
 /* ── code ──────────────────────────────────────────────────────────── */
@@ -384,13 +384,20 @@ agents/jobs/alice/rev-118/result   {"verdict":"APPROVE"} <span class="c-com">←
       </div>
 
       <figure>
-        <img src="assets/overview.png" alt="The Plexus console: connection status, session details, capability list and recent jobs." loading="lazy">
-        <figcaption>Connection, session and durability at a glance. When a client-id collision
-          forces a non-durable session the panel says so, rather than quietly dropping the promise
-          that offline jobs survive.</figcaption>
+        <video id="tour" src="assets/console.mp4" poster="assets/console-poster.png"
+               muted loop playsinline controls preload="metadata"
+               aria-label="A tour of the Plexus console: overview, a job timeline, the capability editor, variables, and the dark theme.">
+          Your browser cannot play this video.
+          <a href="assets/console.mp4">Download it</a> instead.
+        </video>
+        <figcaption>Sixteen seconds through the panel: connection and durability, a job's
+          timeline, capabilities edited as data, variables, and the dark theme. Recorded from the
+          <strong>shipped</strong> panel against redacted fixtures — the same
+          <code>dist/web/index.html</code> the plugin serves, so it cannot show a screen that no
+          longer exists.</figcaption>
       </figure>
 
-      <div class="grid g2" style="margin-top:2.4rem">
+      <div class="grid g2" style="margin-top:3rem">
         <figure style="margin:0">
           <img src="assets/jobs.png" alt="A job timeline showing each milestone with timestamps." loading="lazy">
           <figcaption>Every job keeps its milestone timeline, so <em>“why did this run twice?”</em>
@@ -703,6 +710,21 @@ npm run demo</code></pre>
 </footer>
 
 <script>
+// Autoplay the tour, but only if it is on screen and only for people who have
+// not asked for less motion. A looping video playing behind the fold is
+// bandwidth nobody asked to spend.
+(function () {
+  var v = document.getElementById('tour');
+  if (!v) return;
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  if (!('IntersectionObserver' in window)) return;
+  new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      if (e.isIntersecting) { v.play().catch(function () {}); } else { v.pause(); }
+    });
+  }, { threshold: 0.25 }).observe(v);
+})();
+
 // Tabs. Progressive enhancement: without JS every panel is simply visible,
 // which is a worse experience but never a broken one.
 (function () {

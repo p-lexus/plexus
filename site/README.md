@@ -14,6 +14,21 @@ CDN, or a bucket.
 open site/index.html          # that's the whole preview process
 ```
 
+## The console tour
+
+`assets/console.mp4` is generated, not filmed:
+
+```bash
+npm run site:video            # node tools/panel-video.mjs — needs Chrome and ffmpeg
+```
+
+It drives the **shipped** panel — the same `dist/web/index.html` the plugin serves — against the
+redacted fixtures in `test/fixtures`, captures six views at 2× density, cross-fades them, and
+burns the wordmark into the corner. So the tour cannot show a screen that no longer exists, and
+cannot leak a live deployment's topics, job ids or repository names.
+
+Regenerate it whenever the panel's appearance changes, along with the screenshots.
+
 ## Keeping it honest
 
 The two terminal recordings come from [`tools/record-demo.mjs`](../tools/record-demo.mjs), which

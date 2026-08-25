@@ -36,7 +36,8 @@
     "test:panel": "node test/render-check.mjs",
     "test:packages": "node test/packages.mjs",
     "demo": "node examples/demo.mjs",
-    "pdf": "node tools/pdf.mjs PROTOCOL.md PROTOCOL.pdf"
+    "pdf": "node tools/pdf.mjs PROTOCOL.md PROTOCOL.pdf",
+    "site:video": "node tools/panel-video.mjs"
   },
   "dependencies": {
     "mqtt": "^5.10.1",
