@@ -1,32 +1,118 @@
 # Agent Mesh Protocol
 
-**An MQTT protocol for dispatching jobs to autonomous agents** — plus a production reference
-implementation as an [OpenClaw](https://github.com/openclaw) plugin.
+**Your agents run on laptops, behind VPNs, inside containers with no ingress. This is how they
+reach each other anyway.**
 
-You publish a job. An agent somewhere picks it up, runs it in an isolated session, and streams
-progress and a result back on topics scoped to you. The agent never opens an inbound port.
+An MQTT protocol for dispatching work between autonomous agents — with a durable transport,
+capability discovery, and agent-to-agent delegation. Plus a production reference implementation
+as an [OpenClaw](https://github.com/openclaw) plugin.
 
-- **Specification** — [PROTOCOL.md](PROTOCOL.md) ([PDF](PROTOCOL.pdf))
-- **Protocol version** — 1.3
-- **Status** — running in production; spec and implementation are versioned together
+- **Specification** — [PROTOCOL.md](PROTOCOL.md) ([PDF](PROTOCOL.pdf)) · version 1.3
+- **Status** — running daily against a real workload; one deployment, one implementation
 
 ---
 
-## Why MQTT
+## The problem
 
-Agent frameworks usually expose an HTTP endpoint, then spend their time fighting the
-consequences: inbound firewall rules, tunnels, TLS termination, a public surface to defend.
-MQTT inverts it. The agent makes one **outbound** connection to a broker and receives work over
-it, so it runs anywhere a laptop can reach the internet — behind NAT, on a VPN, in a container
-with no ingress.
+Every agent framework wants your agent to be a server. Expose an endpoint, get a URL, receive
+requests.
 
-Three properties fall out of that choice, and the protocol is built around them:
+Real agents don't live like that. They live on a developer's laptop that sleeps at 6pm, on a
+VPN that drops, in a container with no inbound route, on a machine whose IP changed this
+morning. The moment you want two of them to talk, you are in tunnels, ngrok, firewall
+exceptions, and a public surface you now have to defend.
 
-| Property | What it buys |
+**Invert it.** Let the agent be a *client*. It dials out to a broker and receives work over that
+connection. Now it runs anywhere something can reach the internet, and it is addressable without
+being reachable.
+
+That one decision is what this protocol is built on. Everything else follows from it.
+
+---
+
+## The 30-second version
+
+Someone — a human, CI, or another agent — publishes a job:
+
+```bash
+mosquitto_pub -t 'agents/commands/reviewer/invoke' -m '{
+  "service": "code.review",
+  "requestedBy": "alice",
+  "args": { "repo": "acme/web-app", "pr": 42 }
+}'
+```
+
+The agent picks it up, runs it in an isolated session, and streams back:
+
+```
+agents/jobs/alice/rev-118/events    started · analyzing · result-ready
+agents/jobs/alice/rev-118/result    { "verdict": "APPROVE", ... }   ← retained
+```
+
+Alice subscribed to `agents/jobs/alice/#` and saw only her own traffic. She could have
+disconnected and collected the result an hour later — it's retained on the broker.
+
+And if the reviewer hits a database migration it isn't qualified to judge, it asks the agent
+that is:
+
+```
+reviewer  ──ask──▶  dba          "review this migration"
+          ◀─answer──              folded into one reply to Alice
+```
+
+---
+
+## What you get from MQTT that HTTP won't give you
+
+These aren't incidental. Each solves a problem that otherwise becomes application code:
+
+| | What it means |
 |---|---|
-| **Durable sessions** (`clean: false`, QoS 1) | Jobs published while the agent is offline are queued by the broker and delivered on reconnect |
-| **Retained messages** | The capability catalog, and the last result of every job, are readable by a client that connects *afterwards* |
-| **Topic wildcards** | Owner scoping becomes a subscription filter instead of application code |
+| **Durable sessions** | A job published while your agent was asleep is **queued by the broker** and delivered when it wakes. No retry logic, no dead-letter queue, no lost work. |
+| **Retained messages** | Every agent's capability catalog, and every job's final result, are readable by a client that connects *afterwards*. Discovery and late collection come free. |
+| **Topic wildcards** | Multi-tenancy is a subscription filter — `jobs/alice/#` — not authorization code you write and get wrong. |
+| **Last will** | An agent that dies is marked offline by the broker itself. No heartbeat service. |
+| **One outbound socket** | Works behind NAT, on a VPN, in a container with no ingress. Nothing to expose. |
+
+---
+
+## Where this sits
+
+It isn't competing with your agent framework — it's the layer *between* frameworks.
+
+| | Scope | Assumes |
+|---|---|---|
+| **MCP** | An agent using tools | Local process or a reachable HTTP server |
+| **A2A** | Agents interoperating | Both agents have reachable endpoints |
+| **Agent Mesh** | Agents dispatching work to each other | **Only that both can reach a broker** |
+
+Use MCP to give one agent tools. Use this to let agents that can't see each other work together.
+
+---
+
+## Concepts
+
+**A capability is data, not code.** A name, an argument schema, and a prompt template:
+
+```json
+{ "service": "schema.review",
+  "requestSchema": { "migration": "string" },
+  "prompt": "Review migration {{migration}}. Flag lock risk and missing indexes." }
+```
+
+The bridge contains no service name anywhere — not `code.review`, not anything. It renders the
+template and hands it to an executor. Add, change and remove capabilities at runtime; no
+restart, no rebuild, no deploy.
+
+**Every agent is both worker and requester.** A human enters at one agent; from there work flows
+agent to agent, each asking whoever owns the capability it lacks. Requests are **directed, never
+broadcast** — an agent addressed for a capability it publishes simply does the work. No bidding,
+no contention. The only decision is on the asking side, which is why every agent reads the
+registry.
+
+**A chain of agents is a chain of jobs.** Each ask creates its own job, linked by `parentJobId`
+and `rootJobId`, so a request through five agents is traceable as one thing — and cancellable as
+one thing.
 
 ---
 
@@ -460,11 +546,50 @@ names, and no wall-clock dependence.
 
 ---
 
+## Honest limitations
+
+Things that will bite you, stated plainly rather than discovered later.
+
+**Identity is not authenticated.** `requestedBy` is a self-declared string. MQTT delivers topic
+and payload only — a publisher's broker identity does not travel with the message — so anyone
+with broker credentials can claim any owner scope. Owner scoping is a **convention that keeps
+honest clients from seeing each other's traffic**, not a security boundary.
+
+This is fine for one team's private mesh. It is not sufficient for agents belonging to parties
+who don't already trust each other. The fix is broker-side — EMQX ACLs, or rule-engine
+enrichment feeding `mesh.verifyOwner` — which means the protocol delegates its hardest problem
+to your deployment. Know that going in.
+
+**Delegation holds sessions open.** An asking agent waits for its answer, so a four-deep chain
+occupies four agent sessions simultaneously. `mesh.maxDepth` bounds it, but this model favours
+depth over breadth and won't fan out to dozens of peers.
+
+**Terminal results depend on the executor.** The protocol guarantees the *shape* and retention of
+a result, and normalises it at the transport boundary. It cannot guarantee an executor publishes
+one at all. A watchdog re-dispatches silent jobs, but that is a safety net, not a guarantee —
+and re-dispatch can duplicate work if a capability isn't idempotent.
+
+**One implementation, one deployment.** This runs daily against a real workload, which is more
+than a prototype and much less than battle-tested. Expect to find things.
+
+**Requires a broker you operate.** No hosted option. That's a feature if you care where your
+job payloads go, and friction if you wanted to try it in five minutes.
+
+**No client library yet.** Publishing a job is `mosquitto_pub` or your language's MQTT client.
+Fine for CI and scripts; more ceremony than it should be for everyday use.
+
 ## Roadmap
 
-- An end-to-end recipe for `mesh.verifyOwner` with EMQX rule-engine enrichment
-- Multi-agent discovery: choosing between agents advertising the same capability
-- A published client library, instead of `mosquitto_pub` snippets
+In rough order of how much they'd unlock:
+
+- **A client library.** One-line publish-and-await in TypeScript and Python. The biggest
+  adoption gap today.
+- **Verified identity end to end.** A working EMQX rule-engine recipe feeding `mesh.verifyOwner`,
+  so owner scoping becomes enforcement rather than convention.
+- **Non-blocking delegation.** Let an asking agent hand off instead of waiting, for fan-out
+  shapes the current model can't serve.
+- **Implementations beyond OpenClaw.** The protocol has no dependency on it; the spec is small
+  enough to implement against in an afternoon, and a second implementation would prove that.
 
 ---
 
