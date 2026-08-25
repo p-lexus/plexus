@@ -33,7 +33,7 @@
 **Contents** · [Quick start](#quick-start) · [Run it](#run-it) · [The frame](#plexus-is-the-frame-not-the-agent)
 · [The problem](#the-problem) · [Plugins](#the-frame-and-the-plugins) · [Where this sits](#where-this-sits)
 · [Concepts](#concepts) · [Console](#the-console) · [How it works](#how-it-works)
-· [Install](#install) · [Send a job](#send-a-job) · [Capabilities](#author-a-capability)
+· [Install: OpenClaw](#3a-openclaw) · [Hermes](#3b-hermes) · [Send a job](#send-a-job) · [Capabilities](#author-a-capability)
 · [Delegation](#delegation) · [Security](#security-model) · [Config](#configuration-reference)
 · [Architecture](#architecture) · [Development](#development) · [Limitations](#honest-limitations)
 · [Roadmap](#roadmap)
@@ -502,18 +502,41 @@ that offline jobs survive.
 
 ## Install
 
-Runs on **macOS, Linux and Windows**.
+Runs on **macOS, Linux and Windows**. Everything needs two things: a broker, and a host plugin
+for whatever agent platform you use.
 
 ```bash
 git clone https://github.com/MoGhali/plexus && cd plexus
 ./install.sh
 ```
 
-It detects OpenClaw or Hermes, installs the right host plugin, and never overwrites a config you
-already have. Re-run it to update. On Windows it works under Git Bash or WSL; for native
-PowerShell the steps are written out in the guide.
+That detects OpenClaw or Hermes and does the rest. It never overwrites a config you already have,
+and re-running it updates — restarting the gateway only if the compiled output actually changed.
+On Windows it runs under Git Bash or WSL. Everything it does by hand is below.
 
-Platforms differ in exactly two ways — where files live, and how a service restarts:
+### 1. A broker
+
+Any MQTT 3.1.1 or 5 broker. Docker works identically on all three platforms:
+
+```bash
+docker run -d --name mosquitto -p 1883:1883 eclipse-mosquitto:2 \
+  sh -c 'printf "listener 1883\nallow_anonymous true\n" > /m.conf && mosquitto -c /m.conf'
+```
+
+Without Docker:
+
+| | |
+|---|---|
+| macOS | `brew install mosquitto && mosquitto -p 1883` |
+| Debian/Ubuntu | `sudo apt install mosquitto && mosquitto -p 1883` |
+| Fedora | `sudo dnf install mosquitto && mosquitto -p 1883` |
+| Windows | `winget install EclipseFoundation.Mosquitto`, then `mosquitto.exe -p 1883` |
+
+Anonymous access is fine on localhost and **nowhere else** — see [Security model](#security-model).
+
+### 2. Where things live
+
+Platforms differ in exactly two ways: paths, and how a service restarts.
 
 | | macOS | Linux | Windows |
 |---|---|---|---|
@@ -527,37 +550,186 @@ Platforms differ in exactly two ways — where files live, and how a service res
 The second difference turns out not to be one: `openclaw gateway restart` drives launchd, systemd
 or Task Scheduler depending on the platform, so it is the same command everywhere.
 
-**[docs/INSTALL.md](docs/INSTALL.md)** is the full guide — OpenClaw, Hermes, your own agent and
-plugins, with macOS/Linux **and PowerShell** commands for each, prerequisites, and a
-troubleshooting table.
+**Prerequisites:** Node 18+ and git for OpenClaw; Python 3.9+ and pip for Hermes.
 
-Two things catch people out, so they are worth repeating here:
+### 3a. OpenClaw
 
-**On OpenClaw, `tools.alsoAllow` is not optional.**
+The repository **is** the deployment — an installed agent is a git clone, so there is one source
+of truth and no drift.
+
+**macOS and Linux**
+
+```bash
+git clone https://github.com/MoGhali/plexus.git ~/.openclaw/extensions/mqtt-bridge
+cd ~/.openclaw/extensions/mqtt-bridge
+npm install
+cp services.example.json services.json     # your capability catalog
+npm run build
+```
+
+**Windows (PowerShell)**
+
+```powershell
+git clone https://github.com/MoGhali/plexus.git "$env:USERPROFILE\.openclaw\extensions\mqtt-bridge"
+cd "$env:USERPROFILE\.openclaw\extensions\mqtt-bridge"
+npm install
+Copy-Item services.example.json services.json
+npm run build
+```
+
+`services.json` is gitignored, so `git pull` never collides with your own capabilities.
+
+**Configure** — in `openclaw.json` (path above; the file allows `//` comments):
 
 ```jsonc
-{ "tools": { "profile": "coding", "alsoAllow": ["mqtt_publish", "mesh_ask", "mesh_peers"] } }
+{
+  "plugins": {
+    "allow": ["mqtt-bridge"],
+    "entries": {
+      "mqtt-bridge": {
+        "enabled": true,
+        "config": {
+          "broker": {
+            "url": "mqtt://localhost:1883",
+            "username": "mesh",
+            "password": "${MQTT_PASSWORD}"    // ${ENV_VAR} resolves at runtime
+          },
+          "mesh": { "root": "agents", "agentId": "my-agent" },
+          "web":  { "auth": "<a long random string>" }
+        }
+      }
+    }
+  },
+  "tools": {
+    "profile": "coding",
+    "alsoAllow": ["mqtt_publish", "mesh_ask", "mesh_peers"]
+  }
+}
 ```
 
-The tool profile is an allowlist that **excludes plugin-registered tools**. Omit this and the
-agent silently has none of them — executors cannot publish results, so they improvise with shell
-commands and jobs intermittently finish without one, while `mesh_ask` is simply absent and
-delegation never happens. Nothing says why. Verify after restarting:
+**`tools.alsoAllow` is not optional.** The tool profile is an allowlist that *excludes*
+plugin-registered tools. Omit it and the agent silently has none of them — executors cannot
+publish results, so they improvise with shell commands and jobs intermittently finish without
+one, while `mesh_ask` is simply absent and delegation never happens. Nothing says why.
+
+**Restart and verify** — same three commands on every platform:
 
 ```bash
-openclaw agent --agent main -m 'List every tool you have starting with "mesh" or "mqtt".'
+openclaw config validate     # ALWAYS FIRST. An invalid config stops the gateway starting at all
+openclaw gateway restart     # launchd, systemd or Task Scheduler, as appropriate
+openclaw gateway status
 ```
-
-**Validate before restarting, always.** An invalid config does not degrade the gateway, it stops
-it starting at all — so check while you still have a working agent to go back to:
 
 ```bash
-openclaw config validate
-openclaw gateway restart     # launchd, systemd or schtasks — same command everywhere
+mosquitto_sub -h localhost -t 'agents/registry/+/profile' -C 1      # did it announce itself?
+openclaw agent --agent main -m 'List every tool starting with "mesh" or "mqtt".'
 ```
 
-Plugin *code* needs that restart, because the gateway caches the loaded module. Config
-hot-reloads, with one exception: **tool policy does not.**
+That last command must list all three tools. If it doesn't, revisit `tools.alsoAllow` — and note
+that tool policy is the one setting that does **not** hot-reload.
+
+Then open `http://127.0.0.1:8765` and sign in with your `web.auth` token.
+
+### 3b. Hermes
+
+[Hermes Agent](https://hermes-agent.nousresearch.com) loads Python plugins from its plugins
+directory.
+
+**macOS and Linux**
+
+```bash
+git clone https://github.com/MoGhali/plexus
+mkdir -p ~/.hermes/plugins
+cp -r plexus/hosts/hermes ~/.hermes/plugins/plexus
+pip install "paho-mqtt>=2.1"
+```
+
+**Windows (PowerShell)**
+
+```powershell
+git clone https://github.com/MoGhali/plexus
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.hermes\plugins" | Out-Null
+Copy-Item -Recurse plexus\hosts\hermes "$env:USERPROFILE\.hermes\plugins\plexus"
+pip install "paho-mqtt>=2.1"
+```
+
+If pip refuses because Python is externally managed — common on Linux, and on macOS via Homebrew:
+
+```bash
+pip install --user --break-system-packages "paho-mqtt>=2.1"
+pipx inject hermes paho-mqtt          # if Hermes runs from pipx
+```
+
+It has to import `paho.mqtt` from **the interpreter Hermes itself runs under**. Installing it
+elsewhere is what `ModuleNotFoundError: paho` almost always means.
+
+**Configure** — create `plexus.json` (path above):
+
+```json
+{
+  "broker": "mqtt://localhost:1883",
+  "agentId": "hermes",
+  "displayName": "Hermes — research and analysis",
+
+  "executor": "api",
+  "apiUrl": "http://127.0.0.1:8000/v1",
+
+  "capabilities": [
+    {
+      "service": "research.summarise",
+      "description": "Researches a topic and returns a sourced summary.",
+      "requestSchema": { "topic": "string" },
+      "prompt": "Research {{topic}}. Return JSON with keys: summary, sources, confidence."
+    }
+  ]
+}
+```
+
+`executor: "api"` needs Hermes' API server enabled, and is worth it: the turn is isolated and the
+result comes back directly. Without it the plugin falls back to pushing the job into a session and
+depending on the agent *choosing* to call `mesh_publish` to report.
+
+Restart Hermes and look for:
+
+```
+plexus: hermes online on mqtt://localhost:1883 (root 'agents', executor 'api') offering research.summarise
+```
+
+No broker configured means the plugin stays quietly offline rather than failing — a mesh being
+unreachable shouldn't stop you using your agent.
+
+> **Not yet run against a live Hermes.** The protocol half is tested and interoperates with the
+> JavaScript implementation; the Hermes-facing half is written against their published plugin API
+> and verified against a faithful fake. If your build differs it fails at `register()` and says so
+> in the log — it cannot take Hermes down.
+
+### 3c. No platform at all
+
+Any Node process, any OS:
+
+```bash
+npm install plexus-agent
+```
+
+```js
+import { connect } from "plexus-agent";
+const agent = await connect({ broker: "mqtt://localhost:1883", agentId: "dba" });
+agent.serve("schema.review", async (job, ctx) => ({ risk: "high" }));
+```
+
+### More than one on the same mesh
+
+They find each other automatically, provided all of them use the **same broker**, the **same
+`root`** (default `agents`), and a **different `agentId`** each. An OpenClaw agent and a Hermes
+agent on one machine is a normal setup — two processes, two registry entries, one broker, each
+able to delegate to the other.
+
+```bash
+mosquitto_sub -h localhost -t 'agents/registry/+/profile' -v      # who's out there
+```
+
+**[docs/INSTALL.md](docs/INSTALL.md)** has the same steps plus plugin hosting, updating, and a
+troubleshooting table of symptoms and their causes.
 
 ---
 
