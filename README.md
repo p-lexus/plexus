@@ -391,6 +391,24 @@ Then open `http://127.0.0.1:8765` and sign in with your `web.auth` token.
 
 ---
 
+## Updating a running agent
+
+An installed agent is a clone of this repo, so updates arrive through git rather than by editing
+the install:
+
+```bash
+cd ~/.openclaw/extensions/mqtt-bridge
+git pull && npm run build
+launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway
+```
+
+**Plugin code requires the restart.** The gateway caches the loaded module, so a rebuilt `dist/`
+sits unused until it is re-imported — `git pull && npm run build` alone changes nothing. Config
+in `openclaw.json` hot-reloads, with one exception: **tool policy does not.**
+
+Your catalog (`services.json`) and variables (`mesh.local.json`) are gitignored, so a pull never
+touches them.
+
 ## Send a job
 
 ```bash

@@ -13,6 +13,44 @@ npm test                 # build, unit tests, console render check
 
 You do **not** need a broker to run the tests. You do need one to run the plugin.
 
+## How this repo relates to a running agent
+
+The repository **is** the deployment. An installed Plexus agent is a git clone of this repo, so
+there is exactly one source of truth and no drift between what you read and what runs.
+
+```
+  this repo  ──git pull──▶  ~/.openclaw/extensions/mqtt-bridge  ──▶  running agent
+                                   (a clone, not a copy)
+```
+
+Changes reach a running agent **through git**, never by editing it in place:
+
+```bash
+# in your working copy
+npm test && git commit && git push
+
+# on the machine running the agent
+cd ~/.openclaw/extensions/mqtt-bridge
+git pull && npm run build
+launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway   # code needs a restart
+```
+
+Editing the installed copy directly means the next `git pull` either conflicts or silently
+discards your work, and the repo stops describing what is actually deployed. It also means a bad
+change can't be undone with `git checkout`.
+
+**What legitimately differs per install**, and is therefore gitignored:
+
+| Path | Why it is local |
+|---|---|
+| `services.json` | Your capability catalog. `services.example.json` is what ships |
+| `mesh.local.json` | Deployment variables, `0600`, never committed |
+| `dist/`, `node_modules/` | Build output |
+| `~/.openclaw/openclaw.json` | Host config — outside the repo entirely |
+
+Everything else is tracked, so `git status` in an installed agent should be clean. If it isn't,
+something was edited in place.
+
 ## Layout
 
 | Path | What lives there |

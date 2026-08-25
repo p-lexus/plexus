@@ -291,6 +291,10 @@ const clock = (ts) => ts ? new Date(ts).toLocaleTimeString([], { hour12: false }
 const ago = (ts) => ts ? dur(Date.now() - ts) + ' ago' : '—';
 
 // One vocabulary for state, used by stripe, chip and tile alike.
+/* Reconnects in the last hour, not since boot. A lifetime counter beside a
+   live uptime reads as alarming long after the trouble has passed. */
+const recentRc = () => status?.reconnectsLastHour ?? 0;
+
 const RUNNING = new Set(['accepted', 'started']);
 const BAD = new Set(['error', 'timeout', 'rejected']);
 function tone(state) {
@@ -460,6 +464,7 @@ function overview() {
   return `
   <div class="stack">
     ${status.connected ? '' : `<div class="warn-bar"><span>⚠</span><div><b>The bridge is not connected to the broker.</b> Jobs published now are queued by the broker and delivered when it reconnects${status.lastError ? ` — last error: ${esc(status.lastError)}` : ''}.</div></div>`}
+    ${recentRc() >= 5 ? `<div class="warn-bar"><span>⚠</span><div><b>${recentRc()} reconnects in the last hour.</b> The link to the broker is unstable${status.lastError ? ` — last error: ${esc(status.lastError)}` : ''}. Jobs still queue and deliver, but dispatch stalls while disconnected.</div></div>` : ''}
     ${status.session && status.session.durable === false ? `<div class="warn-bar"><span>⚠</span><div><b>Session durability is degraded.</b> A client id collision forced a new session, so jobs published while this agent is offline will not be queued. Set a distinct <code>broker.clientId</code> and restart.</div></div>` : ''}
     ${requeued.length ? `<div class="warn-bar"><span>⚠</span><div><b>${requeued.length} job${requeued.length > 1 ? 's were' : ' was'} re-dispatched by the watchdog.</b> That means an executor finished without publishing a result. Open the job to see its timeline.</div></div>` : ''}
 
@@ -467,7 +472,7 @@ function overview() {
       <div class="tile"><span class="eyebrow">Running</span><span class="v ${live.length ? 'run' : ''}">${live.length}</span><span class="c">${live.length ? esc(live[0].jobId) : 'idle'}</span></div>
       <div class="tile"><span class="eyebrow">Completed</span><span class="v ok">${done.length}</span><span class="c">median ${dur(median)}</span></div>
       <div class="tile"><span class="eyebrow">Failed</span><span class="v ${bad.length ? 'err' : ''}">${bad.length}</span><span class="c">${bad.length ? esc(bad[0].state) + ' most recent' : 'none'}</span></div>
-      <div class="tile"><span class="eyebrow">Uptime</span><span class="v">${dur(status.uptimeMs)}</span><span class="c">${status.reconnects} reconnect${status.reconnects === 1 ? '' : 's'}</span></div>
+      <div class="tile"><span class="eyebrow">Uptime</span><span class="v">${dur(status.uptimeMs)}</span><span class="c">${recentRc()} reconnect${recentRc() === 1 ? '' : 's'} this hour</span></div>
       <div class="tile"><span class="eyebrow">Messages in</span><span class="v">${status.rx}</span><span class="c">${status.tx} published</span></div>
       <div class="tile"><span class="eyebrow">Services</span><span class="v">${(profile.capabilities || []).length}</span><span class="c">protocol ${esc(status.protocolVersion || '—')}</span></div>
     </div>
@@ -782,7 +787,8 @@ function sessionView() {
         <dt>Protocol</dt><dd>MQTT ${s.mqttVersion === 5 ? '5' : '3.1.1'} · mesh ${esc(status.protocolVersion || '—')}</dd>
         <dt>Durable session</dt><dd>${s.durable === false ? 'no — jobs lost while offline' : 'yes — offline jobs are queued'}</dd>
         <dt>Keepalive</dt><dd>${esc(s.keepalive || '—')}s</dd>
-        <dt>Uptime</dt><dd>${dur(status.uptimeMs)} · ${status.reconnects} reconnect${status.reconnects === 1 ? '' : 's'}</dd>
+        <dt>Uptime</dt><dd>${dur(status.uptimeMs)} on this connection</dd>
+        <dt>Reconnects</dt><dd>${recentRc()} in the last hour · ${status.reconnects} since start</dd>
         <dt>Last error</dt><dd>${status.lastError ? esc(status.lastError) : 'none'}</dd>
       </dl></div>
     </div>

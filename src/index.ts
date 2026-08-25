@@ -258,6 +258,7 @@ export default definePluginEntry({
       rx: transport.stats.rx,
       tx: transport.stats.tx,
       reconnects: transport.stats.reconnects,
+      reconnectsLastHour: transport.recentReconnects(),
       lastError: transport.stats.lastError,
       activeJobs: [...jobs.active],
       agentId: conf.mesh.agentId,

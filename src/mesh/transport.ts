@@ -34,6 +34,7 @@ export interface SessionInfo {
 export interface TransportStats {
   rx: number;
   tx: number;
+  /** Lifetime count since this process started. Never resets. */
   reconnects: number;
   connectedAt: number;
   lastError: string;
@@ -52,6 +53,8 @@ export interface Transport {
   start(handlers: TransportHandlers): void;
   subscribe(topics: Record<string, { qos: 0 | 1 | 2 }>): void;
   publish(topic: string, payload: string, opts?: { qos?: 0 | 1 | 2; retain?: boolean }): void;
+  /** Reconnects within the last hour — the number that indicates a live problem. */
+  recentReconnects(): number;
   /** Counts toward the published total; used by the agent tool. */
   publishCounted(topic: string, payload: string, opts?: { qos?: 0 | 1 | 2; retain?: boolean }): void;
   end(force?: boolean): void;
@@ -91,6 +94,10 @@ export function createTransport(
   // Kick-loop detector: repeated connects in a short window mean another client
   // holds this session and the broker is bouncing us back and forth.
   const recentConnects: number[] = [];
+  // Reconnect timestamps for the rolling window. A lifetime total next to a
+  // live uptime reads as alarming long after the trouble has passed — what an
+  // operator needs to know is whether it is happening NOW.
+  const reconnectTimes: number[] = [];
 
   function connect(): void {
     client = mqtt.connect(cfg.broker.url, {
@@ -164,7 +171,13 @@ export function createTransport(
       h.onMessage(topic, raw, data);
     });
 
-    client.on("reconnect", () => { stats.reconnects++; logger.warn("reconnecting…"); h.onStateChange(); });
+    client.on("reconnect", () => {
+      stats.reconnects++;
+      reconnectTimes.push(Date.now());
+      if (reconnectTimes.length > 500) reconnectTimes.shift();
+      logger.warn("reconnecting…");
+      h.onStateChange();
+    });
     client.on("error", (err) => { stats.lastError = err.message; logger.error(`MQTT error: ${err.message}`); h.onStateChange(); });
     client.on("offline", () => { logger.warn("broker offline"); h.onStateChange(); });
     client.on("close", () => { logger.warn("connection closed"); h.onStateChange(); });
@@ -173,6 +186,10 @@ export function createTransport(
   return {
     stats,
     session,
+    recentReconnects() {
+      const cutoff = Date.now() - 3_600_000;
+      return reconnectTimes.filter((t) => t >= cutoff).length;
+    },
     get connected() { return Boolean(client?.connected); },
     client: () => client,
 
