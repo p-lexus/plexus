@@ -88,7 +88,10 @@ else
   command -v git >/dev/null 2>&1 || die "git is required to fetch Plexus"
   SOURCE_DIR="$(mktemp -d)/plexus"
   step "fetching Plexus"
-  run git clone --depth 1 --quiet "$REPO_URL" "$SOURCE_DIR"
+  run git clone --depth 1 --quiet "$REPO_URL" "$SOURCE_DIR" || die \
+    "could not clone $REPO_URL.
+    If it is private, authenticate first (gh auth login, or use an SSH remote),
+    or clone it yourself and run ./install.sh from inside the checkout."
   ok "fetched to $SOURCE_DIR"
 fi
 
@@ -175,10 +178,25 @@ install_openclaw() {
   elif [ -d "$DEST" ]; then
     die "$DEST exists but is not a git clone. Move it aside and re-run."
   else
-    # A clone rather than a copy: the repository *is* the deployment, so
-    # updates arrive by git pull and nothing drifts between the two.
-    run git clone --quiet "$REPO_URL" "$DEST"
-    ok "cloned to $DEST"
+    # A clone rather than a copy: the repository *is* the deployment, so updates
+    # arrive by git pull and nothing drifts between the two.
+    #
+    # Cloned from the local checkout rather than from GitHub — it needs no
+    # network, no credentials, and works while the repository is still private.
+    # origin is then repointed at the canonical URL so `git pull` behaves
+    # normally afterwards.
+    if [ -d "$SOURCE_DIR/.git" ]; then
+      run git clone --quiet "$SOURCE_DIR" "$DEST" \
+        || die "could not clone $SOURCE_DIR into $DEST"
+      run git -C "$DEST" remote set-url origin "$REPO_URL"
+      ok "cloned to $DEST  ${DIM}(from this checkout; origin → $REPO_URL)${R}"
+    else
+      run git clone --quiet "$REPO_URL" "$DEST" || die \
+        "could not clone $REPO_URL.
+    If the repository is private, authenticate first (gh auth login, or an SSH
+    remote), or run this script from inside a checkout you already have."
+      ok "cloned to $DEST"
+    fi
   fi
 
   run sh -c "cd '$DEST' && npm install --silent"
