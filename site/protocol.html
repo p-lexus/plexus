@@ -1,0 +1,656 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Protocol — Plexus</title>
+<meta name="description" content="The Agent Mesh Protocol: topics, payloads, delivery guarantees, job lifecycle, delegation lineage, owner scoping and variables. The wire format, independent of any implementation.">
+<meta property="og:title" content="The Agent Mesh Protocol">
+<meta property="og:description" content="Topics, payloads and guarantees. Everything an implementation has to agree on, and nothing about any particular one.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='%2312796a' stroke-width='7' stroke-linecap='square'%3E%3Cpath d='M12 12 L26 26'/%3E%3Cpath d='M38 38 L52 52'/%3E%3Cpath d='M52 12 L38 26'/%3E%3Cpath d='M26 38 L12 52'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="assets/plexus.css">
+<style>
+/* Documentation layout: a sticky contents rail beside a single reading column.
+   A specification is navigated, not read front to back. */
+.doc { display: grid; grid-template-columns: 15rem minmax(0, 1fr); gap: 3.5rem; align-items: start;
+       padding: 3rem 0 6rem; }
+@media (max-width: 900px) { .doc { grid-template-columns: 1fr; gap: 1.5rem; } }
+
+.toc { position: sticky; top: 5rem; font-size: .84rem; }
+@media (max-width: 900px) {
+  .toc { position: static; border: 1px solid var(--wire); border-radius: 6px; padding: 1rem 1.2rem; }
+}
+.toc h4 { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .7rem;
+          letter-spacing: .14em; text-transform: uppercase; color: var(--faint);
+          margin: 0 0 .8rem; font-weight: 500; }
+.toc ol { list-style: none; margin: 0 0 1.6rem; padding: 0; display: grid; gap: .45rem; }
+.toc a { color: var(--muted); display: block; line-height: 1.35; }
+.toc a:hover { color: var(--ink); text-decoration: none; }
+
+.doc-body > section { border-top: 0; padding: 0 0 3.2rem; scroll-margin-top: 5rem; }
+.doc-body > section + section { border-top: 1px solid var(--wire); padding-top: 3.2rem; }
+.doc-body h2 { font-size: 1.5rem; margin-bottom: .8rem; }
+.doc-body h3 { font-size: .98rem; margin: 2rem 0 .5rem; }
+.doc-body p, .doc-body li { color: var(--muted); max-width: var(--measure); }
+.doc-body strong { color: var(--ink); font-weight: 600; }
+.doc-body ul { padding-left: 1.1rem; }
+.doc-body li { margin: .35rem 0; }
+
+/* Topic strings are the load-bearing nouns of this document. */
+.topic { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .84rem;
+         color: var(--accent); white-space: nowrap; }
+.dir { font-size: .78rem; color: var(--faint); white-space: nowrap; }
+.pill { display: inline-block; font-size: .68rem; letter-spacing: .08em; text-transform: uppercase;
+        padding: .12rem .45rem; border-radius: 3px; border: 1px solid var(--wire); color: var(--faint); }
+.pill.keep { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+.hero-doc { padding: 3.5rem 0 0; }
+</style>
+</head>
+<body>
+
+<header>
+  <nav class="wrap">
+    <a class="brand" href="index.html" aria-label="Plexus, home">
+      <svg class="mark" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="square" aria-hidden="true">
+        <path d="M12 12 L26 26"/><path d="M38 38 L52 52"/><path d="M52 12 L38 26"/><path d="M26 38 L12 52"/>
+      </svg>
+      <svg class="word" viewBox="0 0 600 120" fill="none" stroke="currentColor" stroke-width="10"
+           stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true">
+        <path d="M28 94V26H62C77 26 86 34 86 47C86 60 77 68 62 68H28"/>
+        <path d="M118 26V94H166"/>
+        <path d="M198 26H248"/><path d="M198 60H239"/><path d="M198 94H248"/>
+        <path d="M282 26L338 94"/><path d="M338 26L282 94"/>
+        <path d="M372 26V70C372 87 381 96 398 96C415 96 424 87 424 70V26"/>
+        <path d="M508 26H474C460 26 452 34 452 45C452 56 460 61 474 61H492C506 61 514 68 514 79C514 89 506 94 492 94H452"/>
+      </svg>
+    </a>
+    <span class="spacer"></span>
+    <a class="navlink opt" href="index.html#uses">Use cases</a>
+    <a class="navlink opt" href="index.html#install">Install</a>
+    <a class="navlink" href="protocol.html" style="color:var(--ink)">Protocol</a>
+    <a class="btn" href="https://github.com/MoGhali/plexus">GitHub</a>
+  </nav>
+</header>
+
+<main class="wrap">
+
+  <div class="hero-doc">
+    <p class="eyebrow">Specification · v1.3</p>
+    <h1 style="font-size:clamp(1.8rem,4vw,2.5rem)">The Agent Mesh Protocol</h1>
+    <p class="lede">Everything an implementation has to agree on, and nothing about any particular
+      one. If you can open an MQTT connection, this document is the whole contract.</p>
+  </div>
+
+  <div class="doc">
+
+    <!-- ── contents ─────────────────────────────────────────────── -->
+    <nav class="toc" aria-label="Contents">
+      <h4>Contents</h4>
+      <ol>
+        <li><a href="#model">1 · The model</a></li>
+        <li><a href="#topics">2 · Topic map</a></li>
+        <li><a href="#registry">3 · Registry</a></li>
+        <li><a href="#commands">4 · Commands</a></li>
+        <li><a href="#jobs">5 · Job topics</a></li>
+        <li><a href="#lifecycle">6 · Job lifecycle</a></li>
+        <li><a href="#delivery">7 · Delivery guarantees</a></li>
+        <li><a href="#owner">8 · Owner scoping</a></li>
+        <li><a href="#delegation">9 · Delegation</a></li>
+        <li><a href="#cancel">10 · Cancellation</a></li>
+        <li><a href="#capabilities">11 · Capabilities</a></li>
+        <li><a href="#variables">12 · Variables</a></li>
+        <li><a href="#durability">13 · Durability</a></li>
+        <li><a href="#trust">14 · Trust model</a></li>
+        <li><a href="#conformance">15 · Conformance</a></li>
+      </ol>
+      <h4>Also</h4>
+      <ol>
+        <li><a href="https://github.com/MoGhali/plexus/blob/main/PROTOCOL.md">Full spec (Markdown)</a></li>
+        <li><a href="https://github.com/MoGhali/plexus/blob/main/PROTOCOL.pdf">PDF</a></li>
+        <li><a href="https://github.com/MoGhali/plexus/blob/main/docs/HOSTS.md">Adding a platform</a></li>
+      </ol>
+    </nav>
+
+    <div class="doc-body">
+
+      <!-- 1 ── model ─────────────────────────────────────────────── -->
+      <section id="model">
+        <h2>1 · The model</h2>
+        <p>Four nouns. Everything else in this document is a consequence of them.</p>
+
+        <h3>Agent</h3>
+        <p>A participant with a stable <code>agentId</code> and a set of capabilities. It holds one
+          outbound connection to a broker and is never a server. An agent is both worker and
+          requester — nothing distinguishes the two roles on the wire.</p>
+
+        <h3>Capability</h3>
+        <p>Something an agent will do, named as a dotted <code>service</code> string
+          (<code>code.review</code>, <code>schema.review</code>). A capability is <strong>data</strong>:
+          a name, an argument schema and a prompt template. The protocol never learns what any of
+          them mean.</p>
+
+        <h3>Job</h3>
+        <p>One request and its outcome, identified by a <code>jobId</code>. A job is created by an
+          <code>invoke</code> and always ends in exactly one terminal result.</p>
+
+        <h3>Mesh root</h3>
+        <p>A topic prefix — <code>agents</code> by default — under which everything lives. Two
+          meshes on one broker are two roots, and they cannot see each other.</p>
+
+        <div class="note">
+          <strong>Requests are directed, never broadcast.</strong> An agent asked for a capability
+          it publishes simply does the work. There is no bidding, no contention and no election.
+          The only decision is on the asking side, which is why every agent reads the registry.
+        </div>
+      </section>
+
+      <!-- 2 ── topics ────────────────────────────────────────────── -->
+      <section id="topics">
+        <h2>2 · Topic map</h2>
+        <p>Three families under the mesh root. <code>&lt;root&gt;</code> is <code>agents</code>
+          unless a deployment changes it.</p>
+
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Topic</th><th>Direction</th><th>Retained</th><th>Purpose</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><span class="topic">&lt;root&gt;/registry/&lt;agentId&gt;/profile</span></td>
+                <td class="dir">agent → all</td>
+                <td><span class="pill keep">retained</span></td>
+                <td>Capability catalog. How discovery happens</td>
+              </tr>
+              <tr>
+                <td><span class="topic">&lt;root&gt;/registry/&lt;agentId&gt;/status</span></td>
+                <td class="dir">agent → all</td>
+                <td><span class="pill keep">retained</span></td>
+                <td>Presence. Also the last will</td>
+              </tr>
+              <tr>
+                <td><span class="topic">&lt;root&gt;/commands/&lt;agentId&gt;/invoke</span></td>
+                <td class="dir">any → agent</td>
+                <td><span class="pill">no</span></td>
+                <td>Ask this agent to do something</td>
+              </tr>
+              <tr>
+                <td><span class="topic">&lt;root&gt;/commands/&lt;agentId&gt;/cancel</span></td>
+                <td class="dir">any → agent</td>
+                <td><span class="pill">no</span></td>
+                <td>Stop a job it is running</td>
+              </tr>
+              <tr>
+                <td><span class="topic">&lt;root&gt;/commands/&lt;agentId&gt;/query</span></td>
+                <td class="dir">any → agent</td>
+                <td><span class="pill">no</span></td>
+                <td>List services, or check a job. Replies on <code>…/query/reply</code></td>
+              </tr>
+              <tr>
+                <td><span class="topic">&lt;root&gt;/commands/&lt;agentId&gt;/config</span></td>
+                <td class="dir">any → agent</td>
+                <td><span class="pill">no</span></td>
+                <td>Capability CRUD. Replies on <code>…/config/reply</code></td>
+              </tr>
+              <tr>
+                <td><span class="topic">&lt;root&gt;/jobs/&lt;owner&gt;/&lt;jobId&gt;/events</span></td>
+                <td class="dir">agent → requester</td>
+                <td><span class="pill">no</span></td>
+                <td>Progress milestones. Advisory</td>
+              </tr>
+              <tr>
+                <td><span class="topic">&lt;root&gt;/jobs/&lt;owner&gt;/&lt;jobId&gt;/result</span></td>
+                <td class="dir">agent → requester</td>
+                <td><span class="pill keep">retained</span></td>
+                <td>The one terminal payload</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p><strong>Everything is QoS 1.</strong> Job topics are <em>always</em> owner-scoped: there
+          is no unscoped <code>jobs/&lt;jobId&gt;/…</code> form, and a result belongs to exactly one
+          owner and one topic.</p>
+
+        <h3>What to subscribe to</h3>
+<pre><code>&lt;root&gt;/jobs/&lt;you&gt;/#            <span class="c-com">your jobs — events and results</span>
+&lt;root&gt;/jobs/&lt;you&gt;/+/result     <span class="c-com">results only, no progress noise</span>
+&lt;root&gt;/registry/+/profile      <span class="c-com">every agent's capabilities</span></code></pre>
+        <p>Do <strong>not</strong> subscribe to <code>&lt;root&gt;/jobs/#</code>. That is everyone's
+          traffic, and the only legitimate reasons to read it are an observer — a notifier, a
+          dashboard, an audit log — never a participant.</p>
+      </section>
+
+      <!-- 3 ── registry ──────────────────────────────────────────── -->
+      <section id="registry">
+        <h2>3 · Registry</h2>
+        <p>An agent publishes its profile <strong>retained</strong> on connect. Because it is
+          retained, an agent that connects later receives it immediately — discovery needs no
+          announcement round, no polling and no directory service.</p>
+
+<pre><code>{ <span class="c-key">"agentId"</span>: <span class="c-str">"dba"</span>,
+  <span class="c-key">"displayName"</span>: <span class="c-str">"Database reviewer"</span>,
+  <span class="c-key">"status"</span>: <span class="c-str">"online"</span>,
+  <span class="c-key">"protocolVersion"</span>: <span class="c-str">"1.3"</span>,
+  <span class="c-key">"capabilities"</span>: [
+    { <span class="c-key">"service"</span>: <span class="c-str">"schema.review"</span>,
+      <span class="c-key">"description"</span>: <span class="c-str">"Reviews a migration for lock risk."</span>,
+      <span class="c-key">"requestSchema"</span>: { <span class="c-key">"migration"</span>: <span class="c-str">"string"</span> } }
+  ],
+  <span class="c-key">"ownerPolicy"</span>: { <span class="c-key">"required"</span>: <span class="c-key">true</span>, <span class="c-key">"verified"</span>: <span class="c-key">false</span> },
+  <span class="c-key">"ts"</span>: <span class="c-str">"2026-08-25T20:14:03Z"</span> }</code></pre>
+
+        <p><code>ownerPolicy</code> exists so a client can read what a deployment
+          <em>actually</em> enforces rather than inferring it from a version number. Advertise a
+          capability; never imply one.</p>
+
+        <h3>Leaving</h3>
+        <p>An <strong>empty retained payload</strong> on <code>profile</code> and
+          <code>status</code> means the agent has left. A <code>status</code> of
+          <code>offline</code> means the same thing. Deleting on either is what stops the registry
+          filling with agents that are not there.</p>
+        <p>Presence on unclean disconnect is the broker's job: <code>status</code> is registered as
+          the <strong>last will</strong>, so an agent that dies mid-thought is marked offline by
+          the broker itself. No heartbeat service exists, and none is needed.</p>
+      </section>
+
+      <!-- 4 ── commands ──────────────────────────────────────────── -->
+      <section id="commands">
+        <h2>4 · Commands</h2>
+        <h3>invoke</h3>
+<pre><code>{ <span class="c-key">"service"</span>: <span class="c-str">"code.review"</span>,
+  <span class="c-key">"args"</span>: { <span class="c-key">"repo"</span>: <span class="c-str">"acme/web-app"</span>, <span class="c-key">"pr"</span>: 42 },
+  <span class="c-key">"requestedBy"</span>: <span class="c-str">"alice"</span>,        <span class="c-com">// REQUIRED — scopes the reply</span>
+  <span class="c-key">"jobId"</span>: <span class="c-str">"rev-118"</span>,            <span class="c-com">// optional; the agent generates one otherwise</span>
+  <span class="c-key">"parentJobId"</span>: <span class="c-key">null</span>,           <span class="c-com">// delegation only</span>
+  <span class="c-key">"rootJobId"</span>: <span class="c-str">"rev-118"</span>,
+  <span class="c-key">"depth"</span>: 0 }</code></pre>
+
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Field</th><th>Required</th><th>Meaning</th></tr></thead>
+            <tbody>
+              <tr><td><code>service</code></td><td>yes</td><td>Capability name. Unknown → terminal <code>error</code></td></tr>
+              <tr><td><code>args</code></td><td>no</td><td>Arguments. Advisory against <code>requestSchema</code></td></tr>
+              <tr><td><code>requestedBy</code></td><td><strong>yes</strong></td><td>Your stable name. Determines <code>owner</code></td></tr>
+              <tr><td><code>jobId</code></td><td>no</td><td>Reusing an active one → terminal <code>duplicate</code></td></tr>
+              <tr><td><code>parentJobId</code></td><td>no</td><td>The job that asked for this one</td></tr>
+              <tr><td><code>rootJobId</code></td><td>no</td><td>The original request the whole chain shares</td></tr>
+              <tr><td><code>depth</code></td><td>no</td><td>Hops from the root. <code>0</code> entered directly</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="note">
+          <strong>Omitting <code>requestedBy</code> is rejected.</strong> The refusal is published to
+          <code>jobs/public/&lt;jobId&gt;/result</code> — <em>not</em> to your scope, which you never
+          subscribed to. So a client that forgets it sees silence, and that silence is the reason
+          the field is enforced rather than defaulted.
+        </div>
+
+        <h3>cancel</h3>
+        <p><code>{ "jobId": "rev-118", "requestedBy": "alice" }</code> — see
+          <a href="#cancel">§10</a>.</p>
+      </section>
+
+      <!-- 5 ── job topics ────────────────────────────────────────── -->
+      <section id="jobs">
+        <h2>5 · Job topics</h2>
+        <p>Every payload on a job topic carries <code>jobId</code>, <code>owner</code>,
+          <code>ts</code> and <code>type</code>.</p>
+
+        <h3>events — not retained</h3>
+<pre><code>{ <span class="c-key">"jobId"</span>: <span class="c-str">"rev-118"</span>, <span class="c-key">"owner"</span>: <span class="c-str">"alice"</span>,
+  <span class="c-key">"type"</span>: <span class="c-str">"progress"</span>, <span class="c-key">"message"</span>: <span class="c-str">"analyzing the diff"</span>,
+  <span class="c-key">"ts"</span>: <span class="c-str">"2026-08-25T20:14:09Z"</span> }</code></pre>
+        <p>Milestones are <strong>advisory and never a source of truth</strong>. A subscriber joining
+          mid-job sees the retained result but none of the earlier events.</p>
+
+        <h3>result — retained</h3>
+<pre><code>{ <span class="c-key">"jobId"</span>: <span class="c-str">"rev-118"</span>, <span class="c-key">"owner"</span>: <span class="c-str">"alice"</span>,
+  <span class="c-key">"type"</span>: <span class="c-str">"review"</span>,
+  <span class="c-key">"verdict"</span>: <span class="c-str">"REQUEST_CHANGES"</span>,
+  <span class="c-key">"summary"</span>: <span class="c-str">"Blocking on the migration: ALTER without CONCURRENTLY."</span>,
+  <span class="c-key">"ts"</span>: <span class="c-str">"2026-08-25T20:17:31Z"</span> }</code></pre>
+        <p>Known types: <code>result</code>, <code>error</code>, <code>cancelled</code>,
+          <code>duplicate</code>, <code>rejected</code>, <code>timeout</code>, and domain types an
+          agent chooses. <strong>The list is open — treat an unrecognised type as terminal.</strong></p>
+
+        <h3>Ordering</h3>
+        <p>Ordering holds <strong>per topic only</strong>. <code>events</code> and <code>result</code>
+          are different topics, so a terminal result may be observed before a milestone published
+          earlier. Never infer sequence across topics; use <code>ts</code>.</p>
+      </section>
+
+      <!-- 6 ── lifecycle ─────────────────────────────────────────── -->
+      <section id="lifecycle">
+        <h2>6 · Job lifecycle</h2>
+<pre><code>                    ┌──────────┐
+   invoke ─────────▶│ accepted │
+                    └────┬─────┘
+                    ┌────▼─────┐
+              ┌─────│ started  │─────┐
+              │     └────┬─────┘     │
+   result     │          │ watchdog  │  cancel
+        ┌─────▼────┐ ┌───▼──────┐ ┌──▼────────┐
+        │   done   │ │ timeout  │ │ cancelled │
+        └──────────┘ └──────────┘ └───────────┘
+
+   rejected  ── refused before any work: unknown service, missing
+                requestedBy, depth exceeded, owner mismatch
+   duplicate ── a jobId already active</code></pre>
+
+        <p>Terminal states are <code>done</code>, <code>error</code>, <code>timeout</code>,
+          <code>cancelled</code>, <code>rejected</code> and <code>duplicate</code>.</p>
+
+        <div class="note">
+          <strong>Every path reaches one</strong>, and each publishes a retained result — including
+          rejection, an executor that crashes, and a handler that throws. A client is never left
+          waiting on a job that quietly stopped existing. This is the guarantee most worth
+          implementing carefully, because its absence is invisible until someone is waiting.
+        </div>
+      </section>
+
+      <!-- 7 ── delivery ──────────────────────────────────────────── -->
+      <section id="delivery">
+        <h2>7 · Delivery guarantees</h2>
+        <p>Stated exactly, because "reliable" means nothing on its own.</p>
+
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Message</th><th>Delivery</th><th>Retained</th><th>Notes</th></tr></thead>
+            <tbody>
+              <tr><td><code>invoke</code></td><td>at-least-once</td><td>no</td><td>A redelivery can duplicate a job; an active <code>jobId</code> is rejected</td></tr>
+              <tr><td><code>events</code></td><td>at-least-once</td><td>no</td><td>Late subscribers see no earlier milestones</td></tr>
+              <tr><td><code>result</code></td><td>at-least-once</td><td><span class="pill keep">yes</span></td><td>Last write wins. Readable indefinitely</td></tr>
+              <tr><td><code>profile</code> / <code>status</code></td><td>at-least-once</td><td><span class="pill keep">yes</span></td><td>Empty payload deletes it and means the agent left</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p><strong>Exactly-once is not offered.</strong> QoS 2 would give it hop-by-hop and still not
+          end to end, because an executor can complete work and die before publishing. Assume
+          at-least-once and <strong>make capabilities idempotent</strong>.</p>
+      </section>
+
+      <!-- 8 ── owner ─────────────────────────────────────────────── -->
+      <section id="owner">
+        <h2>8 · Owner scoping</h2>
+        <p><code>owner</code> is derived from <code>requestedBy</code>: lowercased, restricted to
+          <code>[a-z0-9_-]</code> with anything else becoming <code>-</code>, and edges trimmed. An
+          empty result becomes <code>public</code>.</p>
+
+<pre><code>"Mohanad.Q!"  →  mohanad-q
+"--ci--"      →  ci
+""            →  public</code></pre>
+
+        <p>It is the same value you put in an invoke and the one you subscribe with, which is the
+          whole routing mechanism: results go to the requester's scope, and that scope is what the
+          requester already listens on. <strong>There is no callback channel.</strong></p>
+        <p>Multi-tenancy is therefore a subscription filter rather than authorization code you
+          write and get wrong — and it is enforceable in broker ACLs, which is the only place it
+          can actually be enforced.</p>
+      </section>
+
+      <!-- 9 ── delegation ────────────────────────────────────────── -->
+      <section id="delegation">
+        <h2>9 · Delegation</h2>
+        <p>An agent that meets work outside its capabilities asks the agent that owns it. An
+          <strong>ask is an ordinary invoke</strong> with <code>requestedBy</code> set to the asking
+          agent, so the answer lands in the asker's own scope — which it already subscribes to.
+          Nothing new is needed on the wire.</p>
+
+        <h3>Lineage</h3>
+        <p>Every ask creates <strong>its own job with its own id</strong>. A chain of agents is a
+          chain of jobs, linked by three fields:</p>
+<pre><code>rev-118    parent —          root rev-118    depth 0
+ask-9f3c   parent rev-118    root rev-118    depth 1
+ask-2b71   parent ask-9f3c   root rev-118    depth 2</code></pre>
+        <p>Without them a five-agent chain is five unrelated ids: a failure cannot be attributed to
+          the request that caused it, and a cancel has no way to find what to stop.</p>
+
+        <h3>Hop limit</h3>
+        <p><code>maxDepth</code> (default <code>4</code>) bounds the chain. A request arriving
+          deeper is <strong>rejected before any work starts</strong>, and the asking side refuses
+          too, so nothing reaches the wire. A cycle allowed to begin is a cycle that runs until
+          something else stops it.</p>
+
+        <h3>Two forms</h3>
+        <ul>
+          <li><strong>Declared</strong> — a capability states its dependencies and they are gathered
+            <em>before</em> the executor starts, then injected. Deterministic; needs no tool; cannot
+            adapt to what a job turns out to need.</li>
+          <li><strong>Dynamic</strong> — the executor discovers the need mid-job and asks. Adapts to
+            anything; depends on it choosing to.</li>
+        </ul>
+        <p>The requester gets <strong>one</strong> answer either way. That two agents produced it is
+          an implementation detail of the mesh.</p>
+      </section>
+
+      <!-- 10 ── cancel ───────────────────────────────────────────── -->
+      <section id="cancel">
+        <h2>10 · Cancellation</h2>
+        <p>Cooperative, and terminal at the mesh boundary:</p>
+        <ol>
+          <li><code>cancel_acknowledged</code> is published to the job's event stream.</li>
+          <li>A retained <code>type: "cancelled"</code> result is published, so listeners are never
+            left waiting on a job that will never report.</li>
+          <li>Any later publish for that job is <strong>suppressed</strong>, keeping the client's
+            view consistent with the acknowledgement.</li>
+          <li>Cancel propagates to whatever this job delegated; those agents cancel <em>their</em>
+            children in turn.</li>
+        </ol>
+        <p>One cancel unwinds a whole chain without any agent knowing its shape.</p>
+        <div class="note">
+          What it does <strong>not</strong> guarantee is that computation stopped. An agent already
+          mid-turn may run to completion internally; its output is discarded rather than published.
+          Read <code>cancelled</code> as <em>"no further traffic will be honoured"</em>, not
+          <em>"the work stopped"</em>.
+        </div>
+      </section>
+
+      <!-- 11 ── capabilities ─────────────────────────────────────── -->
+      <section id="capabilities">
+        <h2>11 · Capabilities are data</h2>
+        <p>A capability is a JSON entry. The protocol contains <strong>no service name
+          anywhere</strong> — not <code>code.review</code>, not anything — and never learns what one
+          means.</p>
+
+<pre><code>{ <span class="c-key">"service"</span>: <span class="c-str">"schema.review"</span>,
+  <span class="c-key">"description"</span>: <span class="c-str">"Reviews a migration for lock risk."</span>,
+  <span class="c-key">"requestSchema"</span>: { <span class="c-key">"migration"</span>: <span class="c-str">"string"</span> },
+  <span class="c-key">"prompt"</span>: <span class="c-str">"Review migration {{migration}}. Flag lock risk and missing indexes."</span> }</code></pre>
+
+        <p>An <code>invoke</code> names a <code>service</code>; the agent looks it up, renders the
+          template, and hands the result to whatever executes work. <strong>That is the entire
+          coupling.</strong> Everything domain-specific lives in the template, which is why adding
+          an agent is minutes and no rebuild.</p>
+        <p><code>requestSchema</code> is <strong>advisory</strong>. A capability declaring
+          <code>pr: number</code> will happily receive a string and find out inside the prompt.
+          Enforcement is a known gap.</p>
+      </section>
+
+      <!-- 12 ── variables ────────────────────────────────────────── -->
+      <section id="variables">
+        <h2>12 · Variables</h2>
+        <p>A capability should be portable, but real prompts need deployment-specific values —
+          channel ids, recipient lists, internal paths. There are two kinds of placeholder, and
+          <strong>the order they expand in is a security property, not a style choice.</strong></p>
+
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Placeholder</th><th>Filled from</th><th>Expanded</th></tr></thead>
+            <tbody>
+              <tr><td><code>${VAR}</code></td><td>Deployment config, then the environment</td><td><strong>first</strong></td></tr>
+              <tr><td><code>{{jobId}}</code> <code>{{requestedBy}}</code></td><td>The job itself</td><td>second</td></tr>
+              <tr><td><code>{{arg}}</code></td><td>The caller's <code>args</code></td><td><strong>last</strong></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="note">
+          <strong>Environment expansion must happen before argument substitution.</strong> Reversed,
+          a caller passes <code>"${MQTT_PASSWORD}"</code> as an argument value, the next pass expands
+          it, and every invoke becomes an arbitrary environment read by anyone who can publish to
+          the mesh.
+        </div>
+
+        <h3>Resolution order</h3>
+        <ol>
+          <li>Deployment config — versioned with the rest of your deployment</li>
+          <li>A local store, file-permission protected and never committed</li>
+          <li>The process environment</li>
+        </ol>
+
+        <h3>Resolved at dispatch, never in the catalog</h3>
+        <p>The catalog is published to a <strong>retained</strong> topic. Resolving values before
+          publishing would broadcast every deployment secret to anyone subscribed to the registry.
+          On the wire the prompt stays a template — and a conformant implementation keeps it that
+          way.</p>
+        <p>A related rule: <strong>never put credentials in <code>args</code></strong>. Payloads are
+          readable by every subscriber to that topic, and results are retained, so a secret
+          published once persists until explicitly overwritten.</p>
+      </section>
+
+      <!-- 13 ── durability ───────────────────────────────────────── -->
+      <section id="durability">
+        <h2>13 · Durability</h2>
+        <p>An agent holds one <strong>persistent session</strong>: <code>clean: false</code>, QoS 1
+          throughout, a keepalive, automatic reconnect, and a last will for presence. The connection
+          is outbound only, so it works behind NAT.</p>
+
+        <div class="note">
+          <strong>All of it depends on the client id being stable across restarts.</strong> Never
+          derive it from a process id or a timestamp. With a changing id every restart is a
+          <em>new</em> session: the broker's queued QoS-1 messages stay orphaned with the dead one,
+          and any invoke published while the agent was down is lost <em>silently</em>. It also leaks
+          one abandoned session per restart, since MQTT 3.1.1 has no session expiry.
+        </div>
+
+        <p>The property this buys is the one worth testing: <strong>an invoke published while an
+          agent is offline is queued by the broker and delivered when it reconnects.</strong> It is
+          also the property implementers most often skip verifying.</p>
+        <p>Two agents sharing a client id will fight over the session and kick each other in turn.
+          Durability and multi-instance safety are in tension, and an implementation should detect
+          the collision and say so rather than let it look like a flaky network.</p>
+      </section>
+
+      <!-- 14 ── trust ────────────────────────────────────────────── -->
+      <section id="trust">
+        <h2>14 · Trust model</h2>
+        <p>MQTT delivers <strong>topic and payload only</strong>. A publisher's broker identity does
+          not travel with the message. Therefore:</p>
+        <ul>
+          <li><code>requestedBy</code> is <strong>self-declared</strong> — whatever string the sender
+            put there.</li>
+          <li>By default it is <em>required</em> but not <em>authenticated</em>. Anyone with broker
+            credentials can claim any owner scope.</li>
+          <li>Isolation is therefore <strong>conventional, not enforced</strong>, unless the broker
+            enforces it.</li>
+        </ul>
+        <p>This is fine for one team's private mesh. It is <strong>not</strong> sufficient for agents
+          belonging to parties who do not already trust each other. The fix is broker-side — ACLs
+          scoped per username, or rule-engine enrichment that lets an agent verify the claim —
+          which means the protocol delegates its hardest problem to your deployment. Know that
+          going in.</p>
+<pre><code><span class="c-com"># the boundary that can actually see identity</span>
+allow  subscribe  &lt;root&gt;/jobs/${username}/#
+allow  publish    &lt;root&gt;/commands/+/invoke
+deny   subscribe  &lt;root&gt;/jobs/#</code></pre>
+      </section>
+
+      <!-- 15 ── conformance ──────────────────────────────────────── -->
+      <section id="conformance">
+        <h2>15 · Conformance</h2>
+        <p>An implementation is conformant when all of the following hold. Each is directly
+          observable from another client on the same broker — which is the point: conformance is
+          something you can <em>check</em>, not something you can claim.</p>
+        <ol>
+          <li>A retained profile appears on connect, and is <strong>deleted</strong> (empty retained
+            payload) on clean shutdown.</li>
+          <li>Presence is published as a <strong>last will</strong>, not by a heartbeat.</li>
+          <li>The client id is <strong>stable across restarts</strong>, so an invoke published during
+            downtime is queued and delivered on reconnect.</li>
+          <li>Every job reaches a <strong>terminal result</strong>, retained, on every path —
+            including rejection, unknown service, duplicate id, hop-limit refusal, timeout,
+            cancellation, and an executor that throws.</li>
+          <li>Results are retained; <strong>events are not</strong>.</li>
+          <li>Job topics are <strong>always owner-scoped</strong>; there is no unscoped form.</li>
+          <li>A delegated ask carries <code>parentJobId</code>, <code>rootJobId</code> and
+            <code>depth</code>, and a request deeper than <code>maxDepth</code> is refused
+            <strong>before</strong> any work starts.</li>
+          <li><code>${VAR}</code> expands <strong>before</strong> <code>{{args}}</code> wherever
+            prompts are rendered.</li>
+        </ol>
+        <div class="note">
+          There are three independent implementations — TypeScript, JavaScript and Python — and a
+          test that stands two of them against one broker to check each can discover, delegate to
+          and answer the other with lineage intact. A specification with one implementation is a
+          description of that implementation; writing the second is how this document got audited.
+        </div>
+
+        <div class="cta" style="margin-top:2rem">
+          <a class="btn primary" href="https://github.com/MoGhali/plexus/blob/main/PROTOCOL.md">Full specification</a>
+          <a class="btn" href="https://github.com/MoGhali/plexus/blob/main/docs/HOSTS.md">Implement it for your platform</a>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="row">
+      <div style="min-width:14rem">
+        <a class="brand" href="index.html" style="margin-bottom:.8rem">
+          <svg class="mark" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="square" aria-hidden="true">
+            <path d="M12 12 L26 26"/><path d="M38 38 L52 52"/><path d="M52 12 L38 26"/><path d="M26 38 L12 52"/>
+          </svg>
+          <span class="mono" style="color:var(--ink);font-weight:600">Plexus</span>
+        </a>
+        <p style="margin:.4rem 0 0;max-width:26ch">A network of specialists, no centre.</p>
+      </div>
+      <div>
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="protocol.html">Protocol</a></li>
+          <li><a href="https://github.com/MoGhali/plexus/blob/main/docs/INSTALL.md">Installation</a></li>
+          <li><a href="https://github.com/MoGhali/plexus/blob/main/docs/HOSTS.md">Adding a platform</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Project</h4>
+        <ul>
+          <li><a href="https://github.com/MoGhali/plexus">Source</a></li>
+          <li><a href="https://github.com/MoGhali/plexus/issues">Issues</a></li>
+          <li><a href="https://github.com/MoGhali/plexus/blob/main/LICENSE">Apache 2.0</a></li>
+        </ul>
+      </div>
+    </div>
+    <p style="margin-top:2.5rem">Built by <a href="https://github.com/MoGhali">Mohanad Ghali</a>.
+      Apache 2.0.</p>
+  </div>
+</footer>
+
+<script>
+// Mark the section currently on screen in the contents rail. A specification is
+// navigated by scrolling as much as by clicking, and losing your place in a
+// fifteen-section document is the main way one becomes unreadable.
+(function () {
+  if (!('IntersectionObserver' in window)) return;
+  var links = {};
+  document.querySelectorAll('.toc a[href^="#"]').forEach(function (a) {
+    links[a.getAttribute('href').slice(1)] = a;
+  });
+  var observer = new IntersectionObserver(function (entries) {
+    entries.forEach(function (entry) {
+      var link = links[entry.target.id];
+      if (link) link.style.color = entry.isIntersecting ? 'var(--accent)' : '';
+    });
+  }, { rootMargin: '-15% 0px -70% 0px' });
+  document.querySelectorAll('.doc-body > section').forEach(function (section) {
+    observer.observe(section);
+  });
+})();
+</script>
+</body>
+</html>

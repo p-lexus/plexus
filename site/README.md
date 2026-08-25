@@ -17,6 +17,18 @@ CDN, or a bucket.
 open site/index.html          # that's the whole preview process
 ```
 
+## Pages
+
+| | |
+|---|---|
+| `index.html` | The argument: problem, use cases, console tour, comparison, install |
+| `protocol.html` | The specification — topics, payloads, guarantees, conformance |
+| `assets/plexus.css` | Shared tokens and components. **Both pages use it** |
+
+The stylesheet is shared rather than copied into each page, which is why the header nav rules are
+scoped as `header nav` — a bare `nav` selector also claimed the documentation contents rail and
+laid it out as a flex row across the article.
+
 ## The console tour
 
 `assets/console.mp4` is generated, not filmed:
