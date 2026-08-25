@@ -15,7 +15,7 @@ Three, sharing no code. This document is what they agree on:
 
 | | Language | What it is |
 |---|---|---|
-| [`src/`](src) | TypeScript | Host plugin for OpenClaw |
+| [`hosts/openclaw/`](hosts/openclaw) | TypeScript | Host plugin for OpenClaw |
 | [`packages/agent`](packages/agent) | JavaScript | `plexus-agent` — a client library and plugin host |
 | [`hosts/hermes/`](hosts/hermes) | Python | Host plugin for Hermes Agent |
 

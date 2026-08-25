@@ -1,6 +1,7 @@
 # Putting a platform on the mesh
 
-How to write a Plexus plugin for an agent platform — the role [`src/`](../src) plays for OpenClaw.
+How to write a Plexus plugin for an agent platform — the role [`hosts/openclaw/`](../hosts/openclaw)
+plays for OpenClaw, and [`hosts/hermes/`](../hosts/hermes) plays for Hermes Agent.
 
 This is the document to read when you want *your* platform's agents to delegate to, and receive
 work from, agents running on someone else's.
@@ -8,7 +9,7 @@ work from, agents running on someone else's.
 ```
                         ┌──────────── the mesh ────────────┐
    OpenClaw agent ──────┤                                  ├────── your platform's agent
-     via src/           │      MQTT broker · Plexus        │        via your plugin
+  via hosts/openclaw/   │      MQTT broker · Plexus        │        via your plugin
                         └──────────────────────────────────┘
 ```
 
@@ -24,9 +25,9 @@ Four jobs, and no more than four:
 | | The plugin's job | In OpenClaw |
 |---|---|---|
 | **1. Register** | Get loaded by the platform and stay loaded | `definePluginEntry` + `api.registerTool` |
-| **2. Connect** | Hold one durable MQTT session for the process lifetime | `src/mesh/transport.ts` |
+| **2. Connect** | Hold one durable MQTT session for the process lifetime | `hosts/openclaw/src/mesh/transport.ts` |
 | **3. Execute** | Turn an arriving `invoke` into a real agent turn, and get the result | `api.runtime.subagent` |
-| **4. Report** | Publish milestones and one terminal result, owner-scoped | `src/mesh/dispatch.ts` |
+| **4. Report** | Publish milestones and one terminal result, owner-scoped | `hosts/openclaw/src/mesh/dispatch.ts` |
 
 Everything else — discovery, delegation, lineage, hop limits, cancellation, retained profiles —
 is protocol behaviour that [`plexus-agent`](../packages/agent) already implements. **Don't

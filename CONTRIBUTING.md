@@ -64,8 +64,8 @@ something was edited in place.
 | `PROTOCOL.md` | The specification. Behaviour changes belong here too |
 | `packages/agent/` | `plexus-agent` — the client library, the plugin contract, the host |
 | `packages/notify/` | `plexus-notify` — a plugin, and the worked example of one |
-| `src/mesh/` | Protocol behaviour: topics, dispatch, transport, catalog, variables |
-| `src/http/` | The console's API, auth and event stream |
+| `hosts/openclaw/src/mesh/` | Protocol behaviour: topics, dispatch, transport, catalog, variables |
+| `hosts/openclaw/src/http/` | The console's API, auth and event stream |
 | `web/index.html` | The console — one file, no build step, no external assets |
 | `hosts/hermes/` | Host plugin for Hermes Agent — Python, an independent implementation |
 | `test/` | Unit tests, the console render check, and package/end-to-end tests |
@@ -75,11 +75,11 @@ something was edited in place.
 The repository is an npm workspace: `npm install` links `plexus-agent` and `plexus-notify` into
 `node_modules`, so the tests and examples import them by package name exactly as a user would.
 
-**`src/` is the OpenClaw host plugin, not the runtime.** It is one participant on the mesh, and
+**`hosts/openclaw/` is a host plugin, not the runtime.** It is one participant on the mesh, and
 so is `hosts/hermes/`. If a change only makes sense for one platform it belongs in that host; if
 it is protocol behaviour it belongs in `PROTOCOL.md` and in every implementation.
 
-`src/mesh/topics.ts` and `src/mesh/payload.ts` are pure. Keep them that way — they are the
+`hosts/openclaw/src/mesh/topics.ts` and `.../payload.ts` are pure. Keep them that way — they are the
 easiest parts of the system to reason about, and the most load-bearing.
 
 ## Invariants worth knowing
@@ -146,7 +146,7 @@ Anything observable on the wire — a topic, a payload field, a guarantee — is
 2. Say what a client that does not know about the change will see.
 3. Add a test if the change has a testable invariant.
 4. **Update every implementation, or say why not.** There are three, sharing no code:
-   `src/` (TypeScript), `packages/agent` (JavaScript) and `hosts/hermes/` (Python). A change
+   `hosts/openclaw/` (TypeScript), `packages/agent` (JavaScript) and `hosts/hermes/` (Python). A change
    landing in one of them is how a specification quietly becomes a description of one program.
 5. Regenerate the PDF: `npm install --no-save marked mermaid && npm run pdf`.
 

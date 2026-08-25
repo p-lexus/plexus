@@ -4,14 +4,20 @@
     "module": "ES2022",
     "moduleResolution": "bundler",
     "outDir": "./dist",
-    "rootDir": "./src",
+    "rootDir": "./hosts/openclaw/src",
     "strict": false,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "declaration": false,
     "sourceMap": false,
-    "lib": ["ES2022"],
-    "types": ["node"]
+    "lib": [
+      "ES2022"
+    ],
+    "types": [
+      "node"
+    ]
   },
-  "include": ["src/**/*"]
+  "include": [
+    "hosts/openclaw/src/**/*"
+  ]
 }

@@ -106,7 +106,7 @@ The protocol is the product. Everything else is one way of speaking it:
 | **[PROTOCOL.md](PROTOCOL.md)** | The specification — topics, payloads, guarantees | nothing |
 | **[`plexus-agent`](packages/agent)** | Client library + the plugin host. Join the mesh in ~15 lines | `mqtt` |
 | **[`plexus-notify`](packages/notify)** | A plugin: delivers outcomes to Slack, GitHub, webhooks | `plexus-agent` |
-| **[`src/`](src)** | Host plugin for **OpenClaw** — puts a gateway's agent on the mesh | OpenClaw |
+| **[`hosts/openclaw/`](hosts/openclaw)** | Host plugin for **OpenClaw** — puts a gateway's agent on the mesh | OpenClaw |
 | **[`hosts/hermes/`](hosts/hermes)** | Host plugin for **Hermes Agent** — Python, drop-in | `paho-mqtt` |
 | **[docs/HOSTS.md](docs/HOSTS.md)** | How to write a host plugin for another platform | — |
 
@@ -303,7 +303,7 @@ can delegate to agents running on someone else's.
 
 | Platform | Plugin | Language |
 |---|---|---|
-| [OpenClaw](https://openclaw.ai) | [`src/`](src) | TypeScript |
+| [OpenClaw](https://openclaw.ai) | [`hosts/openclaw/`](hosts/openclaw) | TypeScript |
 | [Hermes Agent](https://hermes-agent.nousresearch.com) | [`hosts/hermes/`](hosts/hermes) | Python |
 | yours | [docs/HOSTS.md](docs/HOSTS.md) | |
 
@@ -858,40 +858,39 @@ PROTOCOL.md               the specification — the only thing that is binding
 packages/
 ├── agent/                plexus-agent — the client library (no OpenClaw)
 │   ├── index.js          connect, serve, ask, watch, observeCommands
-│   └── index.d.ts        hand-written types, so the package stays buildless
-│   ├── plugin.js        the plugin contract and the host that runs them
+│   ├── index.d.ts        hand-written types, so the package stays buildless
+│   ├── plugin.js         the plugin contract and the host that runs them
 │   └── bin/plexus.js     `plexus run --config plexus.json`
 └── notify/               plexus-notify — a plugin, not an agent
     ├── index.js          replay suppression, the delivery log
     ├── routes.js         matching and templating — pure
     └── channels.js       slack · github · webhook · file · console
 
-hosts/
-└── hermes/               host plugin for Hermes Agent — Python, second implementation
-    ├── __init__.py       register(ctx) — wiring only
-    ├── protocol.py       the mesh: durable session, discovery, delegation, lineage
-    ├── executor.py       the only Hermes-specific file: running an agent turn
-    ├── tools.py          mesh_publish · mesh_peers · mesh_ask · mesh_status
-    └── tests/            plugin tests + cross-language interop
-
-src/                      host plugin for OpenClaw — one participant, not the runtime
-├── index.ts              plugin entry: guards, wiring, lifecycle
-├── types.ts              domain types (no runtime imports)
-├── config.ts             every default, in one place
-├── logger.ts             prefixing and the alert level
-├── mesh/
-│   ├── topics.ts         the whole address space — pure
-│   ├── payload.ts        result normalisation, prompt rendering — pure
-│   ├── catalog.ts        services.json and its file watch
-│   ├── vars.ts           ${VAR} layering and the 0600 store
-│   ├── jobs.ts           job state and the timeline ring
-│   ├── transport.ts      session, stable clientId, collision recovery
-│   ├── dispatch.ts       dispatch, cancel, watchdog
-│   └── registry.ts       retained profile and config actions
-└── http/
-    ├── auth.ts           token levels and CSRF
-    ├── sse.ts            event fan-out
-    └── server.ts         routing
+hosts/                    one directory per agent platform on the mesh
+├── hermes/               Hermes Agent — Python, an independent implementation
+│   ├── __init__.py       register(ctx) — wiring only
+│   ├── protocol.py       the mesh: durable session, discovery, delegation, lineage
+│   ├── executor.py       the only Hermes-specific file: running an agent turn
+│   ├── tools.py          mesh_publish · mesh_peers · mesh_ask · mesh_status
+│   └── tests/            plugin tests + cross-language interop
+└── openclaw/src/         OpenClaw — TypeScript, the one running in production
+    ├── index.ts          plugin entry: guards, wiring, lifecycle
+    ├── types.ts          domain types (no runtime imports)
+    ├── config.ts         every default, in one place
+    ├── logger.ts         prefixing and the alert level
+    ├── mesh/
+    │   ├── topics.ts     the whole address space — pure
+    │   ├── payload.ts    result normalisation, prompt rendering — pure
+    │   ├── catalog.ts    services.json and its file watch
+    │   ├── vars.ts       ${VAR} layering and the 0600 store
+    │   ├── jobs.ts       job state and the timeline ring
+    │   ├── transport.ts  session, stable clientId, collision recovery
+    │   ├── dispatch.ts   dispatch, cancel, watchdog
+    │   └── registry.ts   retained profile and config actions
+    └── http/
+        ├── auth.ts       token levels and CSRF
+        ├── sse.ts        event fan-out
+        └── server.ts     routing
 web/index.html            the console: one file, no external assets
 examples/                 demo.mjs · with-plugins.mjs · minimal-agent.mjs
 test/                     bridge units + console render check + package/e2e

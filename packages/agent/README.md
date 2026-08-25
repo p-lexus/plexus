@@ -145,7 +145,7 @@ await host.stop();            // stops plugins in reverse order, then disconnect
 
 ### Putting a whole platform on the mesh
 
-A *host plugin* is the other direction: it teaches an entire agent platform to speak Plexus, the way [`src/`](../../src) does for OpenClaw. See **[docs/HOSTS.md](../../docs/HOSTS.md)**.
+A *host plugin* is the other direction: it teaches an entire agent platform to speak Plexus, the way [`hosts/openclaw/`](../../hosts/openclaw) does for OpenClaw. See **[docs/HOSTS.md](../../docs/HOSTS.md)**.
 
 ## Options
 
