@@ -1,6 +1,11 @@
 # The website
 
-One file. `site/index.html` is entirely self-contained — the logo is inline SVG, the terminal
+Deployed from its own repository: **[MoGhali/plexus-site](https://github.com/MoGhali/plexus-site)**,
+where the page sits at the root — which is what makes GitHub Pages and a custom domain work
+without the `/docs` contortion this repository would need. This folder is the source of truth;
+copy `index.html`, `assets/` and `CNAME` across when the page changes.
+
+One file, plus screenshots. `site/index.html` is entirely self-contained — the logo is inline SVG, the terminal
 recordings are inline data URIs, the CSS and the tab script are in the page. There is no build
 step, no bundler and no external request at runtime, so it renders identically from `file://`, a
 CDN, or a bucket.
@@ -31,9 +36,9 @@ build command empty.
 
 **Vercel** — `vercel --cwd site` , or set the root directory to `site` in the dashboard.
 
-**GitHub Pages** — Pages only serves from the repository root or `/docs`, neither of which is
-this folder, so either copy the file into `/docs` on release or use one of the above. This is
-the only awkward option, and only because of that constraint.
+**GitHub Pages** — enable it on `plexus-site`, serving from the root of `main`. Note that Pages
+on a private repository needs a paid plan; Cloudflare Pages and Netlify both serve private repos
+on their free tiers.
 
 ### The domain
 
