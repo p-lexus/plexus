@@ -102,20 +102,18 @@ export default definePluginEntry({
     const cfg = (api.pluginConfig ?? {}) as Partial<PluginConfig>;
     const logger = createLogger(api.logger, "mqtt-bridge");
 
-    // Transport runs ONLY in the gateway. CLI and discovery loads must not
-    // connect to the broker or process invokes — a CLI-mode api has no
+    // Two separate concerns, and conflating them cost us every tool.
+    //
+    // TRANSPORT runs only in the gateway: a CLI or discovery load has no
     // runtime.subagent/system, and dispatching there pollutes the mesh with
     // "inject failed" results (incident 2026-08-24, rev-018/019).
+    //
+    // TOOLS must be registered in EVERY mode. The gateway asks the plugin what
+    // tools it has via a dedicated "tool-discovery" registration; returning
+    // early there tells it we have none, which is why mqtt_publish, mesh_ask
+    // and mesh_peers were absent from every agent session.
     const mode = api.registrationMode;
-    if (mode && mode !== "full") {
-      logger.info(`registrationMode=${mode} — transport inactive (gateway-only plugin).`);
-      return;
-    }
-
-    if (!cfg.broker?.url) {
-      logger.warn("no broker.url configured — plugin inactive.");
-      return;
-    }
+    const transportAllowed = !mode || mode === "full";
 
     const globalAny = globalThis as Record<symbol, unknown>;
     const active = () => globalAny[ACTIVE_SLOT] as ActiveInstance | undefined;
@@ -212,6 +210,16 @@ export default definePluginEntry({
           `Answer from ${outcome.agent} (job ${outcome.jobId}):\n${JSON.stringify(outcome.result, null, 2)}` }] };
       },
     });
+
+    if (!transportAllowed) {
+      logger.info(`registrationMode=${mode} — tools registered, transport inactive (gateway-only).`);
+      return;
+    }
+
+    if (!cfg.broker?.url) {
+      logger.warn("no broker.url configured — plugin inactive.");
+      return;
+    }
 
     // ── Reload takeover ────────────────────────────────
     // Another session registering the same loaded module must leave the
