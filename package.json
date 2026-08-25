@@ -1,7 +1,7 @@
 {
-  "name": "agent-mesh-bridge",
+  "name": "plexus-bridge",
   "version": "1.0.0",
-  "description": "Reference implementation of the Agent Mesh Protocol v1.2 \u2014 an OpenClaw plugin bridging agent job dispatch over MQTT.",
+  "description": "Plexus \u2014 Agent Mesh Protocol v1.3. Autonomous agents dispatching work to each other over MQTT, across laptops, VPNs and containers with no inbound route.",
   "type": "module",
   "scripts": {
     "build": "tsc && npm run copy:assets",

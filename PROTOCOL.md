@@ -1,4 +1,4 @@
-# Agent Mesh Protocol — v1.3
+# Plexus — Agent Mesh Protocol v1.3
 
 A protocol for autonomous agents to dispatch work to each other over MQTT — across laptops,
 VPNs and containers, none of which can accept an inbound connection. Broker root: `agents`.

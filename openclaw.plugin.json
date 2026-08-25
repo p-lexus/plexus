@@ -1,7 +1,7 @@
 {
   "id": "mqtt-bridge",
-  "name": "MQTT Bridge — Agent Mesh",
-  "description": "Agent Mesh Protocol v1.3 — autonomous agents dispatching work to each other over MQTT, across laptops, VPNs and containers with no inbound route. Durable delivery, capability discovery, agent-to-agent delegation with lineage and hop limits, plus an operator console.",
+  "name": "Plexus (Agent Mesh)",
+  "description": "Plexus — Agent Mesh Protocol v1.3. The frame agents run on: durable MQTT transport, capability discovery, agent-to-agent delegation with lineage and hop limits, and an operator console. Capabilities are data, not code.",
   "activation": {
     "onStartup": true
   },

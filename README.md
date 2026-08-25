@@ -1,13 +1,47 @@
-# Agent Mesh Protocol
+<h1 align="center">Plexus</h1>
 
-**The agents worth talking to don't live in the cloud. This is how they reach each other anyway.**
+<p align="center">
+  <strong>Agent Mesh Protocol</strong><br>
+  A network of specialists, no centre.
+</p>
 
-An MQTT protocol for dispatching work between autonomous agents — with a durable transport,
-capability discovery, and agent-to-agent delegation. Plus a production reference implementation
-as an [OpenClaw](https://github.com/openclaw) plugin.
+<p align="center">
+  <code>protocol v1.3</code> ·
+  <code>48 tests</code> ·
+  <a href="PROTOCOL.md">Specification</a> ·
+  <a href="PROTOCOL.pdf">PDF</a> ·
+  <a href="examples/minimal-agent.mjs">40-line agent</a>
+</p>
 
-- **Specification** — [PROTOCOL.md](PROTOCOL.md) ([PDF](PROTOCOL.pdf)) · version 1.3
-- **Status** — running daily against a real workload; one deployment, one implementation
+---
+
+**The agents worth talking to don't live in the cloud.** Plexus is how they reach each other
+anyway — a protocol for autonomous agents to dispatch work between laptops, VPNs and containers,
+none of which can accept an inbound connection.
+
+## Plexus is the frame, not the agent
+
+This is the layer your agents run *on*. Plexus provides the transport, discovery, delegation and
+lifecycle; **what an agent actually does is yours.**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  YOUR AGENTS          reviewer   ·   dba   ·   hermes       │
+│                       capabilities, prompts, domain logic   │
+├─────────────────────────────────────────────────────────────┤
+│  PLEXUS               discovery · delegation · lifecycle    │
+│                       durable delivery · owner isolation    │
+├─────────────────────────────────────────────────────────────┤
+│  MQTT BROKER          any 3.1.1 or 5 broker you operate     │
+└─────────────────────────────────────────────────────────────┘
+```
+
+An agent on Plexus is a **capability catalog** — names, argument schemas, prompt templates. No
+code, no deploy, no restart. Define `hermes` as a messaging specialist and it becomes
+discoverable and addressable to every other agent on the mesh the moment it connects.
+
+The frame contains no service name anywhere. It never learns what `code.review` means, and it
+does not need to.
 
 ---
 
@@ -264,7 +298,7 @@ Anonymous access is fine on localhost and **not** fine anywhere else — see
 ### 2. The plugin
 
 ```bash
-git clone https://github.com/MoGhali/agent-mesh-protocol.git ~/.openclaw/extensions/mqtt-bridge
+git clone https://github.com/MoGhali/plexus.git ~/.openclaw/extensions/mqtt-bridge
 cd ~/.openclaw/extensions/mqtt-bridge
 npm install
 cp services.example.json services.json    # your capability catalog
@@ -382,6 +416,55 @@ would never have seen it.
 Do **not** subscribe to `agents/jobs/#` — that is everyone's traffic.
 
 ---
+
+## Building an agent on Plexus
+
+An agent is a name and a catalog. Here is `hermes`, a messaging specialist, defined entirely as
+data — no code, no deploy:
+
+```jsonc
+// openclaw.json — the identity
+"mesh": { "agentId": "hermes" }
+```
+
+```json
+// services.json — what it can do
+{
+  "displayName": "Hermes — messaging and delivery",
+  "capabilities": [
+    {
+      "service": "notify.team",
+      "description": "Deliver a message to the right channel for a given team.",
+      "requestSchema": { "team": "string", "message": "string", "urgency": "string? (low|normal|high)" },
+      "prompt": "Deliver this to the {{team}} team: {{message}}. Urgency {{urgency}}. Choose the channel they actually read, and confirm delivery."
+    }
+  ]
+}
+```
+
+That is the entire agent. On connect it publishes a retained profile, and every other agent on
+the mesh can now discover and address it:
+
+```
+reviewer                                     hermes
+   │  mesh_peers() → hermes offers notify.team
+   │──────────── notify.team ──────────────────▶
+   ◀──────────── delivered ────────────────────│
+```
+
+Or `reviewer` declares the dependency up front and Plexus fetches it before the executor even
+starts:
+
+```json
+"delegates": [
+  { "agent": "hermes", "service": "notify.team", "as": "delivery",
+    "args": { "team": "backend", "message": "Review complete: {{repo}} #{{pr}}" } }
+]
+```
+
+**Nothing in Plexus knows what `notify.team` means.** It renders the template, routes the job,
+carries the lineage and guarantees the result. The meaning lives entirely in your catalog —
+which is why adding an agent takes minutes and no rebuild.
 
 ## Author a capability
 
