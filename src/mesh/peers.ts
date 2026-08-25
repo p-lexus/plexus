@@ -90,6 +90,19 @@ export function createPeerRegistry(selfAgentId: string, logger: Logger, onChange
 
     onStatus(agentId, status) {
       if (agentId === selfAgentId) return;
+
+      // An empty retained status means the agent cleared its presence, i.e. it
+      // is gone. Without this, clearing a departed agent's profile removes it
+      // and the status message immediately recreates it as an empty husk —
+      // touch() would resurrect what onProfile just deleted.
+      if (status === null || status === undefined) {
+        if (peers.delete(agentId)) {
+          logger.info(`peer ${agentId} left the mesh`);
+          onChange();
+        }
+        return;
+      }
+
       const p = touch(agentId);
       const wasOnline = p.online;
       p.online = status?.status === "online";

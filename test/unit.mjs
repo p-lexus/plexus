@@ -260,6 +260,13 @@ t("an agent that clears its retained profile leaves the mesh", () => {
   assert.equal(r.size, 0, "a departed agent must not linger as an empty row");
   assert.equal(r.get("gone"), undefined);
 });
+t("clearing status does not resurrect a peer that already left", () => {
+  const r = createPeerRegistry("me", quietLogger, () => {});
+  r.onProfile("gone", { capabilities: [{ service: "s" }] });
+  r.onProfile("gone", null);      // profile cleared -> removed
+  r.onStatus("gone", null);       // status cleared -> must NOT recreate it
+  assert.equal(r.size, 0, "a cleared status must not revive a departed agent");
+});
 t("presence tracks status messages", () => {
   const r = createPeerRegistry("me", quietLogger, () => {});
   r.onProfile("dba", { capabilities: [{ service: "s" }] });
