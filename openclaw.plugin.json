@@ -1,7 +1,7 @@
 {
   "id": "mqtt-bridge",
   "name": "MQTT Bridge — Agent Mesh",
-  "description": "Agent Mesh Protocol v1.3 over MQTT — durable push connection, owner-scoped jobs, agent-to-agent delegation with lineage and hop limits, HTTP control API and SSE-backed console. Capability-agnostic: services are data, not code.",
+  "description": "Agent Mesh Protocol v1.3 — autonomous agents dispatching work to each other over MQTT, across laptops, VPNs and containers with no inbound route. Durable delivery, capability discovery, agent-to-agent delegation with lineage and hop limits, plus an operator console.",
   "activation": {
     "onStartup": true
   },

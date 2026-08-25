@@ -1,7 +1,6 @@
 # Agent Mesh Protocol
 
-**Your agents run on laptops, behind VPNs, inside containers with no ingress. This is how they
-reach each other anyway.**
+**The agents worth talking to don't live in the cloud. This is how they reach each other anyway.**
 
 An MQTT protocol for dispatching work between autonomous agents — with a durable transport,
 capability discovery, and agent-to-agent delegation. Plus a production reference implementation
@@ -22,30 +21,31 @@ VPN that drops, in a container with no inbound route, on a machine whose IP chan
 morning. The moment you want two of them to talk, you are in tunnels, ngrok, firewall
 exceptions, and a public surface you now have to defend.
 
-**Agents are edge devices that happen to think.** Intermittent connectivity, no stable address,
-hardware you don't own, lifecycles measured in minutes. That is not a microservice — it is a
-thermostat with a language model attached.
+**Intelligence is moving to the edge.** The interesting agents are no longer hosted endpoints —
+they are the one on your laptop with your repositories checked out, the one inside the VPN that
+can read production, the one on a colleague's machine that knows a system nobody else does. They
+hold context precisely *because* they are not in the cloud.
 
-The industry solved that class of problem fifteen years ago. Then agent frameworks went and
-rebuilt HTTP microservices for something that is not a microservice.
+So the addressing model is inverted. These agents cannot be servers, and the moment you want two
+of them to collaborate, an endpoint-shaped protocol has nothing to offer.
 
-**Invert it.** Let the agent be a *client*. It dials out to a broker and receives work over that
-connection. Now it runs anywhere something can reach the internet, and it is addressable without
-being reachable.
+**Let the agent be a client.** It dials out, holds one connection, and receives work over it. Now
+it is **addressable without being reachable** — and a mesh can span laptops, VPNs, CI runners and
+cloud instances without a single inbound port.
 
-Every mechanism this needs already exists in the transport:
+That constraint buys more than connectivity. An agent that is *expected* to disappear gets
+first-class treatment for it:
 
-| IoT pattern | Agent Mesh |
+| An agent is… | So the mesh gives it |
 |---|---|
-| Device shadow, retained | Capability profile — discovered without asking |
-| Command topic | Directed work: `commands/<agentId>/invoke` |
-| Telemetry stream | Job milestones |
-| Reported state, retained | Terminal result, readable hours later |
-| Last will | Agent presence, published by the broker itself |
-| Durable session | Jobs queued while the agent sleeps |
+| offline half the day | work **queued while it sleeps**, delivered on wake |
+| unknown to its peers | a **retained capability profile** — discovered without asking |
+| slow, thinking for minutes | **streamed milestones**, and a result you can collect an hour later |
+| liable to die mid-thought | **presence published by the broker itself**, not a heartbeat service |
+| one of many | **per-requester isolation** as a subscription filter, not access-control code |
 
-Nothing in MQTT cares whether the endpoint is a thermostat or a language model. That is the
-entire reason this works.
+None of that is application code. It is what the transport already does — which is the whole
+argument for choosing it.
 
 ---
 
@@ -122,7 +122,7 @@ These aren't incidental. Each solves a problem that otherwise becomes applicatio
 | **Retained messages** | Every agent's capability catalog, and every job's final result, are readable by a client that connects *afterwards*. Discovery and late collection come free. |
 | **Topic wildcards** | Multi-tenancy is a subscription filter — `jobs/alice/#` — not authorization code you write and get wrong. |
 | **Last will** | An agent that dies is marked offline by the broker itself. No heartbeat service. |
-| **One outbound socket** | Works behind NAT, on a VPN, in a container with no ingress. Nothing to expose. |
+| **One outbound socket** | Runs on a laptop, inside a VPN, in a container with no ingress. Nothing exposed, nothing to defend. |
 
 ---
 

@@ -1,6 +1,7 @@
 # Agent Mesh Protocol — v1.3
 
-MQTT mesh for human/agent → agent job dispatch. Broker root: `agents`.
+A protocol for autonomous agents to dispatch work to each other over MQTT — across laptops,
+VPNs and containers, none of which can accept an inbound connection. Broker root: `agents`.
 
 Delivery is **push end to end**. Nothing on a delivery path polls: the broker pushes over a
 persistent MQTT session, the plugin pushes the job into an executor subagent the moment it
@@ -8,25 +9,25 @@ arrives, results are pushed back at QoS 1 (retained), and the web panel receives
 Events. The only periodic timers left are a supervisory watchdog and a slow filesystem
 reconciler, neither of which carries a message.
 
-## Why MQTT, precisely
+## Why MQTT
 
-Agents have the operational profile of edge devices: intermittent connectivity, no stable
-address, hardware the operator does not own, and lifecycles measured in minutes. That class of
-problem was solved fifteen years ago, and every mechanism this protocol needs already exists in
-the transport.
+An agent is not a service. It is intermittent, slow, context-bound to a machine, and liable to
+stop existing halfway through a thought. Treating it as an HTTP endpoint means rebuilding, in
+application code, every mechanism that already exists in a transport designed for exactly this
+shape.
 
-| IoT pattern | Agent Mesh | Provided by |
-|---|---|---|
-| Device shadow, retained | Capability profile | `retain` on the registry topic |
-| Command topic | `commands/<agentId>/invoke` | directed publish |
-| Telemetry stream | `jobs/<owner>/<id>/events` | QoS 1, not retained |
-| Reported state | `jobs/<owner>/<id>/result` | `retain`, last write wins |
-| Last will and testament | Agent presence | broker publishes on unclean disconnect |
-| Durable session | Jobs queued while an agent sleeps | `clean: false` + QoS 1 |
-| Topic ACLs | Per-owner isolation | broker-enforced subscribe patterns |
+| The agent's reality | What the transport already provides |
+|---|---|
+| Offline for hours at a time | Persistent session: work is **queued and delivered on reconnect** |
+| Unknown to its peers | **Retained** capability profile — discovery with no announcement round |
+| Thinks for minutes | Streamed milestones, terminal result **retained** for late collection |
+| Dies mid-task | Last will: presence published **by the broker**, not by a heartbeat service |
+| One of many requesters | Per-owner isolation as a **subscription filter**, enforceable in broker ACLs |
+| Behind NAT or a VPN | One outbound connection; nothing exposed |
 
-Nothing in MQTT cares whether the endpoint is a thermostat or a language model. That is the
-entire reason this works.
+Every guarantee below is a property of the transport, not of this implementation. That is what
+makes the protocol small enough to implement in an afternoon — see
+[`examples/minimal-agent.mjs`](examples/minimal-agent.mjs).
 
 ## Delivery guarantees
 
