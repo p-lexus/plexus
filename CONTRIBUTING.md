@@ -36,9 +36,22 @@ Changes reach a running agent **through git**, never by editing it in place:
 npm test && git commit && git push
 
 # on the machine running the agent
+./install.sh --yes --target openclaw
+```
+
+`install.sh` pulls, installs, rebuilds, keeps your `services.json` and `openclaw.json`, and then
+**compares the compiled output against what was there before**. A docs-only change leaves the
+build identical and it says so; a code change means the gateway is caching a stale module, so it
+validates the config and restarts. Restarting a live agent for a README edit is churn, and
+forgetting to restart after a code change is a confusing hour.
+
+By hand, if you prefer:
+
+```bash
 cd ~/.openclaw/extensions/mqtt-bridge
 git pull && npm run build
-launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway   # code needs a restart
+openclaw config validate                                 # an invalid config stops the gateway
+launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway  # only if the code changed
 ```
 
 Editing the installed copy directly means the next `git pull` either conflicts or silently

@@ -160,6 +160,53 @@ else
 fi
 say ""
 
+# ── restarting a live gateway ────────────────────────────────────────────────
+# Validate before restarting, always. An invalid config does not degrade the
+# gateway, it stops it starting at all — so the check has to happen while it is
+# still up and you still have a working agent to go back to.
+restart_gateway() {
+  if command -v openclaw >/dev/null 2>&1; then
+    if ! run openclaw config validate >/dev/null 2>&1; then
+      warn "${B}openclaw config validate failed — not restarting${R}"
+      say "    Fix the config first; the gateway will not start with it as it is."
+      say "    ${DIM}openclaw config validate${R}"
+      return 1
+    fi
+    ok "config valid"
+  fi
+
+  confirm "restart the gateway now?" || {
+    say ""
+    say "  Restart when you're ready:"
+    say "    ${DIM}launchctl kickstart -k gui/\$(id -u)/ai.openclaw.gateway${R}   ${DIM}# macOS${R}"
+    say "    ${DIM}systemctl --user restart openclaw-gateway${R}                  ${DIM}# Linux${R}"
+    say ""
+    return 0
+  }
+
+  old_pid="$(pgrep -f 'openclaw.*gateway' | head -1 || true)"
+  if [ "$(uname -s)" = "Darwin" ]; then
+    run launchctl kickstart -k "gui/$(id -u)/ai.openclaw.gateway" >/dev/null 2>&1 \
+      || { warn "launchctl restart failed — restart it however you normally do"; return 1; }
+  else
+    run systemctl --user restart openclaw-gateway \
+      || { warn "systemctl restart failed — restart it however you normally do"; return 1; }
+  fi
+
+  [ "$DRY_RUN" -eq 1 ] && return 0
+  n=0
+  while [ "$n" -lt 20 ]; do
+    sleep 1; n=$((n + 1))
+    new_pid="$(pgrep -f 'openclaw.*gateway' | head -1 || true)"
+    if [ -n "$new_pid" ] && [ "$new_pid" != "$old_pid" ]; then
+      ok "gateway restarted  ${DIM}(pid $new_pid)${R}"
+      return 0
+    fi
+  done
+  warn "the gateway did not come back within 20s — check its logs"
+  return 1
+}
+
 # ── OpenClaw ─────────────────────────────────────────────────────────────────
 install_openclaw() {
   DEST="$HOME/.openclaw/extensions/mqtt-bridge"
@@ -209,8 +256,16 @@ install_openclaw() {
     ok "services.json kept  ${DIM}(yours, untouched)${R}"
   fi
 
+  # Checksum around the build. The gateway caches the loaded module, so a
+  # rebuilt dist/ sits unused until the process restarts — but restarting for a
+  # docs-only change is pointless churn on a live agent. Comparing the output
+  # answers "does this actually need a restart?" instead of guessing.
+  DIST_BEFORE=""
+  [ -d "$DEST/dist" ] && DIST_BEFORE="$(cd "$DEST" && find dist -type f | sort | xargs shasum 2>/dev/null | shasum)"
   run sh -c "cd '$DEST' && npm run build --silent >/dev/null"
   ok "built"
+  DIST_AFTER=""
+  [ "$DRY_RUN" -eq 0 ] && DIST_AFTER="$(cd "$DEST" && find dist -type f | sort | xargs shasum 2>/dev/null | shasum)"
 
   AGENT="${AGENT_ID:-$(hostname -s 2>/dev/null || echo agent)}"
   OC_CONFIG="$HOME/.openclaw/openclaw.json"
@@ -229,9 +284,13 @@ install_openclaw() {
       say "      ${DIM}\"tools\": { \"alsoAllow\": [\"mqtt_publish\", \"mesh_ask\", \"mesh_peers\"] }${R}"
     fi
     say ""
-    say "  Nothing else to do. Restart only if the plugin's code changed:"
-    say "    ${DIM}launchctl kickstart -k gui/\$(id -u)/ai.openclaw.gateway${R}   ${DIM}# macOS${R}"
-    say ""
+    if [ -n "$DIST_BEFORE" ] && [ "$DIST_BEFORE" = "$DIST_AFTER" ]; then
+      ok "plugin code unchanged — ${B}no restart needed${R}"
+      say ""
+      return 0
+    fi
+    warn "plugin code changed — the gateway must restart to load it"
+    restart_gateway
     return 0
   fi
 

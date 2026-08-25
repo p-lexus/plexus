@@ -19,6 +19,10 @@ prints the one manual step each needs. `--dry-run` shows every action without do
 ./install.sh --agent-id dba                 name this agent on the mesh
 ```
 
+**Re-run it to update.** It pulls, rebuilds, and compares the compiled output with what was
+there before — so it restarts the gateway when the plugin's code actually changed, and leaves a
+running agent alone when it didn't.
+
 **It will not overwrite anything of yours.** An existing `services.json`, `plexus.json` or
 capability catalog is kept as-is and reported as kept; the installer only ever creates what is
 missing. Re-running it is safe.
