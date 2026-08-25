@@ -24,6 +24,7 @@
   <a href="packages/agent">Client library</a> ·
   <a href="packages/notify">Plugins</a> ·
   <a href="hosts/hermes">Hermes</a> ·
+  <a href="docs/INSTALL.md">Install</a> ·
   <a href="#run-it">Run it</a>
 </p>
 
@@ -475,6 +476,9 @@ that offline jobs survive.
 ---
 
 ## Install
+
+**[docs/INSTALL.md](docs/INSTALL.md)** covers every path — OpenClaw, Hermes, your own agent,
+plugins — plus a troubleshooting table. The OpenClaw route is below.
 
 ### 1. A broker
 
