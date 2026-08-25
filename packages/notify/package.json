@@ -1,0 +1,22 @@
+{
+  "name": "plexus-notify",
+  "version": "1.3.0",
+  "description": "A Plexus plugin that delivers agent job results to Slack, GitHub, webhooks and files.",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./routes": "./routes.js",
+    "./channels": "./channels.js"
+  },
+  "files": ["index.js", "routes.js", "channels.js", "notify.example.json", "README.md"],
+  "engines": { "node": ">=18" },
+  "keywords": ["plexus", "agent", "mesh", "mqtt", "plugin", "notifications", "slack", "github"],
+  "license": "Apache-2.0",
+  "author": "Mohanad Ghali",
+  "repository": { "type": "git", "url": "git+https://github.com/MoGhali/plexus.git", "directory": "packages/notify" },
+  "homepage": "https://github.com/MoGhali/plexus/tree/main/packages/notify#readme",
+  "peerDependencies": {
+    "plexus-agent": "^1.3.0"
+  }
+}

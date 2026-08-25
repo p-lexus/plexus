@@ -55,11 +55,21 @@ something was edited in place.
 
 | Path | What lives there |
 |---|---|
+| `PROTOCOL.md` | The specification. Behaviour changes belong here too |
+| `packages/agent/` | `plexus-agent` — the client library, the plugin contract, the host |
+| `packages/notify/` | `plexus-notify` — a plugin, and the worked example of one |
 | `src/mesh/` | Protocol behaviour: topics, dispatch, transport, catalog, variables |
 | `src/http/` | The console's API, auth and event stream |
 | `web/index.html` | The console — one file, no build step, no external assets |
-| `test/` | Unit tests and the console render check |
-| `PROTOCOL.md` | The specification. Behaviour changes belong here too |
+| `test/` | Unit tests, the console render check, and package/end-to-end tests |
+| `docs/HOSTS.md` | How to put another agent platform on the mesh |
+
+The repository is an npm workspace: `npm install` links `plexus-agent` and `plexus-notify` into
+`node_modules`, so the tests and examples import them by package name exactly as a user would.
+
+**`src/` is the OpenClaw host plugin, not the runtime.** It is one participant on the mesh. If a
+change only makes sense for OpenClaw, it belongs in `src/`; if it is protocol behaviour, it
+belongs in `packages/agent` and in `PROTOCOL.md`.
 
 `src/mesh/topics.ts` and `src/mesh/payload.ts` are pure. Keep them that way — they are the
 easiest parts of the system to reason about, and the most load-bearing.

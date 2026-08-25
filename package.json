@@ -3,13 +3,22 @@
   "version": "1.0.0",
   "description": "Plexus \u2014 Agent Mesh Protocol v1.3. Autonomous agents dispatching work to each other over MQTT, across laptops, VPNs and containers with no inbound route.",
   "type": "module",
+  "license": "Apache-2.0",
+  "author": "Mohanad Ghali",
+  "repository": { "type": "git", "url": "git+https://github.com/MoGhali/plexus.git" },
+  "homepage": "https://github.com/MoGhali/plexus#readme",
+  "bugs": { "url": "https://github.com/MoGhali/plexus/issues" },
+  "keywords": ["agent", "mesh", "protocol", "mqtt", "multi-agent", "ai-agents", "delegation", "openclaw", "plexus"],
+  "workspaces": ["packages/*"],
   "scripts": {
     "build": "tsc && npm run copy:assets",
     "copy:assets": "rm -rf dist/web && mkdir -p dist/web && cp -R web/. dist/web/ && cp services.example.json dist/ && { cp services.json dist/ 2>/dev/null || true; }",
     "typecheck": "tsc --noEmit",
-    "test": "npm run build && node test/unit.mjs && node test/render-check.mjs",
+    "test": "npm run build && node test/unit.mjs && node test/render-check.mjs && node test/packages.mjs",
     "test:unit": "node test/unit.mjs",
-    "test:panel": "node test/render-check.mjs"
+    "test:panel": "node test/render-check.mjs",
+    "test:packages": "node test/packages.mjs",
+    "demo": "node examples/demo.mjs"
   },
   "dependencies": {
     "mqtt": "^5.10.1",

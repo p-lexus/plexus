@@ -11,12 +11,59 @@
 </p>
 
 <p align="center">
-  <code>protocol v1.3</code> ·
-  <code>48 tests</code> ·
+  <a href="https://github.com/MoGhali/plexus/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/MoGhali/plexus/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="LICENSE"><img alt="License: Apache 2.0" src="https://img.shields.io/badge/license-Apache%202.0-3fb9a5"></a>
+  <a href="PROTOCOL.md"><img alt="Protocol v1.3" src="https://img.shields.io/badge/protocol-v1.3-3fb9a5"></a>
+  <img alt="Node 18+" src="https://img.shields.io/badge/node-%E2%89%A5%2018-3fb9a5">
+  <img alt="One dependency" src="https://img.shields.io/badge/dependencies-1-3fb9a5">
+</p>
+
+<p align="center">
   <a href="PROTOCOL.md">Specification</a> ·
   <a href="PROTOCOL.pdf">PDF</a> ·
-  <a href="examples/minimal-agent.mjs">40-line agent</a>
+  <a href="packages/agent">Client library</a> ·
+  <a href="packages/notify">Plugins</a> ·
+  <a href="#run-it">Run it</a>
 </p>
+
+---
+
+**One agent asks another for help, and gets an answer — even though neither can accept an
+inbound connection.** That's the whole idea.
+
+<p align="center">
+  <img src="docs/demo.svg" alt="reviewer delegates a migration review to dba, and a plugin delivers the outcome" width="100%">
+</p>
+
+Above is a real recording of [`examples/with-plugins.mjs`](examples/with-plugins.mjs), not a mockup —
+it's regenerated from an actual run, so it can't drift from what the code does.
+
+`reviewer` is asked to review a pull request. It finds a database migration it has no business
+judging, looks in the registry, finds `dba`, delegates that part, and folds the answer into one
+combined review. Nobody configured that relationship. It looked. Meanwhile `notifier` — an agent
+with no capabilities of its own, only a plugin — tells the team.
+
+## Run it
+
+Two agents collaborating on your machine, in about a minute. No cloud, no account, no framework.
+
+```bash
+# 1. any MQTT broker
+docker run -d -p 1883:1883 eclipse-mosquitto:2 \
+  sh -c 'printf "listener 1883\nallow_anonymous true\n" > /m.conf && mosquitto -c /m.conf'
+
+# 2. the demo
+git clone https://github.com/MoGhali/plexus && cd plexus
+npm install
+npm run demo
+```
+
+<p align="center">
+  <img src="docs/demo-delegation.svg" alt="Two agents, one request: reviewer discovers dba and delegates" width="100%">
+</p>
+
+Then read [`examples/demo.mjs`](examples/demo.mjs) — the whole thing is about sixty lines, and
+none of them are boilerplate.
 
 ---
 
@@ -31,7 +78,7 @@ lifecycle; **what an agent actually does is yours.**
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  YOUR AGENTS          reviewer   ·   dba   ·   hermes       │
+│  YOUR AGENTS          reviewer  ·  dba  ·  notifier ·  yours│
 │                       capabilities, prompts, domain logic   │
 ├─────────────────────────────────────────────────────────────┤
 │  PLEXUS               discovery · delegation · lifecycle    │
@@ -42,11 +89,30 @@ lifecycle; **what an agent actually does is yours.**
 ```
 
 An agent on Plexus is a **capability catalog** — names, argument schemas, prompt templates. No
-code, no deploy, no restart. Define `hermes` as a messaging specialist and it becomes
-discoverable and addressable to every other agent on the mesh the moment it connects.
+code, no deploy, no restart. Declare an agent as a schema specialist and it becomes discoverable
+and addressable to every other agent on the mesh the moment it connects.
 
 The frame contains no service name anywhere. It never learns what `code.review` means, and it
 does not need to.
+
+### What ships here
+
+The protocol is the product. Everything else is one way of speaking it:
+
+| | What it is | Depends on |
+|---|---|---|
+| **[PROTOCOL.md](PROTOCOL.md)** | The specification — topics, payloads, guarantees | nothing |
+| **[`plexus-agent`](packages/agent)** | Client library + the plugin host. Join the mesh in ~15 lines | `mqtt` |
+| **[`plexus-notify`](packages/notify)** | A plugin: delivers outcomes to Slack, GitHub, webhooks | `plexus-agent` |
+| **[`src/`](src)** | Host plugin for OpenClaw — puts a gateway's agent on the mesh | OpenClaw |
+| **[docs/HOSTS.md](docs/HOSTS.md)** | How to write a host plugin for another platform | — |
+
+**None of these is required.** The OpenClaw plugin is *one* participant, not the runtime, and the
+[40-line example](examples/minimal-agent.mjs) uses no library at all. If you can open an MQTT
+connection, you can be on the mesh.
+
+That's the point of a protocol rather than a framework: build **your** agent on it, and it
+interoperates with everything else by construction.
 
 ---
 
@@ -149,6 +215,92 @@ That agent is now discoverable, addressable and durable. Full spec:
 [PROTOCOL.md](PROTOCOL.md) — including delivery guarantees, the job state machine, sequence
 diagrams and a failure-mode table.
 
+Or use the client library and skip the topic strings entirely:
+
+```js
+import { connect } from "plexus-agent";
+
+const agent = await connect({ broker: "mqtt://localhost:1883", agentId: "dba" });
+
+agent.serve("schema.review", async (job, ctx) => {
+  ctx.progress("checking lock behaviour");
+  return { risk: "high", finding: "ALTER without CONCURRENTLY locks writes" };
+});
+```
+
+It handles the things that quietly break a mesh: stable client ids, owner-scoped routing,
+delegation lineage, hop limits, and a terminal result on every path — [including the one where
+your handler throws](packages/agent#what-it-handles-for-you).
+
+---
+
+## The frame, and the plugins
+
+An agent gains abilities by **loading plugins**, not by growing code. A plugin gets a connected
+agent and adds capabilities to it:
+
+```js
+import { definePlugin } from "plexus-agent/plugin";
+
+export default definePlugin({
+  name: "echo",
+  setup(agent, config) {
+    agent.serve("echo", (job) => ({ echoed: job.args.phrase }));
+  },
+});
+```
+
+Run an agent that hosts them — one connection, one registry entry, one durable session, however
+many plugins:
+
+```json
+{ "broker": "mqtt://localhost:1883",
+  "agentId": "conan",
+  "plugins": {
+    "plexus-notify": { "channels": { … }, "routes": [ … ] },
+    "./my-plugin.js": { }
+  } }
+```
+
+```bash
+npx plexus run --config plexus.json
+```
+
+An agent good at four things is still **one agent** on the mesh — not four processes, four
+registry entries and four sessions to keep durable.
+
+### The first plugin: `plexus-notify`
+
+**Plexus moves work between agents. [`plexus-notify`](packages/notify) moves the outcome to
+people** — Slack, a pull-request comment, a webhook, a file.
+
+```json
+{ "id": "needs-changes",
+  "when": { "service": "code.review", "verdict": "REQUEST_CHANGES" },
+  "to": ["slack", "pr"],
+  "title": "Changes requested on {{args.repo}}#{{args.pr}}",
+  "body": "{{summary}}" }
+```
+
+No agent knows it's there. Adding a Slack channel doesn't touch a single agent, and the
+alternative — giving every agent a Slack token and its own formatter — stops scaling at about the
+third agent.
+
+Two details worth stealing if you write a plugin of your own:
+
+- **Results are retained**, so a naive watcher re-delivers the entire backlog on every restart.
+  This one suppresses the retained flush and remembers what it sent, across restarts.
+- **A result carries the answer, not the question.** `{{args.repo}}` can't come from a result, so
+  it observes invoke traffic too and keeps the two together.
+
+### Putting a whole platform on the mesh
+
+A **host plugin** is different: it teaches an entire agent platform to speak Plexus, so its agents
+can delegate to agents running on someone else's. [`src/`](src) does this for OpenClaw.
+
+**[docs/HOSTS.md](docs/HOSTS.md)** is the guide — the four jobs a host plugin has, the three
+questions to ask about your platform, and the traps that cost real time in the OpenClaw one.
+
 ---
 
 ## What you get from MQTT that HTTP won't give you
@@ -169,13 +321,24 @@ These aren't incidental. Each solves a problem that otherwise becomes applicatio
 
 It isn't competing with your agent framework — it's the layer *between* frameworks.
 
-| | Scope | Assumes |
-|---|---|---|
-| **MCP** | An agent using tools | Local process or a reachable HTTP server |
-| **A2A** | Agents interoperating | Both agents have reachable endpoints |
-| **Agent Mesh** | Agents dispatching work to each other | **Only that both can reach a broker** |
+> **MCP connects an agent to tools. Plexus connects an agent to other agents** — durably, so the
+> one that asked can be asleep when the answer arrives.
 
-Use MCP to give one agent tools. Use this to let agents that can't see each other work together.
+| | Scope | Requires | Requester may be offline |
+|---|---|---|---|
+| **MCP** | One agent using tools | A local process, or a reachable HTTP server | no |
+| **A2A** | Agents interoperating | Both agents have reachable endpoints | no |
+| **HTTP + a queue** | Whatever you assemble | A broker *and* the endpoints *and* the glue | depends |
+| **Plexus** | Agents dispatching work to each other | **Only that both can reach a broker** | **yes** |
+
+The last column is the one that matters, and it isn't a feature — it's a consequence. An agent
+that dials out instead of listening is **addressable without being reachable**, so the mesh spans
+laptops, VPNs, CI runners and cloud instances with no inbound port anywhere and nothing to
+defend.
+
+Use MCP to give one agent tools. Use Plexus to let agents that can't see each other work
+together. They compose — an agent can use MCP tools locally and answer Plexus requests from the
+mesh, and most useful ones do.
 
 ---
 
@@ -442,18 +605,18 @@ Do **not** subscribe to `agents/jobs/#` — that is everyone's traffic.
 
 ## Building an agent on Plexus
 
-An agent is a name and a catalog. Here is `hermes`, a messaging specialist, defined entirely as
+An agent is a name and a catalog. Here is `courier`, a messaging specialist, defined entirely as
 data — no code, no deploy:
 
 ```jsonc
 // openclaw.json — the identity
-"mesh": { "agentId": "hermes" }
+"mesh": { "agentId": "courier" }
 ```
 
 ```json
 // services.json — what it can do
 {
-  "displayName": "Hermes — messaging and delivery",
+  "displayName": "Courier — messaging and delivery",
   "capabilities": [
     {
       "service": "notify.team",
@@ -469,8 +632,8 @@ That is the entire agent. On connect it publishes a retained profile, and every 
 the mesh can now discover and address it:
 
 ```
-reviewer                                     hermes
-   │  mesh_peers() → hermes offers notify.team
+reviewer                                     courier
+   │  mesh_peers() → courier offers notify.team
    │──────────── notify.team ──────────────────▶
    ◀──────────── delivered ────────────────────│
 ```
@@ -480,7 +643,7 @@ starts:
 
 ```json
 "delegates": [
-  { "agent": "hermes", "service": "notify.team", "as": "delivery",
+  { "agent": "courier", "service": "notify.team", "as": "delivery",
     "args": { "team": "backend", "message": "Review complete: {{repo}} #{{pr}}" } }
 ]
 ```
@@ -647,7 +810,19 @@ processes nothing.
 ## Architecture
 
 ```
-src/
+PROTOCOL.md               the specification — the only thing that is binding
+packages/
+├── agent/                plexus-agent — the client library (no OpenClaw)
+│   ├── index.js          connect, serve, ask, watch, observeCommands
+│   └── index.d.ts        hand-written types, so the package stays buildless
+│   ├── plugin.js        the plugin contract and the host that runs them
+│   └── bin/plexus.js     `plexus run --config plexus.json`
+└── notify/               plexus-notify — a plugin, not an agent
+    ├── index.js          replay suppression, the delivery log
+    ├── routes.js         matching and templating — pure
+    └── channels.js       slack · github · webhook · file · console
+
+src/                      the OpenClaw plugin — one participant, not the runtime
 ├── index.ts              plugin entry: guards, wiring, lifecycle
 ├── types.ts              domain types (no runtime imports)
 ├── config.ts             every default, in one place
@@ -666,8 +841,10 @@ src/
     ├── sse.ts            event fan-out
     └── server.ts         routing
 web/index.html            the console: one file, no external assets
-test/                     unit tests + console render check
-tools/screenshots.mjs     regenerates the images in this README
+examples/                 demo.mjs · with-plugins.mjs · minimal-agent.mjs
+test/                     bridge units + console render check + package/e2e
+tools/screenshots.mjs     regenerates the console images
+tools/record-demo.mjs     records an example as the animated SVG above
 ```
 
 **Execution.** Jobs are pushed straight into an isolated executor subagent — no queue, so a busy
@@ -685,17 +862,28 @@ terminal result lands immediately, and later executor output is suppressed.
 ## Development
 
 ```bash
-npm install
+npm install              # workspaces: the bridge, plexus-agent and plexus-notify
 npm run build            # tsc + copy web assets
-npm test                 # build, then unit tests + console render check
+npm test                 # build, then all three suites
 npm run typecheck
-node tools/screenshots.mjs
+npm run demo             # two agents, one delegation
+
+node tools/screenshots.mjs                                   # console images
+node tools/record-demo.mjs examples/with-plugins.mjs docs/demo.svg  # the hero
 ```
+
+Three suites: `test/unit.mjs` covers the bridge, `test/render-check.mjs` executes every console
+view, and `test/packages.mjs` covers the library and its plugins — including **end-to-end tests
+against a live broker**, which are skipped if none is reachable and run for real in CI. Start one
+locally with `mosquitto -p 1883` to get them.
 
 The tests import the **built** output, so a missing `.js` extension in an ESM import fails in CI
 rather than at gateway start. The console check executes every view function against fixtures in
 a stubbed DOM — fetching the HTML and grepping it proves the file is served, but never runs a
 line of it, which is how a `ReferenceError` in a view once reached production.
+
+The README's animated demos are **recorded from real runs** rather than hand-drawn, so a change
+that breaks the examples also visibly breaks the front page.
 
 Fixtures in `test/fixtures/` are synthetic and deterministic: no live topics, ids or repository
 names, and no wall-clock dependence.
@@ -725,30 +913,50 @@ a result, and normalises it at the transport boundary. It cannot guarantee an ex
 one at all. A watchdog re-dispatches silent jobs, but that is a safety net, not a guarantee —
 and re-dispatch can duplicate work if a capability isn't idempotent.
 
-**One implementation, one deployment.** This runs daily against a real workload, which is more
-than a prototype and much less than battle-tested. Expect to find things.
+**Young, and honestly so.** The OpenClaw bridge runs daily against a real workload; the client
+library and its plugins are newer and have been exercised by their tests and examples, not yet by
+months of production. Expect to find things.
 
 **Requires a broker you operate.** No hosted option. That's a feature if you care where your
 job payloads go, and friction if you wanted to try it in five minutes.
 
-**No client library yet.** Publishing a job is `mosquitto_pub` or your language's MQTT client.
-Fine for CI and scripts; more ceremony than it should be for everyday use.
+**JavaScript only, for now.** `plexus-agent` covers Node. From another language you're writing
+MQTT calls against [PROTOCOL.md](PROTOCOL.md) directly — which is deliberately small, but is
+still more ceremony than an import.
+
+**No schema enforcement.** `requestSchema` is advisory. A capability that declares `pr: number`
+will happily receive a string, and find out inside the prompt.
 
 ## Roadmap
 
 In rough order of how much they'd unlock:
 
-- **A client library.** One-line publish-and-await in TypeScript and Python. The biggest
-  adoption gap today.
+- **A Python client.** The JS one exists; Python is where most agent code is being written.
 - **Verified identity end to end.** A working EMQX rule-engine recipe feeding `mesh.verifyOwner`,
   so owner scoping becomes enforcement rather than convention.
 - **Non-blocking delegation.** Let an asking agent hand off instead of waiting, for fan-out
   shapes the current model can't serve.
-- **Implementations beyond OpenClaw.** The protocol has no dependency on it; the spec is small
-  enough to implement against in an afternoon, and a second implementation would prove that.
+- **Enforced request schemas**, so a malformed invoke is rejected at the boundary rather than
+  producing a confusing result.
+- **More plugins on the frame.** `plexus-notify` is one. A scheduler, an archivist and a router
+  are the obvious next ones, and none of them need to live in this repository.
+- **More host platforms.** [docs/HOSTS.md](docs/HOSTS.md) exists so the second one is easier
+  than the first was.
 
 ---
 
+## Contributing
+
+Issues and pull requests are welcome — [CONTRIBUTING.md](CONTRIBUTING.md) covers the layout and,
+more usefully, the invariants that are easy to break by accident. Each one is there because
+breaking it caused a real failure.
+
+If you build an agent on Plexus, open an issue and say so. A second independent implementation is
+worth more to this project than any feature on the roadmap.
+
 ## License
 
-Not yet licensed — all rights reserved. Open an issue if you would like to use this.
+[Apache 2.0](LICENSE). Use it, fork it, ship it commercially — the patent grant is there so your
+legal team doesn't have to think about it.
+
+Built by [Mohanad Ghali](https://github.com/MoGhali).

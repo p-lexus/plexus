@@ -12,8 +12,28 @@ jobs:
       fail-fast: false
       matrix:
         node: [20, 22]
+
     steps:
       - uses: actions/checkout@v4
+
+      # A real broker, so the end-to-end tests run here instead of skipping.
+      # Delegation, hop limits and Hermes's replay suppression only break
+      # against a live broker, which is exactly why they are worth testing.
+      # eclipse-mosquitto:2 denies anonymous access by default, so it needs a
+      # config rather than a bare `services:` entry.
+      - name: Start MQTT broker
+        run: |
+          printf 'listener 1883 0.0.0.0\nallow_anonymous true\n' > /tmp/mosquitto.conf
+          docker run -d --name mosquitto -p 1883:1883 \
+            -v /tmp/mosquitto.conf:/mosquitto/config/mosquitto.conf \
+            eclipse-mosquitto:2
+          for _ in $(seq 1 30); do
+            if (exec 3<>/dev/tcp/127.0.0.1/1883) 2>/dev/null; then
+              echo "broker up"; exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::broker never came up"; docker logs mosquitto; exit 1
 
       - uses: actions/setup-node@v4
         with:
@@ -29,6 +49,17 @@ jobs:
       # in an ESM import fails here rather than at gateway start.
       - name: Test
         run: npm test
+        env:
+          PLEXUS_TEST_BROKER: mqtt://127.0.0.1:1883
+
+      # The examples are the README's hero image and the first thing anyone
+      # runs. If they break, the project's front door breaks.
+      - name: Examples
+        run: |
+          node examples/demo.mjs
+          node examples/with-hermes.mjs
+        env:
+          PLEXUS_BROKER: mqtt://127.0.0.1:1883
 
       - name: Check fixtures carry no real deployment data
         run: |

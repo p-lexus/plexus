@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1160 540" width="1160" height="540" role="img" aria-label="Two Plexus agents collaborating on one request, with Hermes delivering the outcome">
+  <style>
+    :root{--bg:#0f1518;--fg:#c9d6d3;--dim:#6d8078;--teal:#3fb9a5;--amber:#d8a44b;--red:#e26d6d;--green:#5fbf8a;--chrome:#1b2427}
+    @media (prefers-color-scheme: light){
+      :root{--bg:#f6f8f7;--fg:#22312e;--dim:#7d8f89;--teal:#12796a;--amber:#9a6b12;--red:#b23b3b;--green:#2f7d55;--chrome:#e5eae8}
+    }
+    .bg{fill:var(--bg)}
+    .chrome{fill:var(--chrome)}
+    text{font-family:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;font-size:11.85px;fill:var(--fg);white-space:pre}
+    .d{fill:var(--dim)}
+    .b{font-weight:700}
+    .teal{fill:var(--teal)}
+    .amber{fill:var(--amber)}
+    .red{fill:var(--red)}
+    .green{fill:var(--green)}
+    .l{opacity:0;animation-duration:6.14s;animation-iteration-count:infinite;animation-timing-function:steps(1,end)}
+    @media (prefers-reduced-motion: reduce){.l{opacity:1;animation:none}}
+    @keyframes r0{0%,1.79%{opacity:0}2.14%,100%{opacity:1}}
+    @keyframes r1{0%,3.58%{opacity:0}3.93%,100%{opacity:1}}
+    @keyframes r2{0%,5.37%{opacity:0}5.72%,100%{opacity:1}}
+    @keyframes r3{0%,7.16%{opacity:0}7.51%,100%{opacity:1}}
+    @keyframes r4{0%,8.95%{opacity:0}9.30%,100%{opacity:1}}
+    @keyframes r5{0%,10.74%{opacity:0}11.09%,100%{opacity:1}}
+    @keyframes r6{0%,12.53%{opacity:0}12.88%,100%{opacity:1}}
+    @keyframes r7{0%,14.33%{opacity:0}14.68%,100%{opacity:1}}
+    @keyframes r8{0%,20.87%{opacity:0}21.22%,100%{opacity:1}}
+    @keyframes r9{0%,22.66%{opacity:0}23.01%,100%{opacity:1}}
+    @keyframes r10{0%,24.45%{opacity:0}24.80%,100%{opacity:1}}
+    @keyframes r11{0%,26.24%{opacity:0}26.59%,100%{opacity:1}}
+    @keyframes r12{0%,34.40%{opacity:0}34.75%,100%{opacity:1}}
+    @keyframes r13{0%,36.19%{opacity:0}36.54%,100%{opacity:1}}
+    @keyframes r14{0%,37.98%{opacity:0}38.33%,100%{opacity:1}}
+    @keyframes r15{0%,39.77%{opacity:0}40.12%,100%{opacity:1}}
+    @keyframes r16{0%,41.56%{opacity:0}41.91%,100%{opacity:1}}
+    @keyframes r17{0%,43.35%{opacity:0}43.70%,100%{opacity:1}}
+    @keyframes r18{0%,45.14%{opacity:0}45.49%,100%{opacity:1}}
+    @keyframes r19{0%,46.93%{opacity:0}47.28%,100%{opacity:1}}
+    @keyframes r20{0%,48.72%{opacity:0}49.07%,100%{opacity:1}}
+    @keyframes r21{0%,50.51%{opacity:0}50.86%,100%{opacity:1}}
+    @keyframes r22{0%,52.30%{opacity:0}52.65%,100%{opacity:1}}
+    @keyframes r23{0%,54.09%{opacity:0}54.44%,100%{opacity:1}}
+    @keyframes r24{0%,55.88%{opacity:0}56.23%,100%{opacity:1}}
+    @keyframes r25{0%,57.68%{opacity:0}58.03%,100%{opacity:1}}
+  </style>
+  <rect class="bg" width="1160" height="540" rx="10"/>
+  <rect class="chrome" width="1160" height="32" rx="10"/>
+  <rect class="chrome" y="22" width="1160" height="10"/>
+  <circle cx="20" cy="16" r="5" fill="#e26d6d"/>
+  <circle cx="38" cy="16" r="5" fill="#d8a44b"/>
+  <circle cx="56" cy="16" r="5" fill="#5fbf8a"/>
+  <text class="d" x="76" y="21" style="font-size:11.5px;opacity:1;animation:none">node examples/demo.mjs</text>
+  <text class="l" x="22" y="70" style="animation-name:r1">  <tspan class="b">Plexus</tspan> <tspan class="d">— two agents, one request</tspan></text>
+  <text class="l" x="22" y="88" style="animation-name:r2"><tspan class="d">  broker mqtt://localhost:1883   root plexus-record-mt8q4zh1</tspan></text>
+  <text class="l" x="22" y="142" style="animation-name:r5"><tspan class="d"> 0.0s</tspan>  <tspan class="teal">alice    </tspan> invoke <tspan class="b">code.review</tspan> <tspan class="d">{ repo: acme/web-app, pr: 42 }</tspan></text>
+  <text class="l" x="22" y="160" style="animation-name:r6"><tspan class="d"> 0.0s</tspan>  <tspan class="teal">reviewer </tspan> reviewing <tspan class="b">acme/web-app#42</tspan></text>
+  <text class="l" x="22" y="178" style="animation-name:r7"><tspan class="d"> 0.0s</tspan>  <tspan class="teal d">· mesh</tspan> <tspan class="d">job-af1541855fb5  reading the diff</tspan></text>
+  <text class="l" x="22" y="196" style="animation-name:r8"><tspan class="d"> 0.4s</tspan>  <tspan class="teal">reviewer </tspan> the diff adds a migration — outside my competence</text>
+  <text class="l" x="22" y="214" style="animation-name:r9"><tspan class="d"> 0.4s</tspan>  <tspan class="teal">reviewer </tspan> <tspan class="teal">dba</tspan> offers <tspan class="b">schema.review</tspan> — delegating</text>
+  <text class="l" x="22" y="232" style="animation-name:r10"><tspan class="d"> 0.4s</tspan>  <tspan class="teal">dba      </tspan> asked about <tspan class="b">0042_add_users_index.sql</tspan> <tspan class="d">(depth 1)</tspan></text>
+  <text class="l" x="22" y="250" style="animation-name:r11"><tspan class="d"> 0.4s</tspan>  <tspan class="teal d">· mesh</tspan> <tspan class="d">ask-9f46d1294cd5  checking lock behaviour</tspan></text>
+  <text class="l" x="22" y="268" style="animation-name:r12"><tspan class="d"> 0.9s</tspan>  <tspan class="teal">reviewer </tspan> got <tspan class="b">high</tspan> risk back — folding it in</text>
+  <text class="l" x="22" y="304" style="animation-name:r14"><tspan class="d"> 0.9s</tspan>  <tspan class="teal">alice    </tspan> <tspan class="b">← one result</tspan></text>
+  <text class="l" x="22" y="322" style="animation-name:r15">         <tspan class="d">{</tspan></text>
+  <text class="l" x="22" y="340" style="animation-name:r16">         <tspan class="d">  "verdict": "REQUEST_CHANGES",</tspan></text>
+  <text class="l" x="22" y="358" style="animation-name:r17">         <tspan class="d">  "summary": "Application logic is fine. Blocking on the migration: ALTER on users without CONCURRENTLY — locks writes for the whole rebuild",</tspan></text>
+  <text class="l" x="22" y="376" style="animation-name:r18">         <tspan class="d">  "contributedBy": [</tspan></text>
+  <text class="l" x="22" y="394" style="animation-name:r19">         <tspan class="d">    "dba"</tspan></text>
+  <text class="l" x="22" y="412" style="animation-name:r20">         <tspan class="d">  ]</tspan></text>
+  <text class="l" x="22" y="430" style="animation-name:r21">         <tspan class="d">}</tspan></text>
+  <text class="l" x="22" y="466" style="animation-name:r23">  <tspan class="d">reviewer never learned what a migration is. It found the agent that had,</tspan></text>
+  <text class="l" x="22" y="484" style="animation-name:r24">  <tspan class="d">asked, and answered as one voice.</tspan></text>
+</svg>

@@ -1,0 +1,394 @@
+/**
+ * Tests for the published packages: plexus-agent and plexus-notify.
+ *
+ * The pure parts run everywhere. The end-to-end block needs a broker and is
+ * skipped without one — but when a broker IS present it exercises the whole
+ * path, because the things that break in a mesh (retained replay, duplicate
+ * delivery, lineage) do not show up in unit tests of pure functions.
+ *
+ *   PLEXUS_TEST_BROKER=mqtt://localhost:1883 node test/packages.mjs
+ */
+
+import assert from "node:assert/strict";
+import net from "node:net";
+import { readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { ownerScope, topics, deriveClientId, PROTOCOL_VERSION, connect } from "plexus-agent";
+import { get, testCondition, matches, render, plan, deliveryContext } from "plexus-notify/routes";
+import { expandEnv, redact, loadChannels } from "plexus-notify/channels";
+import { createHost, definePlugin } from "plexus-agent/plugin";
+import notifyPlugin from "plexus-notify";
+
+let pass = 0, fail = 0;
+const queue = [];
+function t(name, fn) {
+  queue.push(async () => {
+    try { await fn(); console.log(`✅ ${name}`); pass++; }
+    catch (e) { console.log(`❌ ${name}\n     ${e.stack?.split("\n").slice(0, 3).join("\n     ")}`); fail++; }
+  });
+}
+
+// ── plexus-agent: pure ──────────────────────────────────
+t("ownerScope matches the bridge's implementation exactly", () => {
+  assert.equal(ownerScope("Mohanad.Q!"), "mohanad-q");
+  assert.equal(ownerScope("--ci--"), "ci");
+  assert.equal(ownerScope(""), "public");
+  assert.equal(ownerScope(undefined), "public");
+});
+
+t("topics build the documented address space", () => {
+  assert.equal(topics.invoke("agents", "dba"), "agents/commands/dba/invoke");
+  assert.equal(topics.result("agents", "alice", "j1"), "agents/jobs/alice/j1/result");
+  assert.equal(topics.profile("agents", "dba"), "agents/registry/dba/profile");
+});
+
+t("job pattern refuses the unscoped form", () => {
+  const re = topics.jobPattern("agents");
+  assert.ok(re.test("agents/jobs/alice/j1/result"));
+  assert.equal(re.test("agents/jobs/j1/result"), false, "unscoped job topics must never match");
+});
+
+t("clientId is stable across calls and distinct per agent and mesh", () => {
+  // The durability invariant: same inputs must always give the same id, or
+  // clean:false buys nothing and queued jobs are orphaned on every restart.
+  assert.equal(deriveClientId("dba", "agents"), deriveClientId("dba", "agents"));
+  assert.notEqual(deriveClientId("dba", "agents"), deriveClientId("reviewer", "agents"));
+  assert.notEqual(deriveClientId("dba", "agents"), deriveClientId("dba", "staging"));
+  assert.ok(!deriveClientId("dba", "agents").includes(String(process.pid)));
+});
+
+t("protocol version is the one the bridge speaks", () => {
+  assert.equal(PROTOCOL_VERSION, "1.3");
+});
+
+// ── notify: matching ────────────────────────────────────
+t("get reads dotted paths and survives missing branches", () => {
+  assert.equal(get({ a: { b: { c: 1 } } }, "a.b.c"), 1);
+  assert.equal(get({ a: null }, "a.b.c"), undefined);
+  assert.equal(get({}, "nope.nope"), undefined);
+});
+
+t("conditions cover the documented operators", () => {
+  assert.ok(testCondition("x", "x"));
+  assert.ok(!testCondition("x", "y"));
+  assert.ok(testCondition(["a", "b"], "b"));
+  assert.ok(testCondition({ $ne: "APPROVE" }, "REQUEST_CHANGES"));
+  assert.ok(testCondition({ $exists: true }, 0), "0 exists");
+  assert.ok(testCondition({ $exists: false }, undefined));
+  assert.ok(testCondition({ $re: "^request" }, "REQUEST_CHANGES"), "$re is case-insensitive");
+  assert.ok(testCondition({ $in: ["high", "critical"] }, "high"));
+  assert.ok(testCondition({ $gt: 5 }, 9));
+  assert.ok(testCondition({ $contains: "lock" }, "Locks the table"));
+});
+
+t("an unknown operator matches nothing rather than everything", () => {
+  // Failing open here would silently page the whole team on a typo.
+  assert.equal(testCondition({ $regex: "x" }, "x"), false);
+});
+
+t("an empty when block is a catch-all", () => {
+  assert.ok(matches({}, { anything: 1 }));
+  assert.ok(matches(undefined, { anything: 1 }));
+});
+
+t("when blocks are an AND across keys", () => {
+  const msg = { service: "code.review", verdict: "REQUEST_CHANGES" };
+  assert.ok(matches({ service: "code.review", verdict: "REQUEST_CHANGES" }, msg));
+  assert.equal(matches({ service: "code.review", verdict: "APPROVE" }, msg), false);
+});
+
+t("render fills dotted paths and blanks the missing ones", () => {
+  const ctx = { owner: "alice", result: { risk: "high" } };
+  assert.equal(render("{{owner}} → {{result.risk}}", ctx), "alice → high");
+  assert.equal(render("[{{nope}}]", ctx), "[]", "a gap beats a visible placeholder");
+  assert.equal(render("{{ owner }}", ctx), "alice", "whitespace inside braces is allowed");
+});
+
+t("envelope fields win a collision with handler output", () => {
+  const ctx = deliveryContext({ jobId: "real", owner: "alice", kind: "result", type: "result", jobId2: 1 });
+  assert.equal(ctx.jobId, "real");
+});
+
+t("result fields are lifted for templates but stay addressable under result.*", () => {
+  const ctx = deliveryContext({ jobId: "j1", owner: "alice", kind: "result", verdict: "APPROVE" });
+  assert.equal(ctx.verdict, "APPROVE");
+  assert.equal(ctx.result.verdict, "APPROVE");
+});
+
+t("plan fires every matching route, and stop ends evaluation", () => {
+  const routes = [
+    { id: "audit", when: {}, to: "file" },
+    { id: "page", when: { type: "error" }, to: ["slack"], stop: true },
+    { id: "after", when: {}, to: "file" },
+  ];
+  const fired = plan(routes, { jobId: "j1", owner: "a", kind: "result", type: "error" });
+  assert.deepEqual(fired.map((f) => f.route.id), ["audit", "page"]);
+});
+
+t("disabled routes never fire", () => {
+  assert.equal(plan([{ id: "x", when: {}, to: "log", enabled: false }], { jobId: "j" }).length, 0);
+});
+
+t("plan renders titles and bodies from the message", () => {
+  const [fired] = plan(
+    [{ id: "r", when: {}, to: "log", title: "{{service}} for {{owner}}", body: "{{summary}}" }],
+    { jobId: "j1", owner: "alice", kind: "result", service: "code.review", summary: "looks fine" });
+  assert.equal(fired.payload.title, "code.review for alice");
+  assert.equal(fired.payload.body, "looks fine");
+});
+
+// ── notify: channels ────────────────────────────────────
+t("expandEnv substitutes and fails loudly on a missing variable", () => {
+  assert.equal(expandEnv("a-${TOK}-b", { TOK: "x" }), "a-x-b");
+  assert.throws(() => expandEnv("${MISSING_ONE}", {}), /not set in the environment/);
+});
+
+t("redact removes token shapes from anything log-bound", () => {
+  assert.ok(!redact("ghp_abcdefghijklmnopqrstuvwxyz012345").includes("abcdefghij"));
+  assert.ok(!redact("https://hooks.slack.com/services/T0/B0/xyzsecret").includes("xyzsecret"));
+  assert.ok(!redact("xoxb-1234567890-abcdefghij").includes("abcdefghij"));
+  assert.ok(!redact("https://x.test/cb?token=supersecret").includes("supersecret"));
+});
+
+t("an unknown channel type is rejected at load, not at delivery", () => {
+  // Failing here means a typo surfaces on startup rather than during the
+  // incident the notification was supposed to report.
+  assert.throws(() => loadChannels({ oops: { type: "carrier-pigeon" } }), /unknown type/);
+});
+
+t("disabled channels are skipped", () => {
+  assert.equal(loadChannels({ slack: { type: "slack", enabled: false } }).size, 0);
+});
+
+// ── end to end, if a broker is reachable ────────────────
+const brokerUrl = process.env.PLEXUS_TEST_BROKER ?? "mqtt://localhost:1883";
+const reachable = await new Promise((resolve) => {
+  const { hostname, port } = new URL(brokerUrl);
+  const sock = net.createConnection({ host: hostname, port: Number(port) || 1883 });
+  const done = (ok) => { sock.destroy(); resolve(ok); };
+  sock.on("connect", () => done(true));
+  sock.on("error", () => done(false));
+  setTimeout(() => done(false), 1500);
+});
+
+if (!reachable) {
+  console.log(`\n⚠️  no broker at ${brokerUrl} — skipping end-to-end tests`);
+  console.log(`   start one:  mosquitto -p 1883\n`);
+} else {
+  const root = `plexus-test-${Math.random().toString(36).slice(2, 8)}`;
+  const statePath = join(tmpdir(), `${root}.state.json`);
+  const auditPath = join(tmpdir(), `${root}.audit.jsonl`);
+
+  t("end to end: delegation carries lineage and returns one combined result", async () => {
+    const dba = await connect({ broker: brokerUrl, root, agentId: "dba" });
+    let seenDepth = null, seenParent = null, seenRoot = null;
+    dba.serve("schema.review", (job) => {
+      seenDepth = job.depth; seenParent = job.parentJobId; seenRoot = job.rootJobId;
+      return { risk: "high", finding: "locks writes" };
+    });
+
+    const reviewer = await connect({ broker: brokerUrl, root, agentId: "reviewer" });
+    reviewer.serve("code.review", async (job, ctx) => {
+      const answer = await ctx.askAny("schema.review", { migration: "m.sql" });
+      return { verdict: "REQUEST_CHANGES", risk: answer.risk, contributedBy: ["dba"] };
+    });
+
+    const alice = await connect({ broker: brokerUrl, root, agentId: "alice", durable: false });
+    await reviewer.waitForPeer("schema.review", 5000);
+
+    const result = await alice.invoke("reviewer", "code.review", { repo: "acme/web", pr: 42 }, { jobId: "rev-1" });
+    assert.equal(result.verdict, "REQUEST_CHANGES");
+    assert.deepEqual(result.contributedBy, ["dba"]);
+
+    assert.equal(seenDepth, 1, "a delegated job is one hop from the root");
+    assert.equal(seenParent, "rev-1", "parentJobId links to the asking job");
+    assert.equal(seenRoot, "rev-1", "rootJobId is the original request");
+
+    await Promise.all([alice.close(), reviewer.close(), dba.close()]);
+  });
+
+  t("end to end: a top-level invoke starts at depth 0", async () => {
+    const worker = await connect({ broker: brokerUrl, root: `${root}-d`, agentId: "worker" });
+    let depth = null;
+    worker.serve("noop", (job) => { depth = job.depth; return { ok: true }; });
+    const caller = await connect({ broker: brokerUrl, root: `${root}-d`, agentId: "caller", durable: false });
+    await caller.waitForPeer("noop", 5000);
+    await caller.invoke("worker", "noop", {});
+    assert.equal(depth, 0, "a request entering the mesh is depth 0, not 1");
+    await Promise.all([caller.close(), worker.close()]);
+  });
+
+  t("end to end: a delegation cycle is stopped by the hop limit", async () => {
+    // A→B→A. Without a hop limit this runs until something else stops it, so
+    // the limit has to refuse on the asking side, before anything is published.
+    const hRoot = `${root}-h`;
+    const a = await connect({ broker: brokerUrl, root: hRoot, agentId: "a", maxDepth: 1 });
+    const b = await connect({ broker: brokerUrl, root: hRoot, agentId: "b", maxDepth: 1 });
+    a.serve("ping", async (job, ctx) => ctx.askAny("pong", {}));
+    b.serve("pong", async (job, ctx) => ctx.askAny("ping", {}));
+    await a.waitForPeer("pong", 5000);
+    await b.waitForPeer("ping", 5000);
+
+    const c = await connect({ broker: brokerUrl, root: hRoot, agentId: "c", durable: false });
+    await c.waitForPeer("ping", 5000);
+
+    const res = await c.invoke("a", "ping", {}, { timeoutMs: 10000 });
+    assert.equal(res.type, "error");
+    assert.match(res.error, /maxDepth/, "the cycle should be refused, not left to run");
+    await Promise.all([c.close(), b.close(), a.close()]);
+  });
+
+  t("end to end: an unknown service is rejected with a terminal result", async () => {
+    const a = await connect({ broker: brokerUrl, root: `${root}-u`, agentId: "a" });
+    a.serve("known", () => ({ ok: true }));
+    const c = await connect({ broker: brokerUrl, root: `${root}-u`, agentId: "c", durable: false });
+    await c.waitForPeer("known", 5000);
+    const res = await c.invoke("a", "nope.nope", {}, { timeoutMs: 8000 });
+    assert.equal(res.type, "error");
+    assert.match(res.error, /unknown service/);
+    await Promise.all([c.close(), a.close()]);
+  });
+
+  t("end to end: a handler that throws still produces a terminal result", async () => {
+    const a = await connect({ broker: brokerUrl, root: `${root}-e`, agentId: "a" });
+    a.serve("boom", () => { throw new Error("kaboom"); });
+    const c = await connect({ broker: brokerUrl, root: `${root}-e`, agentId: "c", durable: false });
+    await c.waitForPeer("boom", 5000);
+    const res = await c.invoke("a", "boom", {}, { timeoutMs: 8000 });
+    assert.equal(res.type, "error");
+    assert.match(res.error, /kaboom/);
+    await Promise.all([c.close(), a.close()]);
+  });
+
+  t("end to end: closing withdraws the profile so no husk is left behind", async () => {
+    const ghost = await connect({ broker: brokerUrl, root: `${root}-g`, agentId: "ghost" });
+    ghost.serve("haunt", () => ({}));
+    const watcher = await connect({ broker: brokerUrl, root: `${root}-g`, agentId: "watcher", durable: false });
+    await watcher.waitForPeer("haunt", 5000);
+    await ghost.close();
+    await new Promise((r) => setTimeout(r, 400));
+    assert.equal(watcher.find("haunt"), null, "a closed agent must leave the registry");
+    await watcher.close();
+  });
+
+  /** A host running only the notify plugin, wired to a temp file channel. */
+  const notifyHost = (agentId, hRoot) => createHost({
+    broker: brokerUrl, root: hRoot, agentId,
+    plugins: {
+      "plexus-notify": {
+        state: statePath, replayGraceMs: 300,
+        channels: { audit: { type: "file", path: auditPath } },
+        routes: [{ id: "changes", when: { verdict: "REQUEST_CHANGES" }, to: ["audit"],
+                   title: "changes on {{args.repo}}", body: "{{summary}}" }],
+      },
+    },
+  }, { log: () => {}, resolve: () => notifyPlugin });
+
+  t("end to end: the notify plugin delivers a matching result exactly once", async () => {
+    const hRoot = `${root}-notify`;
+    const host = await notifyHost("notifier", hRoot).start();
+    await new Promise((r) => setTimeout(r, 500));      // let the replay grace elapse
+
+    const worker = await connect({ broker: brokerUrl, root: hRoot, agentId: "worker" });
+    worker.serve("code.review", () => ({ verdict: "REQUEST_CHANGES", summary: "fix the migration" }));
+    const client = await connect({ broker: brokerUrl, root: hRoot, agentId: "alice", durable: false });
+    await client.waitForPeer("code.review", 5000);
+    await client.invoke("worker", "code.review", { repo: "acme/web" }, { jobId: "hj-1" });
+    await new Promise((r) => setTimeout(r, 600));
+
+    const lines = (await readFile(auditPath, "utf8")).trim().split("\n").filter(Boolean).map(JSON.parse);
+    assert.equal(lines.length, 1, `expected exactly one delivery, got ${lines.length}`);
+    // `args` comes from the invoke, not the result — proof the plugin joins the
+    // question to the answer rather than rendering a half-empty message.
+    assert.equal(lines[0].title, "changes on acme/web");
+    assert.equal(lines[0].body, "fix the migration");
+    assert.equal(lines[0].service, "code.review");
+
+    await Promise.all([client.close(), worker.close(), host.stop()]);
+  });
+
+  t("end to end: a restarted host does not re-deliver the retained backlog", async () => {
+    // The failure this guards against: results are retained, so every restart
+    // re-receives the entire history. Without suppression, restarting the
+    // notifier pages everyone about work that finished days ago.
+    const host = await notifyHost("notifier2", `${root}-notify`).start();
+    await new Promise((r) => setTimeout(r, 900));      // retained flush + grace
+
+    const lines = (await readFile(auditPath, "utf8")).trim().split("\n").filter(Boolean);
+    assert.equal(lines.length, 1, `retained result was re-delivered ${lines.length} times`);
+    assert.ok(host.handle("notify").stats.suppressed >= 1, "the retained result should count as suppressed");
+
+    await host.stop();
+    await rm(statePath, { force: true });
+    await rm(auditPath, { force: true });
+  });
+
+  t("end to end: one host serves the capabilities of every plugin it loads", async () => {
+    // The reason plugins beat separate processes: two specialisms, one agent,
+    // one registry entry, one durable session.
+    const hRoot = `${root}-multi`;
+    const a = definePlugin({ name: "alpha", setup: (agent) => { agent.serve("alpha.do", () => ({ from: "alpha" })); } });
+    const b = definePlugin({ name: "beta", setup: (agent) => { agent.serve("beta.do", () => ({ from: "beta" })); } });
+
+    const host = await createHost(
+      { broker: brokerUrl, root: hRoot, agentId: "multi", plugins: { a: {}, b: {} } },
+      { log: () => {}, resolve: (spec) => (spec === "a" ? a : b) },
+    ).start();
+
+    const client = await connect({ broker: brokerUrl, root: hRoot, agentId: "caller", durable: false });
+    await client.waitForPeer("beta.do", 5000);
+
+    const profile = client.peers().find((p) => p.agentId === "multi");
+    assert.deepEqual(profile.capabilities.map((c) => c.service).sort(), ["alpha.do", "beta.do"]);
+    assert.equal((await client.invoke("multi", "alpha.do", {})).from, "alpha");
+    assert.equal((await client.invoke("multi", "beta.do", {})).from, "beta");
+
+    await client.close();
+    await host.stop();
+  });
+
+  t("end to end: a plugin that fails to start takes the agent down with it", async () => {
+    // Half-loading leaves an agent advertising capabilities it cannot serve,
+    // which is worse than not starting at all.
+    const broken = definePlugin({ name: "broken", setup: () => { throw new Error("no credentials"); } });
+    const host = createHost(
+      { broker: brokerUrl, root: `${root}-broken`, agentId: "broken", plugins: { broken: {} } },
+      { log: () => {}, resolve: () => broken },
+    );
+    await assert.rejects(() => host.start(), /broken.*failed to start.*no credentials/s);
+  });
+}
+
+// ── the plugin contract ─────────────────────────────────
+t("definePlugin rejects a malformed plugin at declaration", () => {
+  assert.throws(() => definePlugin({ setup() {} }), /name/);
+  assert.throws(() => definePlugin({ name: "x" }), /setup/);
+  assert.equal(definePlugin({ name: "x", setup() {} }).name, "x");
+});
+
+t("a plugin specifier set to false is skipped entirely", async () => {
+  let loaded = false;
+  const host = createHost(
+    { broker: "mqtt://unused", agentId: "x", plugins: { skipped: false, off: { enabled: false } } },
+    { log: () => {}, connect: async () => ({ capabilities: () => [], close: async () => {} }),
+      resolve: () => { loaded = true; return definePlugin({ name: "n", setup() {} }); } },
+  );
+  await host.start();
+  assert.equal(loaded, false, "a disabled plugin must not even be imported");
+  await host.stop();
+});
+
+t("a module that is not a plugin is rejected with a useful message", async () => {
+  const host = createHost(
+    { broker: "mqtt://unused", agentId: "x", plugins: { "some-package": {} } },
+    { log: () => {}, connect: async () => ({ capabilities: () => [], close: async () => {} }),
+      resolve: async () => ({ default: { nope: true } }) },
+  );
+  await assert.rejects(() => host.start(), /not a Plexus plugin/);
+});
+
+for (const run of queue) await run();
+console.log(`\n${pass} passed, ${fail} failed`);
+process.exit(fail ? 1 : 0);
