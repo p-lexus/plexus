@@ -29,6 +29,16 @@
 
 ---
 
+**Contents** · [Quick start](#quick-start) · [Run it](#run-it) · [The frame](#plexus-is-the-frame-not-the-agent)
+· [The problem](#the-problem) · [Plugins](#the-frame-and-the-plugins) · [Where this sits](#where-this-sits)
+· [Concepts](#concepts) · [Console](#the-console) · [How it works](#how-it-works)
+· [Install](#install) · [Send a job](#send-a-job) · [Capabilities](#author-a-capability)
+· [Delegation](#delegation) · [Security](#security-model) · [Config](#configuration-reference)
+· [Architecture](#architecture) · [Development](#development) · [Limitations](#honest-limitations)
+· [Roadmap](#roadmap)
+
+---
+
 **One agent asks another for help, and gets an answer — even though neither can accept an
 inbound connection.** That's the whole idea.
 
@@ -44,7 +54,7 @@ judging, looks in the registry, finds `dba`, delegates that part, and folds the 
 combined review. Nobody configured that relationship. It looked. Meanwhile `notifier` — an agent
 with no capabilities of its own, only a plugin — tells the team.
 
-## Install
+## Quick start
 
 ```bash
 git clone https://github.com/MoGhali/plexus && cd plexus
@@ -56,7 +66,7 @@ already have. Re-run it to update — it restarts the gateway only if the compil
 changed.
 
 **[docs/INSTALL.md](docs/INSTALL.md)** has the by-hand steps for **macOS, Linux and Windows**,
-both platforms, plus a troubleshooting table.
+every platform, plus a troubleshooting table.
 
 ## Run it
 
@@ -491,116 +501,44 @@ that offline jobs survive.
 
 ## Install
 
-**[docs/INSTALL.md](docs/INSTALL.md)** covers every path — OpenClaw, Hermes, your own agent,
-plugins — plus a troubleshooting table. The OpenClaw route is below.
-
-### 1. A broker
-
-Any MQTT 3.1.1 or 5 broker. [EMQX](https://www.emqx.io/) and [Mosquitto](https://mosquitto.org/)
-both work. For a local trial:
+**[docs/INSTALL.md](docs/INSTALL.md)** is the full guide: OpenClaw, Hermes, your own agent and
+plugins, with **macOS, Linux and Windows** commands for each, and a troubleshooting table.
 
 ```bash
-docker run -d --name mosquitto -p 1883:1883 eclipse-mosquitto:2 \
-  sh -c 'printf "listener 1883\nallow_anonymous true\n" > /m.conf && mosquitto -c /m.conf'
+git clone https://github.com/MoGhali/plexus && cd plexus
+./install.sh
 ```
 
-Anonymous access is fine on localhost and **not** fine anywhere else — see
-[Security model](#security-model).
+It detects OpenClaw or Hermes, installs the right host plugin, and never overwrites a config you
+already have. Re-run it to update.
 
-### 2. The plugin
+Two things catch people out, so they are worth repeating here:
 
-```bash
-git clone https://github.com/MoGhali/plexus.git ~/.openclaw/extensions/mqtt-bridge
-cd ~/.openclaw/extensions/mqtt-bridge
-npm install
-cp services.example.json services.json    # your capability catalog
-npm run build
-```
-
-`services.json` is **deployment-local and gitignored**, so `git pull` never collides with your
-own capabilities. Skip the copy and the plugin falls back to the example with a warning, so a
-fresh clone still runs.
-
-### 3. Configure
-
-In `~/.openclaw/openclaw.json`:
+**On OpenClaw, `tools.alsoAllow` is not optional.**
 
 ```jsonc
-{
-  "plugins": {
-    "allow": ["mqtt-bridge"],
-    "entries": {
-      "mqtt-bridge": {
-        "enabled": true,
-        "config": {
-          "broker": {
-            "url": "mqtt://localhost:1883",
-            "username": "mesh",
-            "password": "${MQTT_PASSWORD}"    // ${ENV_VAR} resolves at runtime
-          },
-          "mesh": {
-            "root": "agents",
-            "agentId": "my-agent"
-          },
-          "web": {
-            "auth": "<a long random string>"  // required to manage variables
-          }
-        }
-      }
-    }
-  }
-}
+{ "tools": { "profile": "coding", "alsoAllow": ["mqtt_publish", "mesh_ask", "mesh_peers"] } }
 ```
 
-The config key is the plugin **id** (`mqtt-bridge`), deliberately independent of the npm package
-name and the repository name. Only `broker.url` is required.
-
-### Allow the plugin's tools — required
-
-OpenClaw's `tools.profile` is an allowlist that **excludes plugin-registered tools**. Without
-this block the agent silently has none of them, and the symptoms are confusing rather than
-obvious: executors cannot publish results with `mqtt_publish`, so they improvise with shell
-commands and jobs intermittently finish without a result; and `mesh_ask` is simply absent, so
-dynamic delegation never happens and nothing says why.
-
-```jsonc
-{
-  "tools": {
-    "profile": "coding",
-    "alsoAllow": ["mqtt_publish", "mesh_ask", "mesh_peers"]
-  }
-}
-```
-
-Verify after restarting — this should list all three:
+The tool profile is an allowlist that **excludes plugin-registered tools**. Omit this and the
+agent silently has none of them — executors cannot publish results, so they improvise with shell
+commands and jobs intermittently finish without one, while `mesh_ask` is simply absent and
+delegation never happens. Nothing says why. Verify after restarting:
 
 ```bash
 openclaw agent --agent main -m 'List every tool you have starting with "mesh" or "mqtt".'
 ```
 
-Tool policy is **not** hot-reloadable: this needs a gateway restart, unlike other config
-changes. And always `openclaw config validate` before restarting — an invalid config stops the
-gateway from starting at all.
-
-### 4. Restart and verify
+**Validate before restarting, always.** An invalid config does not degrade the gateway, it stops
+it starting at all — so check while you still have a working agent to go back to:
 
 ```bash
-openclaw config validate     # an invalid config stops the gateway starting at all
-openclaw gateway restart     # drives launchd, systemd or schtasks — same on every platform
-openclaw gateway status
+openclaw config validate
+openclaw gateway restart     # launchd, systemd or schtasks — same command everywhere
 ```
 
-> **Plugin code changes need a restart.** The gateway caches the loaded module, so a rebuilt
-> `dist/` sits unused until it is re-imported. Config changes hot-reload on their own.
-
-Confirm the agent announced itself:
-
-```bash
-mosquitto_sub -h localhost -t 'agents/registry/+/profile' -C 1 \
-  | jq '{agentId, protocolVersion, capabilities: (.capabilities|length)}'
-```
-
-Then open `http://127.0.0.1:8765` and sign in with your `web.auth` token.
+Plugin *code* needs that restart, because the gateway caches the loaded module. Config
+hot-reloads, with one exception: **tool policy does not.**
 
 ---
 
