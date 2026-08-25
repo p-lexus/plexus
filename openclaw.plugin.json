@@ -109,6 +109,17 @@
             "type": "number",
             "default": 600000,
             "description": "How long mesh_ask waits for a peer's terminal result before giving up, so a delegating agent never hangs on a peer that is offline or overloaded."
+          },
+          "delegation": {
+            "type": "string",
+            "enum": [
+              "both",
+              "declared",
+              "dynamic",
+              "off"
+            ],
+            "default": "both",
+            "description": "Which forms of agent-to-agent delegation are permitted. 'declared' performs only what a capability lists in its delegates[], before the executor starts — deterministic, needs no tool. 'dynamic' allows the executor to call mesh_ask mid-job — flexible, but depends on it choosing to. 'both' (default) enables each; 'off' disables delegation."
           }
         }
       },

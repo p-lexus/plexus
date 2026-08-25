@@ -380,6 +380,118 @@ t("cancelling a parent cancels what it delegated, and tells the peer", async () 
   assert.equal(svc.pendingCount, 0);
 });
 
+
+// ── delegation modes ────────────────────────────────────
+const { createDispatcher } = await import(dist("mesh/dispatch.js"));
+
+function dispatchHarness({ delegation = "both", delegates, askResult } = {}) {
+  const published = [];
+  const asked = [];
+  const runs = [];
+  const cfg = resolveConfig({
+    broker: { url: "mqtt://x:1883" },
+    mesh: { root: "agents", agentId: "conan", delegation },
+  }, "/p");
+  const jobs = createJobStore(() => {});
+  const dispatcher = createDispatcher({
+    cfg, logger: quietLogger, jobs,
+    catalog: { read: () => ({ capabilities: [{ service: "code.review", prompt: "Review {{repo}}.", ...(delegates ? { delegates } : {}) }] }) },
+    vars: { value: () => "" },
+    runtime: {
+      subagent: {
+        run: async ({ message }) => { runs.push(message); return { runId: "r1" }; },
+        waitForRun: async () => new Promise(() => {}),   // never settles during the test
+      },
+      system: { enqueueSystemEvent: () => {}, runHeartbeatOnce: async () => ({ status: "ran" }) },
+    },
+    publish: (topic, payload) => published.push({ topic, payload: JSON.parse(payload) }),
+    peerSummary: () => "- dba: schema.review",
+    performAsk: async (req) => {
+      asked.push(req);
+      return askResult ?? { ok: true, jobId: "ask-1", agent: req.agent, result: { verdict: "LGTM" } };
+    },
+  });
+  return { dispatcher, published, asked, runs, jobs };
+}
+const settle = () => new Promise((r) => setTimeout(r, 30));
+
+t("declared delegation runs BEFORE the executor, and injects the answer", async () => {
+  const h = dispatchHarness({
+    delegates: [{ agent: "dba", service: "schema.review", as: "schemaReview", args: { migration: "{{file}}" } }],
+  });
+  h.dispatcher.dispatch({ service: "code.review", requestedBy: "alice", args: { repo: "acme/app", file: "001.sql" } });
+  await settle();
+  assert.equal(h.asked.length, 1, "the bridge must perform the declared ask itself");
+  assert.equal(h.asked[0].agent, "dba");
+  assert.equal(h.asked[0].args.migration, "001.sql", "{{arg}} placeholders fill from the parent job");
+  assert.equal(h.runs.length, 1, "the executor starts once, after delegation");
+  assert.match(h.runs[0], /CONTEXT FROM OTHER AGENTS/);
+  assert.match(h.runs[0], /schemaReview — answered by dba/);
+  assert.match(h.runs[0], /LGTM/);
+});
+t("with no declared dependencies the executor starts immediately", async () => {
+  const h = dispatchHarness();
+  h.dispatcher.dispatch({ service: "code.review", requestedBy: "alice", args: {} });
+  await settle();
+  assert.equal(h.asked.length, 0);
+  assert.equal(h.runs.length, 1);
+  assert.ok(!/CONTEXT FROM OTHER AGENTS/.test(h.runs[0]));
+});
+t("delegation:dynamic ignores declared dependencies", async () => {
+  const h = dispatchHarness({
+    delegation: "dynamic",
+    delegates: [{ agent: "dba", service: "schema.review", as: "x" }],
+  });
+  h.dispatcher.dispatch({ service: "code.review", requestedBy: "alice", args: {} });
+  await settle();
+  assert.equal(h.asked.length, 0, "declared must not run in dynamic-only mode");
+  assert.equal(h.runs.length, 1);
+});
+t("delegation:off disables declared delegation and hides the peer directory", async () => {
+  const h = dispatchHarness({
+    delegation: "off",
+    delegates: [{ agent: "dba", service: "schema.review", as: "x" }],
+  });
+  h.dispatcher.dispatch({ service: "code.review", requestedBy: "alice", args: {} });
+  await settle();
+  assert.equal(h.asked.length, 0);
+  assert.ok(!/DELEGATION:/.test(h.runs[0]), "the briefing must not offer a tool that is disabled");
+});
+t("delegation:declared still gathers dependencies but hides the tool", async () => {
+  const h = dispatchHarness({
+    delegation: "declared",
+    delegates: [{ agent: "dba", service: "schema.review", as: "x" }],
+  });
+  h.dispatcher.dispatch({ service: "code.review", requestedBy: "alice", args: {} });
+  await settle();
+  assert.equal(h.asked.length, 1);
+  assert.ok(!/DELEGATION:/.test(h.runs[0]), "mesh_ask is not available, so do not advertise it");
+});
+t("an optional delegation that fails does not stop the job", async () => {
+  const h = dispatchHarness({
+    delegates: [{ agent: "dba", service: "schema.review", as: "x" }],
+    askResult: { ok: false, jobId: "a", agent: "dba", error: "offline" },
+  });
+  h.dispatcher.dispatch({ service: "code.review", requestedBy: "alice", args: {} });
+  await settle();
+  assert.equal(h.runs.length, 1, "the executor still runs");
+  assert.match(h.runs[0], /could not answer/, "and is told the dependency failed");
+});
+t("a required delegation that fails fails the job before the executor runs", async () => {
+  const h = dispatchHarness({
+    delegates: [{ agent: "dba", service: "schema.review", as: "x", required: true }],
+    askResult: { ok: false, jobId: "a", agent: "dba", error: "offline" },
+  });
+  const r = h.dispatcher.dispatch({ service: "code.review", requestedBy: "alice", args: {} });
+  await settle();
+  assert.equal(h.runs.length, 0, "the executor must not start without a required dependency");
+  const rec = h.jobs.find(r.jobId);
+  assert.equal(rec.state, "error");
+  const terminal = h.published.filter((m) => m.topic.endsWith("/result"));
+  assert.ok(terminal.length, "a terminal result must still be published so nobody waits forever");
+  assert.match(terminal.at(-1).payload.error, /required delegation/);
+});
+
 // Ask timeouts are unref'd so a pending delegation never keeps the gateway
 // alive. In a bare test process that means the loop can drain before one
 // fires, so hold it open for the duration of the run.

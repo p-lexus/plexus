@@ -7,7 +7,7 @@ You publish a job. An agent somewhere picks it up, runs it in an isolated sessio
 progress and a result back on topics scoped to you. The agent never opens an inbound port.
 
 - **Specification** — [PROTOCOL.md](PROTOCOL.md) ([PDF](PROTOCOL.pdf))
-- **Protocol version** — 1.2
+- **Protocol version** — 1.3
 - **Status** — running in production; spec and implementation are versioned together
 
 ---
@@ -251,6 +251,30 @@ Actions: `list`, `add_service`, `update_service`, `remove_service`, `reload`. Re
 `…/config/reply`.
 
 ---
+
+## Delegation
+
+An agent that meets work outside its own capabilities asks the agent that owns it. Two forms,
+chosen with `mesh.delegation`, because they fail differently:
+
+**Declared** — the capability states its dependencies; the bridge gathers them before the
+executor starts and injects the answers:
+
+```json
+"delegates": [
+  { "agent": "dba", "service": "schema.review", "as": "schemaReview",
+    "args": { "migration": "{{migration}}" }, "required": false }
+]
+```
+
+Deterministic — no tool needed, no reliance on the model choosing to delegate. Cannot adapt to
+what a job turns out to need.
+
+**Dynamic** — the executor calls `mesh_ask` mid-job after finding a peer with `mesh_peers`.
+Adapts to anything; depends on the executor deciding to use it.
+
+`both` (default), `declared`, `dynamic`, or `off`. Chains carry `parentJobId`, `rootJobId` and
+`depth`; `mesh.maxDepth` bounds them, and cancelling a job cancels what it delegated.
 
 ## Deployment variables
 

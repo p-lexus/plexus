@@ -29,6 +29,7 @@ export interface ResolvedConfig {
     maxJobDurationMs: number;
     maxDepth: number;
     askTimeoutMs: number;
+    delegation: "both" | "declared" | "dynamic" | "off";
     promptVars: Record<string, string>;
   };
   web: {
@@ -50,6 +51,7 @@ export const DEFAULTS = {
   maxJobDurationMs: 30 * 60_000,
   maxDepth: 4,
   askTimeoutMs: 10 * 60_000,
+  delegation: "both" as const,
   webPort: 8765,
   webBasePath: "/mqtt-bridge/ui",
   sessionKey: "agent:main:main",
@@ -88,6 +90,7 @@ export function resolveConfig(cfg: Partial<PluginConfig>, pluginDir: string): Re
       maxJobDurationMs: mesh.maxJobDurationMs ?? DEFAULTS.maxJobDurationMs,
       maxDepth: mesh.maxDepth ?? DEFAULTS.maxDepth,
       askTimeoutMs: mesh.askTimeoutMs ?? DEFAULTS.askTimeoutMs,
+      delegation: mesh.delegation ?? DEFAULTS.delegation,
       promptVars: (mesh.promptVars ?? {}) as Record<string, string>,
     },
     web: {

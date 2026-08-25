@@ -114,6 +114,45 @@ Because both are retained, an agent learns the entire mesh the moment it subscri
 announcement round, no waiting for peers to speak. An agent's own profile arrives on the
 wildcard and is ignored.
 
+### Two ways to delegate
+
+They fail differently, so a deployment chooses with `mesh.delegation`.
+
+**Declared** — a capability lists what it depends on. The bridge performs those
+asks *before* the executor starts and hands it the answers:
+
+```json
+{ "service": "code.review",
+  "prompt": "Review PR {{pr}} in {{repo}}.",
+  "delegates": [
+    { "agent": "dba", "service": "schema.review", "as": "schemaReview",
+      "args": { "migration": "{{migration}}" }, "required": false }
+  ] }
+```
+
+Independent dependencies run concurrently. Each answer is injected under its `as` name in a
+`CONTEXT FROM OTHER AGENTS` block. A `required` dependency that fails fails the job before the
+executor starts, with a terminal result published so nobody waits; an optional one lets the job
+proceed and tells the executor it could not be answered.
+
+Declared delegation is **deterministic**: it needs no tool in the executor's session and does not
+depend on the executor choosing to delegate. What it cannot do is adapt to what a job turns out
+to need.
+
+**Dynamic** — the executor calls `mesh_ask` mid-job, having found the peer with `mesh_peers`.
+Flexible, and the only option when the need is discovered rather than known in advance. It
+depends on the executor deciding to call the tool, and on tools being reachable from its session.
+
+| `mesh.delegation` | Declared | `mesh_ask` |
+|---|---|---|
+| `both` *(default)* | ✅ | ✅ |
+| `declared` | ✅ | ✅ refused, with the reason |
+| `dynamic` | ✅ ignored | ✅ |
+| `off` | ✅ ignored | ✅ refused |
+
+When dynamic is unavailable the executor's briefing omits the peer directory entirely, rather
+than advertising a tool that will refuse.
+
 ### Asking
 
 An ask is an ordinary `invoke` to the peer's command topic, with `requestedBy` set to the
@@ -376,6 +415,8 @@ Delegation, which is what makes this a mesh rather than a set of agents sharing 
 - `parentJobId`, `rootJobId` and `depth` link the jobs of one request into a traceable chain.
 - `mesh.maxDepth` bounds chain length, refusing before anything is published.
 - Cancelling a job cancels what it delegated, recursively.
+- Two delegation forms, selected by `mesh.delegation`: capability-declared dependencies gathered
+  by the bridge before the executor starts, and the `mesh_ask` tool for needs discovered mid-job.
 
 ## Changes v1.1 → v1.2
 

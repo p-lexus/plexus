@@ -150,6 +150,7 @@ export default definePluginEntry({
       secretsAuth: auth.configured,
       peers: peers.size,
       maxDepth: conf.mesh.maxDepth,
+      delegation: conf.mesh.delegation,
     });
 
     const registry = createRegistry({
@@ -170,6 +171,9 @@ export default definePluginEntry({
       publish: transport.publish,
       peerSummary: () => peers.summary(),
       onCancel: (jobId, requestedBy) => ask.cancelChildren(jobId, requestedBy ?? conf.mesh.agentId),
+      // Late-bound: the ask service needs the dispatcher's lineage lookup, so
+      // the two are mutually dependent and neither can be built first.
+      performAsk: (req) => ask.ask(req),
     });
 
     const ask = createAskService({
@@ -362,6 +366,19 @@ export default definePluginEntry({
         })),
       }),
       async execute(_id: string, params: { agent: string; service: string; args?: any; parentJobId?: string }) {
+        const mode = conf.mesh.delegation;
+        if (mode !== "both" && mode !== "dynamic") {
+          return {
+            content: [{
+              type: "text" as const,
+              text: mode === "declared"
+                ? "Dynamic delegation is disabled here (mesh.delegation is \"declared\"). This agent only " +
+                  "delegates what its capabilities declare up front, and those answers are already in your prompt."
+                : "Delegation is disabled on this agent (mesh.delegation is \"off\").",
+            }],
+            isError: true,
+          };
+        }
         const outcome = await ask.ask({
           agent: params.agent,
           service: params.service,

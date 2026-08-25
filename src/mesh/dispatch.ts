@@ -8,7 +8,8 @@
  */
 
 import type {
-  DispatchOptions, DispatchRequest, DispatchResult, Logger, WatchEntry,
+  Capability, CapabilityDelegate, DispatchOptions, DispatchRequest,
+  DispatchResult, Logger, WatchEntry,
 } from "../types.js";
 import type { ResolvedConfig } from "../config.js";
 import type { Catalog } from "./catalog.js";
@@ -27,6 +28,12 @@ export interface DispatcherDeps {
   onCancel?(jobId: string, requestedBy?: string): void;
   /** A directory of peers, injected into the executor's briefing. */
   peerSummary?(): string;
+  /**
+   * Performs a declared delegation. Late-bound because the ask service needs
+   * the dispatcher's lineage lookup, so the two are mutually dependent.
+   */
+  performAsk?(req: { agent: string; service: string; args?: Record<string, unknown>; parentJobId?: string }):
+    Promise<{ ok: boolean; jobId: string; agent: string; result?: any; error?: string }>;
   logger: Logger;
   catalog: Catalog;
   jobs: JobStore;
@@ -106,7 +113,8 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
   }
 
   function executorBriefing(owner: string, jobId: string, depth: number): string {
-    const peers = deps.peerSummary?.() ?? "";
+    const dynamicAllowed = cfg.mesh.delegation === "both" || cfg.mesh.delegation === "dynamic";
+    const peers = dynamicAllowed ? (deps.peerSummary?.() ?? "") : "";
     const remaining = cfg.mesh.maxDepth - depth;
     const delegation = peers && remaining > 0
       ? `\nDELEGATION: other agents on this mesh have capabilities you do not. If part of this job ` +
@@ -229,6 +237,43 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
         `Description: ${cap.description ?? ""}\nArgs: ${JSON.stringify(args)}\n` +
         (requestedBy ? `Requested by: ${requestedBy}\n` : "") + `\n${briefing}`;
 
+    // Declared delegation: gather what the capability says it depends on,
+    // BEFORE the executor starts, then hand it the answers. This path needs no
+    // tool in the executor's session and does not rely on the model choosing to
+    // delegate — the cost is that it cannot adapt to what the job turns out to
+    // need.
+    const declared = declaredDelegates(cap);
+    if (declared.length && deps.performAsk) {
+      publishEvent(jobId, {
+        type: "delegating",
+        note: `gathering ${declared.length} declared dependenc${declared.length === 1 ? "y" : "ies"} before starting`,
+      }, owner);
+      jobs.record({ jobId, lastEvent: "delegating" },
+        { type: "delegating", note: declared.map((d) => `${d.agent}/${d.service}`).join(", ") });
+
+      void resolveDeclared(declared, jobId, owner, args)
+        .then((outcome) => {
+          if (outcome.ok === false) {
+            jobs.active.delete(jobId);
+            publishResult(jobId, { type: "error", error: outcome.error }, owner);
+            jobs.record({ jobId, state: "error", lastEvent: "required delegation failed" },
+              { type: "error", note: outcome.error });
+            return;
+          }
+          launch(`${messageText}\n\n${outcome.context}`);
+        })
+        .catch((e: any) => {
+          jobs.active.delete(jobId);
+          publishResult(jobId, { type: "error", error: `delegation failed: ${e.message}` }, owner);
+          jobs.record({ jobId, state: "error", lastEvent: "delegation threw" }, { type: "error", note: e.message });
+        });
+      return { ok: true, jobId };
+    }
+
+    return launch(messageText);
+
+    function launch(finalMessage: string): DispatchResult {
+    const messageText = finalMessage;
     const watch: WatchEntry = {
       jobId, service, owner, messageText,
       dispatchedAt: Date.now(), lastAgentEventAt: Date.now(),
@@ -283,6 +328,68 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       jobs.record({ jobId, service, state: "error", owner }, { type: "error", note: e.message });
       return { ok: false, error: e.message, jobId };
     }
+    }
+  }
+
+  /** Declared dependencies, honoured only when the mode permits them. */
+  function declaredDelegates(cap: Capability): CapabilityDelegate[] {
+    const mode = cfg.mesh.delegation;
+    if (mode !== "both" && mode !== "declared") return [];
+    const list = Array.isArray(cap.delegates) ? cap.delegates : [];
+    return list.filter((d) => d && d.agent && d.service && d.as);
+  }
+
+  /** Fill {{arg}} placeholders in a delegate's arguments from the parent job. */
+  function fillArgs(spec: Record<string, unknown> | undefined, args: Record<string, unknown>) {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(spec ?? {})) {
+      out[k] = typeof v === "string"
+        ? v.replace(/\{\{(\w+)\}\}/g, (_m, key: string) => String(args?.[key] ?? ""))
+        : v;
+    }
+    return out;
+  }
+
+  async function resolveDeclared(
+    declared: CapabilityDelegate[],
+    jobId: string,
+    owner: string,
+    args: Record<string, unknown>,
+  ): Promise<{ ok: true; context: string } | { ok: false; error: string }> {
+    // Run them concurrently: they are independent by construction, and serial
+    // would multiply the wait by the number of dependencies.
+    const results = await Promise.all(declared.map(async (d) => {
+      const outcome = await deps.performAsk!({
+        agent: d.agent, service: d.service,
+        args: fillArgs(d.args, args), parentJobId: jobId,
+      });
+      publishEvent(jobId, {
+        type: outcome.ok ? "delegated" : "delegation_failed",
+        note: `${d.agent}/${d.service}${outcome.ok ? "" : ` — ${outcome.error}`}`,
+      }, owner);
+      jobs.record({ jobId, lastEvent: outcome.ok ? "delegated" : "delegation_failed" },
+        { type: outcome.ok ? "delegated" : "delegation_failed", note: `${d.agent}/${d.service}` });
+      return { d, outcome };
+    }));
+
+    const fatal = results.find((r) => r.d.required && !r.outcome.ok);
+    if (fatal) {
+      return { ok: false, error: `required delegation to ${fatal.d.agent}/${fatal.d.service} failed: ${fatal.outcome.error}` };
+    }
+
+    // Named blocks, so the prompt can refer to each answer by its `as` name and
+    // the executor can tell which agent said what.
+    const blocks = results.map(({ d, outcome }) =>
+      outcome.ok
+        ? `### ${d.as} — answered by ${d.agent} (${d.service})\n${JSON.stringify(outcome.result, null, 2)}`
+        : `### ${d.as} — ${d.agent} could not answer\n${outcome.error}`,
+    );
+    return {
+      ok: true,
+      context:
+        `CONTEXT FROM OTHER AGENTS\nThese answers were gathered for you before you started. ` +
+        `Use them; do not ask for them again.\n\n${blocks.join("\n\n")}`,
+    };
   }
 
   /**

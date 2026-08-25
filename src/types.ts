@@ -43,6 +43,19 @@ export interface MeshConfig {
   /** How long mesh_ask waits for a peer's terminal result. Default 10 min. */
   askTimeoutMs?: number;
   /**
+   * Which forms of agent-to-agent delegation this deployment permits.
+   *
+   *   "both"     declared dependencies AND the mesh_ask tool (default)
+   *   "declared" only what a capability declares — deterministic, no tool needed
+   *   "dynamic"  only mesh_ask — the executor decides mid-job
+   *   "off"      no delegation; the agent works alone
+   *
+   * They fail differently, which is why both exist: declared cannot adapt to
+   * what a job turns out to need, and dynamic depends on the executor choosing
+   * to call a tool.
+   */
+  delegation?: "both" | "declared" | "dynamic" | "off";
+  /**
    * Deployment values substituted into ${VAR} placeholders in capability
    * prompts, so one catalog runs everywhere and only the bindings differ.
    * Checked before the panel-managed store and before process.env.
@@ -66,8 +79,28 @@ export interface PluginConfig {
 
 // ── Capability catalog ─────────────────────────────────
 
+/**
+ * A dependency a capability declares up front: "before you run me, ask this
+ * agent for this, and bind the answer to {{as}}".
+ *
+ * Declared delegation is performed by the bridge before the executor starts,
+ * so it does not depend on the executor choosing to call a tool — or on tools
+ * being reachable from the executor's session at all.
+ */
+export interface CapabilityDelegate {
+  agent: string;
+  service: string;
+  /** Name the answer binds to in the prompt, as {{as}}. */
+  as: string;
+  /** Arguments for the peer. Values may reference the parent job's {{args}}. */
+  args?: Record<string, unknown>;
+  /** If true, a failed delegation fails the whole job. Default false. */
+  required?: boolean;
+}
+
 export interface Capability {
   service: string;
+  delegates?: CapabilityDelegate[];
   description?: string;
   requestSchema?: Record<string, unknown>;
   responseSchema?: Record<string, unknown>;
