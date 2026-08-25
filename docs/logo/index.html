@@ -1,0 +1,105 @@
+<title>Plexus Marks</title>
+<style>
+:root{
+  --ground:#F4F7F8; --surface:#FFFFFF; --ink:#0F1E24; --ink-2:#3C555E;
+  --muted:#6B858E; --line:#DBE5E8; --accent:#0E7C86;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --ground:#0A1317; --surface:#101E23; --ink:#E4EFF1; --ink-2:#AFC6CC;
+  --muted:#7D979F; --line:#1D3037; --accent:#2FB3BE;
+}}
+:root[data-theme="dark"]{
+  --ground:#0A1317; --surface:#101E23; --ink:#E4EFF1; --ink-2:#AFC6CC;
+  --muted:#7D979F; --line:#1D3037; --accent:#2FB3BE;
+}
+*,*::before,*::after{box-sizing:border-box} *{margin:0}
+body{background:var(--ground);color:var(--ink);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  font-size:15px;line-height:1.6;padding:0 20px 80px}
+.wrap{max-width:900px;margin:0 auto}
+header{padding:48px 0 24px;border-bottom:2px solid var(--accent);margin-bottom:32px}
+h1{font-size:29px;letter-spacing:-.5px}
+.sub{color:var(--ink-2);margin-top:8px;max-width:62ch}
+h2{font-size:19px;margin:40px 0 4px}
+h2 .n{font-family:var(--mono);font-size:12px;color:var(--accent);margin-right:8px}
+.note{color:var(--ink-2);font-size:14px;max-width:66ch;margin:6px 0 18px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:22px;margin:14px 0}
+.row{display:flex;align-items:center;gap:34px;flex-wrap:wrap}
+.spec{display:flex;flex-direction:column;align-items:center;gap:7px}
+.spec span{font-family:var(--mono);font-size:10.5px;color:var(--muted);
+  text-transform:uppercase;letter-spacing:.06em}
+.chip{background:var(--ink);border-radius:10px;padding:14px;display:grid;place-items:center}
+.chip svg{color:var(--ground)}
+.onwhite{background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px;display:grid;place-items:center}
+.onwhite svg{color:#0F1E24}
+.tint svg{color:var(--accent)}
+.verdict{font-size:13.5px;color:var(--ink-2);border-left:3px solid var(--line);padding-left:13px;margin-top:14px}
+.verdict b{color:var(--ink)}
+.lockup{display:flex;align-items:center;gap:14px}
+.lockup .name{font-size:26px;font-weight:640;letter-spacing:-.6px}
+.lockup .tag{font-family:var(--mono);font-size:11px;color:var(--muted);
+  text-transform:uppercase;letter-spacing:.1em}
+footer{margin-top:48px;padding-top:20px;border-top:1px solid var(--line);
+  color:var(--muted);font-size:13px}
+</style>
+
+<div class="wrap">
+<header>
+  <h1>Plexus — logo drafts</h1>
+  <p class="sub">Second round. The first set drifted onto known marks &mdash; a four-way asterisk is Claude's, and two facing arcs read as the App&nbsp;Store bag. These four deliberately avoid the shapes AI and network projects already occupy. Judge them at
+  16&nbsp;px in solid black first: a mark that survives that is a logo, one that needs colour and
+  size to work is decoration.</p>
+</header>
+
+
+<h2><span class="n">01</span>Hop</h2>
+<p class="note">The schematic convention for wires that cross <em>without</em> connecting. Two agents sharing a broker, never touching — the concept stated in the vocabulary of engineering drawings rather than metaphor.</p>
+<div class="card"><div class="row">
+  <div class="spec"><div class="onwhite"><svg width="72" height="72" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"><path d="M6 38 H22 A10 10 0 0 1 42 38 H58"/><path d="M32 8 V56"/></svg></div><span>72px</span></div><div class="spec"><div class="onwhite"><svg width="32" height="32" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"><path d="M6 38 H22 A10 10 0 0 1 42 38 H58"/><path d="M32 8 V56"/></svg></div><span>32px</span></div><div class="spec"><div class="onwhite"><svg width="16" height="16" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"><path d="M6 38 H22 A10 10 0 0 1 42 38 H58"/><path d="M32 8 V56"/></svg></div><span>16px</span></div>
+  <div class="spec"><div class="chip"><svg width="44" height="44" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"><path d="M6 38 H22 A10 10 0 0 1 42 38 H58"/><path d="M32 8 V56"/></svg></div><span>inverted</span></div>
+  <div class="spec"><div class="onwhite tint"><svg width="44" height="44" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"><path d="M6 38 H22 A10 10 0 0 1 42 38 H58"/><path d="M32 8 V56"/></svg></div><span>accent</span></div>
+</div>
+<p class="verdict"><b>My pick.</b> Nothing else in AI looks like this, because it is borrowed from a different discipline. It says exactly one thing and says it precisely. Holds at 16px — the bridge stays legible.</p>
+</div>
+<h2><span class="n">02</span>Shear</h2>
+<p class="note">One ring, split and displaced. Obviously a single form, provably in two places — addressable without being reachable.</p>
+<div class="card"><div class="row">
+  <div class="spec"><div class="onwhite"><svg width="72" height="72" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"><path d="M22 30 A15 15 0 0 0 52 30"/><path d="M42 34 A15 15 0 0 0 12 34"/></svg></div><span>72px</span></div><div class="spec"><div class="onwhite"><svg width="32" height="32" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"><path d="M22 30 A15 15 0 0 0 52 30"/><path d="M42 34 A15 15 0 0 0 12 34"/></svg></div><span>32px</span></div><div class="spec"><div class="onwhite"><svg width="16" height="16" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"><path d="M22 30 A15 15 0 0 0 52 30"/><path d="M42 34 A15 15 0 0 0 12 34"/></svg></div><span>16px</span></div>
+  <div class="spec"><div class="chip"><svg width="44" height="44" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"><path d="M22 30 A15 15 0 0 0 52 30"/><path d="M42 34 A15 15 0 0 0 12 34"/></svg></div><span>inverted</span></div>
+  <div class="spec"><div class="onwhite tint"><svg width="44" height="44" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"><path d="M22 30 A15 15 0 0 0 52 30"/><path d="M42 34 A15 15 0 0 0 12 34"/></svg></div><span>accent</span></div>
+</div>
+<p class="verdict">Calm and distinctive; the offset does real conceptual work. <b>Risk:</b> at 16px the two arcs can merge into a lozenge.</p>
+</div>
+<h2><span class="n">03</span>Braid</h2>
+<p class="note">Three strands where each passes over one neighbour and under the other, so no strand is on top. A network with no centre, stated structurally rather than symbolically.</p>
+<div class="card"><div class="row">
+  <div class="spec"><div class="onwhite"><svg width="72" height="72" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"><path d="M14 12 C14 28, 50 36, 50 52"/><path d="M50 12 C50 24, 40 30, 34 32"/><path d="M28 34 C22 37, 14 40, 14 52"/><path d="M32 10 V54"/></svg></div><span>72px</span></div><div class="spec"><div class="onwhite"><svg width="32" height="32" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"><path d="M14 12 C14 28, 50 36, 50 52"/><path d="M50 12 C50 24, 40 30, 34 32"/><path d="M28 34 C22 37, 14 40, 14 52"/><path d="M32 10 V54"/></svg></div><span>32px</span></div><div class="spec"><div class="onwhite"><svg width="16" height="16" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"><path d="M14 12 C14 28, 50 36, 50 52"/><path d="M50 12 C50 24, 40 30, 34 32"/><path d="M28 34 C22 37, 14 40, 14 52"/><path d="M32 10 V54"/></svg></div><span>16px</span></div>
+  <div class="spec"><div class="chip"><svg width="44" height="44" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"><path d="M14 12 C14 28, 50 36, 50 52"/><path d="M50 12 C50 24, 40 30, 34 32"/><path d="M28 34 C22 37, 14 40, 14 52"/><path d="M32 10 V54"/></svg></div><span>inverted</span></div>
+  <div class="spec"><div class="onwhite tint"><svg width="44" height="44" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"><path d="M14 12 C14 28, 50 36, 50 52"/><path d="M50 12 C50 24, 40 30, 34 32"/><path d="M28 34 C22 37, 14 40, 14 52"/><path d="M32 10 V54"/></svg></div><span>accent</span></div>
+</div>
+<p class="verdict">The most literal expression of the name. <b>Cost:</b> four paths and two gaps is a lot of information for a favicon — it silts up at 16px.</p>
+</div>
+<h2><span class="n">04</span>Aperture</h2>
+<p class="note">Three chords set off-centre so the middle is an opening rather than a node. Rotationally symmetric: no path leads the others.</p>
+<div class="card"><div class="row">
+  <div class="spec"><div class="onwhite"><svg width="72" height="72" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"><path d="M20 8 L52 26"/><path d="M56 34 L24 56"/><path d="M20 54 L12 20"/></svg></div><span>72px</span></div><div class="spec"><div class="onwhite"><svg width="32" height="32" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"><path d="M20 8 L52 26"/><path d="M56 34 L24 56"/><path d="M20 54 L12 20"/></svg></div><span>32px</span></div><div class="spec"><div class="onwhite"><svg width="16" height="16" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"><path d="M20 8 L52 26"/><path d="M56 34 L24 56"/><path d="M20 54 L12 20"/></svg></div><span>16px</span></div>
+  <div class="spec"><div class="chip"><svg width="44" height="44" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"><path d="M20 8 L52 26"/><path d="M56 34 L24 56"/><path d="M20 54 L12 20"/></svg></div><span>inverted</span></div>
+  <div class="spec"><div class="onwhite tint"><svg width="44" height="44" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"><path d="M20 8 L52 26"/><path d="M56 34 L24 56"/><path d="M20 54 L12 20"/></svg></div><span>accent</span></div>
+</div>
+<p class="verdict">Strong silhouette and genuinely uncommon. <b>Watch:</b> three rotated strokes drift toward pinwheel territory — the off-centre offset is what keeps it from being one.</p>
+</div>
+<h2><span class="n">05</span>Lockup</h2>
+<p class="note">The strongest mark beside the wordmark, as it would sit in a README header.</p>
+<div class="card">
+  <div class="lockup">
+    <svg width="40" height="40" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" style="color:var(--accent)"><path d="M6 38 H22 A10 10 0 0 1 42 38 H58"/><path d="M32 8 V56"/></svg>
+    <div><div class="name">Plexus</div><div class="tag">Agent Mesh Protocol</div></div>
+  </div>
+</div>
+
+<footer>
+  Source SVGs: <code>docs/logo/*.svg</code> &mdash; single-path, <code>currentColor</code>, no fills
+  or effects, so they inherit colour from context and work anywhere a font does.
+</footer>
+</div>

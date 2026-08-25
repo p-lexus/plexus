@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 120" role="img" aria-labelledby="title desc">
+  <title id="title">PLEXUS</title>
+  <desc id="desc">Custom geometric PLEXUS wordmark with a disconnected E and intersecting X.</desc>
+
+  <!--
+    PLEXUS — Intersection Typo
+    Single-colour production SVG.
+    Change the logo colour by setting CSS `color`.
+  -->
+  <g fill="none"
+     stroke="#E4EFF1"
+     stroke-width="10"
+     stroke-linecap="square"
+     stroke-linejoin="miter">
+
+    <!-- P -->
+    <path d="M28 94V26H62C77 26 86 34 86 47C86 60 77 68 62 68H28"/>
+
+    <!-- L -->
+    <path d="M118 26V94H166"/>
+
+    <!-- E — intentionally disconnected -->
+    <path d="M198 26H248"/>
+    <path d="M198 60H239"/>
+    <path d="M198 94H248"/>
+
+    <!-- X — crossing paths / protocol intersection -->
+    <path d="M282 26L338 94"/>
+    <path d="M338 26L282 94"/>
+
+    <!-- U -->
+    <path d="M372 26V70C372 87 381 96 398 96C415 96 424 87 424 70V26"/>
+
+    <!-- S -->
+    <path d="M508 26H474C460 26 452 34 452 45C452 56 460 61 474 61H492C506 61 514 68 514 79C514 89 506 94 492 94H452"/>
+  </g>
+</svg>

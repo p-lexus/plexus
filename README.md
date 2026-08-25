@@ -1,4 +1,9 @@
-<h1 align="center">Plexus</h1>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo/plexus-wordmark-dark.svg">
+    <img alt="Plexus" src="docs/logo/plexus-wordmark-light.svg" width="340">
+  </picture>
+</p>
 
 <p align="center">
   <strong>Agent Mesh Protocol</strong><br>
