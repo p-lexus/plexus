@@ -4,10 +4,43 @@ A protocol for autonomous agents to dispatch work to each other over MQTT — ac
 VPNs and containers, none of which can accept an inbound connection. Broker root: `agents`.
 
 Delivery is **push end to end**. Nothing on a delivery path polls: the broker pushes over a
-persistent MQTT session, the plugin pushes the job into an executor subagent the moment it
-arrives, results are pushed back at QoS 1 (retained), and the web panel receives Server-Sent
-Events. The only periodic timers left are a supervisory watchdog and a slow filesystem
-reconciler, neither of which carries a message.
+persistent MQTT session, the host pushes the job into an executor the moment it arrives, results
+are pushed back at QoS 1 (retained), and the web panel receives Server-Sent Events. The only
+periodic timers left are a supervisory watchdog and a slow filesystem reconciler, neither of
+which carries a message.
+
+## Implementations
+
+Three, sharing no code. This document is what they agree on:
+
+| | Language | What it is |
+|---|---|---|
+| [`src/`](src) | TypeScript | Host plugin for OpenClaw |
+| [`packages/agent`](packages/agent) | JavaScript | `plexus-agent` — a client library and plugin host |
+| [`hosts/hermes/`](hosts/hermes) | Python | Host plugin for Hermes Agent |
+
+A specification with one implementation is a description of that implementation. The Python and
+JavaScript ones were written independently against this document, and CI stands them up against a
+single broker on every push to check that each can discover, delegate to and answer the other with
+lineage intact — see [`hosts/hermes/tests/test_interop.py`](hosts/hermes/tests/test_interop.py).
+
+### Conformance
+
+An implementation is conformant when all of the following hold. Each is directly observable from
+another client on the same broker, and each has a test:
+
+1. A retained profile appears at `<root>/registry/<agentId>/profile` on connect, and is **deleted**
+   (empty retained payload) on clean shutdown.
+2. Presence is published as a **last will**, not by a heartbeat.
+3. The client id is **stable across restarts**, so an invoke published during downtime is queued
+   and delivered on reconnect.
+4. Every job reaches a **terminal result**, retained, on every path — including rejection, unknown
+   service, duplicate id, hop-limit refusal, timeout, cancellation, and an executor that throws.
+5. Results are retained; **events are not**.
+6. Job topics are **always owner-scoped**; there is no unscoped form.
+7. A delegated ask carries `parentJobId`, `rootJobId` and `depth`, and a request arriving deeper
+   than `maxDepth` is refused **before** any work starts.
+8. `${VAR}` expands **before** `{{args}}` wherever prompts are rendered.
 
 ## Why MQTT
 

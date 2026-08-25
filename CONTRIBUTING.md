@@ -8,10 +8,16 @@ process and more about the invariants that are easy to break by accident.
 ```bash
 npm install
 cp services.example.json services.json
-npm test                 # build, unit tests, console render check
+npm test                 # build, unit tests, console render check, package tests
+
+# the Python host plugin, if you touch it
+pip install "paho-mqtt>=2.1"
+python hosts/hermes/tests/test_plugin.py
 ```
 
-You do **not** need a broker to run the tests. You do need one to run the plugin.
+The tests run without a broker — the end-to-end ones skip themselves. Start `mosquitto -p 1883`
+to get them, and note that they are the only tests that exercise durability, delegation across a
+real session, and interoperability between implementations.
 
 ## How this repo relates to a running agent
 
@@ -61,15 +67,17 @@ something was edited in place.
 | `src/mesh/` | Protocol behaviour: topics, dispatch, transport, catalog, variables |
 | `src/http/` | The console's API, auth and event stream |
 | `web/index.html` | The console — one file, no build step, no external assets |
+| `hosts/hermes/` | Host plugin for Hermes Agent — Python, an independent implementation |
 | `test/` | Unit tests, the console render check, and package/end-to-end tests |
 | `docs/HOSTS.md` | How to put another agent platform on the mesh |
+| `docs/INSTALL.md` | Installation for every path. Update it when a step changes |
 
 The repository is an npm workspace: `npm install` links `plexus-agent` and `plexus-notify` into
 `node_modules`, so the tests and examples import them by package name exactly as a user would.
 
-**`src/` is the OpenClaw host plugin, not the runtime.** It is one participant on the mesh. If a
-change only makes sense for OpenClaw, it belongs in `src/`; if it is protocol behaviour, it
-belongs in `packages/agent` and in `PROTOCOL.md`.
+**`src/` is the OpenClaw host plugin, not the runtime.** It is one participant on the mesh, and
+so is `hosts/hermes/`. If a change only makes sense for one platform it belongs in that host; if
+it is protocol behaviour it belongs in `PROTOCOL.md` and in every implementation.
 
 `src/mesh/topics.ts` and `src/mesh/payload.ts` are pure. Keep them that way — they are the
 easiest parts of the system to reason about, and the most load-bearing.
@@ -113,11 +121,22 @@ HTML and grepping it proves the file is served but never runs a line of it — w
 Fixtures in `test/fixtures/` are synthetic and use a fixed epoch. Keep them that way: no live
 topics, ids or repository names, and no dependence on the wall clock.
 
-## Screenshots
+## Generated artifacts
 
-`node tools/screenshots.mjs` regenerates the README images from the real console and the same
-fixtures, with the network stubbed and the clock frozen. Re-run it when you change the console's
-appearance, and commit the result.
+Three things in the repository are generated, and all three go stale silently:
+
+| | Regenerate with | When |
+|---|---|---|
+| `docs/screenshots/*.png` | `node tools/screenshots.mjs` | the console's appearance changes |
+| `docs/demo*.svg` | `node tools/record-demo.mjs examples/with-plugins.mjs docs/demo.svg` | an example changes |
+| `PROTOCOL.pdf` | `npm install --no-save marked mermaid && npm run pdf` | `PROTOCOL.md` changes |
+
+Screenshots and demos are produced from **real runs** with the network stubbed and the clock
+frozen — so they cannot drift from what the code does, but they also will not update themselves.
+Commit the result.
+
+`marked` and `mermaid` are deliberately not dependencies: mermaid alone is 3.6 MB and this
+repository is cloned onto machines that run agents.
 
 ## Changing the protocol
 
@@ -126,6 +145,14 @@ Anything observable on the wire — a topic, a payload field, a guarantee — is
 1. Update `PROTOCOL.md`, including the version-history section.
 2. Say what a client that does not know about the change will see.
 3. Add a test if the change has a testable invariant.
+4. **Update every implementation, or say why not.** There are three, sharing no code:
+   `src/` (TypeScript), `packages/agent` (JavaScript) and `hosts/hermes/` (Python). A change
+   landing in one of them is how a specification quietly becomes a description of one program.
+5. Regenerate the PDF: `npm install --no-save marked mermaid && npm run pdf`.
+
+`hosts/hermes/tests/test_interop.py` runs a Python agent and a Node agent against one broker and
+checks they can still work together. If a protocol change breaks that, it has broken
+interoperability — which is the only thing this project actually sells.
 
 `ownerPolicy` in the retained profile exists so clients can read what a deployment *actually*
 enforces rather than inferring it from a version number. Prefer advertising a capability over

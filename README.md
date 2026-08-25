@@ -682,6 +682,20 @@ starts:
 carries the lineage and guarantees the result. The meaning lives entirely in your catalog —
 which is why adding an agent takes minutes and no rebuild.
 
+### The same agent, four ways
+
+The example above is the OpenClaw route. The capability is identical on the wire whichever way you
+declare it — the mesh cannot tell them apart, and neither can the agents asking:
+
+| Platform | Where the agent is defined | Install |
+|---|---|---|
+| OpenClaw | `openclaw.json` + `services.json` | [guide](docs/INSTALL.md#2-openclaw) |
+| Hermes Agent | `~/.hermes/plexus.json` | [guide](docs/INSTALL.md#3-hermes) |
+| Any Node process | `agent.serve(...)` in code | [guide](docs/INSTALL.md#4-your-own-agent) |
+| No framework at all | raw MQTT, [40 lines](examples/minimal-agent.mjs) | [PROTOCOL.md](PROTOCOL.md) |
+
+Full steps for every one: **[docs/INSTALL.md](docs/INSTALL.md)**.
+
 ## Author a capability
 
 A capability is a name, a prompt, and the arguments it takes:
@@ -906,14 +920,29 @@ npm test                 # build, then all three suites
 npm run typecheck
 npm run demo             # two agents, one delegation
 
+# the Hermes host plugin (Python)
+pip install "paho-mqtt>=2.1"
+python hosts/hermes/tests/test_plugin.py     # the plugin, with Hermes faked
+python hosts/hermes/tests/test_interop.py    # a Hermes agent and a JS agent, together
+
 node tools/screenshots.mjs                                   # console images
 node tools/record-demo.mjs examples/with-plugins.mjs docs/demo.svg  # the hero
+
+npm install --no-save marked mermaid && npm run pdf                 # PROTOCOL.pdf
 ```
 
-Three suites: `test/unit.mjs` covers the bridge, `test/render-check.mjs` executes every console
-view, and `test/packages.mjs` covers the library and its plugins — including **end-to-end tests
-against a live broker**, which are skipped if none is reachable and run for real in CI. Start one
-locally with `mosquitto -p 1883` to get them.
+`marked` and `mermaid` are deliberately **not** dependencies. Mermaid alone is 3.6 MB, this
+repository is cloned onto the machines that run agents, and a documentation tool has no business
+inflating a deployment. The script says what to install if they are missing.
+
+Five suites. `test/unit.mjs` covers the bridge, `test/render-check.mjs` executes every console
+view, `test/packages.mjs` covers the library and its plugins, and the two Python files cover the
+Hermes host plugin. All of them include **end-to-end tests against a live broker** — skipped if
+none is reachable, run for real in CI. Start one locally with `mosquitto -p 1883` to get them.
+
+`test_interop.py` is the one to read if you read one: it stands a Python agent and a Node agent up
+against a single broker and checks each can discover, delegate to and answer the other. It is the
+only test that can catch the protocol drifting between implementations.
 
 The tests import the **built** output, so a missing `.js` extension in an ESM import fails in CI
 rather than at gateway start. The console check executes every view function against fixtures in
@@ -958,9 +987,17 @@ months of production. Expect to find things.
 **Requires a broker you operate.** No hosted option. That's a feature if you care where your
 job payloads go, and friction if you wanted to try it in five minutes.
 
-**JavaScript only, for now.** `plexus-agent` covers Node. From another language you're writing
-MQTT calls against [PROTOCOL.md](PROTOCOL.md) directly — which is deliberately small, but is
-still more ceremony than an import.
+**No packaged client outside Node.** `plexus-agent` covers JavaScript. There is a complete
+Python implementation in [`hosts/hermes/protocol.py`](hosts/hermes/protocol.py) — about 400 lines,
+and proven against the JS one in CI — but it ships as part of that plugin rather than as a
+library you can `pip install`. From any other language you are implementing
+[PROTOCOL.md](PROTOCOL.md) directly, which is deliberately small but is still more ceremony than
+an import.
+
+**The Hermes plugin has not run against a live Hermes.** Its protocol half is tested and
+interoperates with the JavaScript implementation; its Hermes-facing half is written against the
+published plugin API and verified against a faithful fake. That gap is stated in
+[its README](hosts/hermes#known-limits) rather than papered over.
 
 **No schema enforcement.** `requestSchema` is advisory. A capability that declares `pr: number`
 will happily receive a string, and find out inside the prompt.
@@ -969,7 +1006,8 @@ will happily receive a string, and find out inside the prompt.
 
 In rough order of how much they'd unlock:
 
-- **A Python client.** The JS one exists; Python is where most agent code is being written.
+- **Extract the Python client.** The implementation already exists inside the Hermes plugin and
+  is CI-proven against the JS one; packaging it as `plexus-agent-py` is mostly moving files.
 - **Verified identity end to end.** A working EMQX rule-engine recipe feeding `mesh.verifyOwner`,
   so owner scoping becomes enforcement rather than convention.
 - **Non-blocking delegation.** Let an asking agent hand off instead of waiting, for fan-out
@@ -989,8 +1027,10 @@ Issues and pull requests are welcome — [CONTRIBUTING.md](CONTRIBUTING.md) cove
 more usefully, the invariants that are easy to break by accident. Each one is there because
 breaking it caused a real failure.
 
-If you build an agent on Plexus, open an issue and say so. A second independent implementation is
-worth more to this project than any feature on the roadmap.
+If you build an agent on Plexus, open an issue and say so — and if you write a host plugin for
+another platform, [docs/HOSTS.md](docs/HOSTS.md) is there to make it a short job. Every additional
+independent implementation is worth more to this project than any feature on the roadmap, because
+each one is a test of whether the specification says what it means.
 
 ## License
 
