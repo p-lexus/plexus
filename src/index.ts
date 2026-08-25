@@ -71,6 +71,25 @@ const MODULE_INSTANCE = createHash("sha1")
   .slice(0, 12);
 
 const GUARD = Symbol.for("mqtt-bridge.active");
+/**
+ * The live transport-owning instance.
+ *
+ * Tools must be registered on EVERY registration — the gateway registers
+ * plugins per agent session, so a tool registered only once exists only in
+ * whichever session happened to be first. But transport must stay a singleton.
+ * The tools therefore resolve through this slot at call time rather than
+ * closing over one registration's state.
+ */
+const ACTIVE_SLOT = Symbol.for("mqtt-bridge.instance");
+
+interface ActiveInstance {
+  publishCounted(topic: string, payload: string, opts?: { qos?: 0 | 1 | 2; retain?: boolean }): void;
+  normalize(topic: string, payload: string, retain?: boolean): { payload: string; retain: boolean };
+  ask(req: { agent: string; service: string; args?: any; parentJobId?: string }): Promise<any>;
+  peers(): any[];
+  providersOf(service: string): any[];
+  delegationMode: string;
+}
 const MODULE_SLOT = Symbol.for("mqtt-bridge.module");
 const DISPOSE_SLOT = Symbol.for("mqtt-bridge.dispose");
 
@@ -99,6 +118,100 @@ export default definePluginEntry({
     }
 
     const globalAny = globalThis as Record<symbol, unknown>;
+    const active = () => globalAny[ACTIVE_SLOT] as ActiveInstance | undefined;
+    const notReady = (what: string) => ({
+      content: [{ type: "text" as const, text: `${what}: the mesh bridge is not connected yet.` }],
+      isError: true,
+    });
+
+    // ── Tools ──────────────────────────────────────────
+    // Registered on EVERY registration, before the singleton guard below, so
+    // every agent session has them. They resolve the live instance at call
+    // time. Registering after the guard is why these tools were previously
+    // absent from every session but the first.
+
+    api.registerTool({
+      name: "mqtt_publish",
+      description: "Publish a message to any MQTT topic (job events/results, config, status).",
+      parameters: Type.Object({
+        payload: Type.String({ description: "Payload (JSON string or text)." }),
+        topic: Type.String({ description: "Topic to publish to, e.g. agents/jobs/<owner>/<jobId>/result" }),
+        retain: Type.Optional(Type.Boolean({ description: "Retain. Default false; forced true on job result topics." })),
+      }),
+      async execute(_id: string, params: { payload: string; topic: string; retain?: boolean }) {
+        const inst = active();
+        if (!inst) return notReady("mqtt_publish");
+        try {
+          const { payload, retain } = inst.normalize(params.topic, params.payload, params.retain);
+          inst.publishCounted(params.topic, payload, { qos: 1, retain });
+          return { content: [{ type: "text" as const, text: `Published to ${params.topic}${retain ? " (retained)" : ""}` }] };
+        } catch (err: any) {
+          return { content: [{ type: "text" as const, text: `Failed: ${err.message}` }], isError: true };
+        }
+      },
+    });
+
+    api.registerTool({
+      name: "mesh_peers",
+      description:
+        "List the other agents on this mesh and the capabilities each offers. Use this to find " +
+        "which agent to ask when a job needs expertise you do not have.",
+      parameters: Type.Object({
+        service: Type.Optional(Type.String({ description: "Only show agents offering this capability." })),
+      }),
+      async execute(_id: string, params: { service?: string }) {
+        const inst = active();
+        if (!inst) return notReady("mesh_peers");
+        const list = params.service ? inst.providersOf(params.service) : inst.peers();
+        if (!list.length) {
+          return { content: [{ type: "text" as const, text: params.service
+            ? `No agent on this mesh offers "${params.service}".`
+            : "No other agents have published a profile to this mesh." }] };
+        }
+        const text = list.map((p: any) =>
+          `${p.agentId}${p.online ? "" : " (offline)"} — ${p.displayName ?? "no name"}\n` +
+          p.capabilities.map((c: any) => `    ${c.service}${c.description ? `: ${c.description}` : ""}`).join("\n"),
+        ).join("\n");
+        return { content: [{ type: "text" as const, text }] };
+      },
+    });
+
+    api.registerTool({
+      name: "mesh_ask",
+      description:
+        "Ask another agent on the mesh to do a job you are not best placed to do, wait for its " +
+        "answer, and receive the result. Use mesh_peers first to see who offers what.",
+      parameters: Type.Object({
+        agent: Type.String({ description: "Agent id of the peer to ask (from mesh_peers)." }),
+        service: Type.String({ description: "Capability that peer offers, e.g. schema.review" }),
+        args: Type.Optional(Type.Any({ description: "Arguments matching that capability's requestSchema." })),
+        parentJobId: Type.Optional(Type.String({
+          description: "The job you are currently executing. Pass it so the chain can be traced and cancelled as one request.",
+        })),
+      }),
+      async execute(_id: string, params: { agent: string; service: string; args?: any; parentJobId?: string }) {
+        const inst = active();
+        if (!inst) return notReady("mesh_ask");
+        const mode = inst.delegationMode;
+        if (mode !== "both" && mode !== "dynamic") {
+          return {
+            content: [{ type: "text" as const, text: mode === "declared"
+              ? "Dynamic delegation is disabled here (mesh.delegation is \"declared\"). This agent only delegates what its capabilities declare up front, and those answers are already in your prompt."
+              : "Delegation is disabled on this agent (mesh.delegation is \"off\")." }],
+            isError: true,
+          };
+        }
+        const outcome = await inst.ask({
+          agent: params.agent, service: params.service,
+          args: params.args ?? {}, parentJobId: params.parentJobId,
+        });
+        if (!outcome.ok) {
+          return { content: [{ type: "text" as const, text: `mesh_ask failed: ${outcome.error}` }], isError: true };
+        }
+        return { content: [{ type: "text" as const, text:
+          `Answer from ${outcome.agent} (job ${outcome.jobId}):\n${JSON.stringify(outcome.result, null, 2)}` }] };
+      },
+    });
 
     // ── Reload takeover ────────────────────────────────
     // Another session registering the same loaded module must leave the
@@ -323,111 +436,20 @@ export default definePluginEntry({
       onStateChange: () => sse.broadcast("status", snapshot()),
     });
 
+    // Publish this registration as the live instance so the tools — registered
+    // in every session — operate on the one transport that actually exists.
+    globalAny[ACTIVE_SLOT] = {
+      publishCounted: transport.publishCounted,
+      normalize: (topic: string, payload: string, retain?: boolean) =>
+        normalizeJobPublish(jobTopicRe, topic, payload, retain),
+      ask: (req: any) => ask.ask(req),
+      peers: () => peers.list(),
+      providersOf: (service: string) => peers.providersOf(service),
+      delegationMode: conf.mesh.delegation,
+    };
+
     const stopWatchdog = dispatcher.startWatchdog();
     const stopCatalogWatch = catalog.watch(() => registry.publishProfile());
-
-    // ── Agent tool ─────────────────────────────────────
-
-    api.registerTool({
-      name: "mqtt_publish",
-      description: "Publish a message to any MQTT topic (job events/results, config, status).",
-      parameters: Type.Object({
-        payload: Type.String({ description: "Payload (JSON string or text)." }),
-        topic: Type.String({ description: "Topic to publish to, e.g. agents/jobs/<owner>/<jobId>/result" }),
-        retain: Type.Optional(Type.Boolean({ description: "Retain. Default false; forced true on job result topics." })),
-      }),
-      async execute(_id: string, params: { payload: string; topic: string; retain?: boolean }) {
-        try {
-          const { payload, retain } = normalizeJobPublish(jobTopicRe, params.topic, params.payload, params.retain);
-          transport.publishCounted(params.topic, payload, { qos: 1, retain });
-          return { content: [{ type: "text" as const, text: `Published to ${params.topic}${retain ? " (retained)" : ""}` }] };
-        } catch (err: any) {
-          return { content: [{ type: "text" as const, text: `Failed: ${err.message}` }], isError: true };
-        }
-      },
-    });
-
-    /**
-     * Delegation. This is what makes it a mesh rather than a set of agents that
-     * happen to share a broker: an executor can hand work to the agent that
-     * owns that capability and use the answer in its own reply.
-     */
-    api.registerTool({
-      name: "mesh_ask",
-      description:
-        "Ask another agent on the mesh to do a job you are not best placed to do, wait for its " +
-        "answer, and receive the result. Use mesh_peers first to see who offers what.",
-      parameters: Type.Object({
-        agent: Type.String({ description: "Agent id of the peer to ask (from mesh_peers)." }),
-        service: Type.String({ description: "Capability that peer offers, e.g. schema.review" }),
-        args: Type.Optional(Type.Any({ description: "Arguments matching that capability's requestSchema." })),
-        parentJobId: Type.Optional(Type.String({
-          description: "The job you are currently executing. Pass it so the chain can be traced and cancelled as one request.",
-        })),
-      }),
-      async execute(_id: string, params: { agent: string; service: string; args?: any; parentJobId?: string }) {
-        const mode = conf.mesh.delegation;
-        if (mode !== "both" && mode !== "dynamic") {
-          return {
-            content: [{
-              type: "text" as const,
-              text: mode === "declared"
-                ? "Dynamic delegation is disabled here (mesh.delegation is \"declared\"). This agent only " +
-                  "delegates what its capabilities declare up front, and those answers are already in your prompt."
-                : "Delegation is disabled on this agent (mesh.delegation is \"off\").",
-            }],
-            isError: true,
-          };
-        }
-        const outcome = await ask.ask({
-          agent: params.agent,
-          service: params.service,
-          args: params.args ?? {},
-          parentJobId: params.parentJobId,
-        });
-        if (!outcome.ok) {
-          return {
-            content: [{ type: "text" as const, text: `mesh_ask failed: ${outcome.error}` }],
-            isError: true,
-          };
-        }
-        return {
-          content: [{
-            type: "text" as const,
-            text: `Answer from ${outcome.agent} (job ${outcome.jobId}):\n` +
-                  JSON.stringify(outcome.result, null, 2),
-          }],
-        };
-      },
-    });
-
-    api.registerTool({
-      name: "mesh_peers",
-      description:
-        "List the other agents on this mesh and the capabilities each offers. Use this to find " +
-        "which agent to ask when a job needs expertise you do not have.",
-      parameters: Type.Object({
-        service: Type.Optional(Type.String({ description: "Only show agents offering this capability." })),
-      }),
-      async execute(_id: string, params: { service?: string }) {
-        const list = params.service ? peers.providersOf(params.service) : peers.list();
-        if (!list.length) {
-          return {
-            content: [{
-              type: "text" as const,
-              text: params.service
-                ? `No agent on this mesh offers "${params.service}".`
-                : "No other agents have published a profile to this mesh.",
-            }],
-          };
-        }
-        const text = list.map((p) =>
-          `${p.agentId}${p.online ? "" : " (offline)"} — ${p.displayName ?? "no name"}\n` +
-          p.capabilities.map((c) => `    ${c.service}${c.description ? `: ${c.description}` : ""}`).join("\n"),
-        ).join("\n");
-        return { content: [{ type: "text" as const, text }] };
-      },
-    });
 
     // ── Shutdown ───────────────────────────────────────
 
@@ -442,6 +464,7 @@ export default definePluginEntry({
       transport.end();
       delete globalAny[GUARD];
       delete globalAny[MODULE_SLOT];
+      delete globalAny[ACTIVE_SLOT];
       delete globalAny[DISPOSE_SLOT];
     };
 
