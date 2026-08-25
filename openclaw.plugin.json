@@ -1,13 +1,15 @@
 {
   "id": "mqtt-bridge",
   "name": "MQTT Bridge — Agent Mesh",
-  "description": "Agent Mesh Protocol v1.2 over MQTT — durable push connection (persistent session, QoS 1), owner-scoped job dispatch, HTTP control API and SSE-backed web panel. Capability-agnostic: services are data, not code. Works behind NAT (outbound connection only).",
+  "description": "Agent Mesh Protocol v1.3 over MQTT — durable push connection, owner-scoped jobs, agent-to-agent delegation with lineage and hop limits, HTTP control API and SSE-backed console. Capability-agnostic: services are data, not code.",
   "activation": {
     "onStartup": true
   },
   "contracts": {
     "tools": [
-      "mqtt_publish"
+      "mqtt_publish",
+      "mesh_ask",
+      "mesh_peers"
     ]
   },
   "configSchema": {
@@ -97,6 +99,16 @@
               "type": "string"
             },
             "description": "Deployment values substituted into ${VAR} placeholders in capability prompts, so the same services.json runs in every deployment. Checked before process.env. Use for non-secret identifiers (Slack ids, channel names, repo paths); keep real secrets in the environment. Resolved only at dispatch, never in the retained profile."
+          },
+          "maxDepth": {
+            "type": "number",
+            "default": 4,
+            "description": "How many delegation hops a request may travel (A asks B asks C = depth 2). Bounds runaway fan-out and A→B→A cycles. A request arriving deeper is rejected before any work starts."
+          },
+          "askTimeoutMs": {
+            "type": "number",
+            "default": 600000,
+            "description": "How long mesh_ask waits for a peer's terminal result before giving up, so a delegating agent never hangs on a peer that is offline or overloaded."
           }
         }
       },

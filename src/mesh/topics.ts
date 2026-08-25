@@ -72,3 +72,27 @@ export const ownerScope = (requestedBy?: string): string => {
     .replace(/^-+|-+$/g, "");
   return s || "public";
 };
+
+/** Every agent's retained profile and presence — how peers are discovered. */
+export const registryProfileFilter = (root: string): string => `${root}/registry/+/profile`;
+export const registryStatusFilter = (root: string): string => `${root}/registry/+/status`;
+
+export const registryPattern = (meshRoot: string): RegExp =>
+  new RegExp(`^${escapeRe(meshRoot)}/registry/([^/]+)/(profile|status)$`);
+
+export interface ParsedRegistryTopic {
+  agentId: string;
+  kind: "profile" | "status";
+}
+
+export function parseRegistryTopic(pattern: RegExp, topic: string): ParsedRegistryTopic | null {
+  const m = pattern.exec(topic);
+  return m ? { agentId: decodeURIComponent(m[1]), kind: m[2] as "profile" | "status" } : null;
+}
+
+/** Where a peer accepts work. */
+export const peerInvokeTopic = (root: string, agentId: string): string =>
+  `${root}/commands/${agentId}/invoke`;
+
+export const peerCancelTopic = (root: string, agentId: string): string =>
+  `${root}/commands/${agentId}/cancel`;

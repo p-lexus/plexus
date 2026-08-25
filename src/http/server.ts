@@ -42,6 +42,7 @@ export interface HttpDeps {
   registry: Registry;
   snapshot(): Record<string, unknown>;
   profileWithBroker(): Record<string, unknown>;
+  peers(): unknown[];
 }
 
 const sendJson = (res: ServerResponse, code: number, obj: unknown) => {
@@ -81,6 +82,7 @@ export function createHttpHandler(deps: HttpDeps) {
         ["status", deps.snapshot()],
         ["profile", registry.buildProfile()],
         ["snapshot", { active: [...jobs.active], history: jobs.recent() }],
+        ["peers", deps.peers()],
       ]);
       req.on("close", detach);
       req.on("error", detach);
@@ -90,6 +92,7 @@ export function createHttpHandler(deps: HttpDeps) {
     // ── Read ──
     if (p === `${base}/api/profile`) { sendJson(res, 200, deps.profileWithBroker()); return true; }
     if (p === `${base}/api/status`) { sendJson(res, 200, deps.snapshot()); return true; }
+    if (p === `${base}/api/peers`) { sendJson(res, 200, { peers: deps.peers() }); return true; }
     if (p === `${base}/api/jobs`) {
       sendJson(res, 200, { active: [...jobs.active], history: jobs.recent() });
       return true;

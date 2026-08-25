@@ -23,6 +23,10 @@ const MAX_REINJECTS = 2;               // then fail loudly rather than retry for
 
 export interface DispatcherDeps {
   cfg: ResolvedConfig;
+  /** Called when a job is cancelled, so anything it delegated stops too. */
+  onCancel?(jobId: string, requestedBy?: string): void;
+  /** A directory of peers, injected into the executor's briefing. */
+  peerSummary?(): string;
   logger: Logger;
   catalog: Catalog;
   jobs: JobStore;
@@ -37,6 +41,8 @@ export interface Dispatcher {
   /** Any executor publish proves the executor is alive. */
   markAgentActivity(jobId: string): void;
   publishEvent(jobId: string, event: Record<string, unknown>, owner: string): void;
+  /** Lineage of a known job, for continuing a delegation chain. */
+  lineageOf(jobId?: string): { rootJobId?: string; depth: number };
   publishResult(jobId: string, result: Record<string, unknown>, owner: string): void;
   startWatchdog(): () => void;
   isWatched(jobId: string): boolean;
@@ -99,7 +105,20 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     }
   }
 
-  function executorBriefing(owner: string, jobId: string): string {
+  function executorBriefing(owner: string, jobId: string, depth: number): string {
+    const peers = deps.peerSummary?.() ?? "";
+    const remaining = cfg.mesh.maxDepth - depth;
+    const delegation = peers && remaining > 0
+      ? `\nDELEGATION: other agents on this mesh have capabilities you do not. If part of this job ` +
+        `is better handled by one of them, call mesh_ask with parentJobId "${jobId}" — it dispatches ` +
+        `the work, waits, and returns their answer for you to use. Do not guess at work another agent ` +
+        `owns.\nAvailable now:\n${peers}\n` +
+        `You may delegate ${remaining} more hop(s) before the mesh refuses.\n`
+      : "";
+    return delegation + rawBriefing(owner, jobId);
+  }
+
+  function rawBriefing(owner: string, jobId: string): string {
     // The bridge already delivered this into a dedicated subagent session, so
     // the executor IS the isolated run. Delegating to a nested subagent would
     // let this run settle while the real work continued elsewhere, which the
@@ -120,6 +139,22 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
   function dispatch(data: DispatchRequest, opts: DispatchOptions = {}): DispatchResult {
     const jobId = data.jobId || `job-${Date.now().toString(36)}`;
     const { service, args = {} } = data;
+    const depth = Number.isFinite(data.depth) ? Number(data.depth) : 0;
+    const rootJobId = data.rootJobId ?? jobId;
+
+    // Refuse before doing any work: a chain that is allowed to start is a chain
+    // that keeps consuming agents until something else stops it.
+    if (depth > cfg.mesh.maxDepth) {
+      const err = `delegation depth ${depth} exceeds the limit of ${cfg.mesh.maxDepth}`;
+      logger.warn(`rejected job ${jobId} — ${err}`);
+      publishResult(jobId, { type: "error", error: err, service }, ownerScope(data.requestedBy));
+      jobs.record(
+        { jobId, service, state: "rejected", owner: ownerScope(data.requestedBy),
+          parentJobId: data.parentJobId, rootJobId, depth, lastEvent: "depth limit" },
+        { type: "rejected", note: err },
+      );
+      return { ok: false, error: err, jobId };
+    }
 
     // ── Owner resolution (protocol 1.2: requestedBy is REQUIRED) ──
     let requestedBy = String(data.requestedBy ?? "").trim();
@@ -179,12 +214,14 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     jobs.active.add(jobId);
     publishEvent(jobId, { type: "accepted", service, requestedBy, args }, owner);
     jobs.record(
-      { jobId, service, state: "accepted", requestedBy, owner, lastEvent: `args: ${JSON.stringify(args).slice(0, 200)}` },
+      { jobId, service, state: "accepted", requestedBy, owner,
+        parentJobId: data.parentJobId, rootJobId, depth,
+        lastEvent: `args: ${JSON.stringify(args).slice(0, 200)}` },
       { type: "accepted", note: service },
     );
 
     const subagentSessionKey = `agent:main:subagent:mesh-${jobId}`;
-    const briefing = executorBriefing(owner, jobId);
+    const briefing = executorBriefing(owner, jobId, depth);
 
     const messageText = cap.prompt
       ? `${renderPrompt(String(cap.prompt), varOrWarn, jobId, requestedBy, args)}\n\n${briefing}`
@@ -268,6 +305,10 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     publishResult(jobId, { type: "cancelled", note: "cancelled by request", requestedBy }, owner);
     jobs.record({ jobId, state: "cancelled", lastEvent: "cancelled", owner, requestedBy },
       { type: "cancelled", note: requestedBy ? `by ${requestedBy}` : undefined });
+
+    // Propagate downward. Each peer cancels ITS children in turn, so one cancel
+    // unwinds the whole chain without us needing to know its shape.
+    deps.onCancel?.(jobId, requestedBy);
 
     // Best effort: drop the executor session so it stops consuming budget.
     const sub = runtime.subagent;
@@ -357,8 +398,14 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     return () => clearInterval(timer);
   }
 
+  const lineageOf = (jobId?: string): { rootJobId?: string; depth: number } => {
+    if (!jobId) return { depth: 0 };
+    const rec = jobs.find(jobId);
+    return { rootJobId: rec?.rootJobId ?? jobId, depth: rec?.depth ?? 0 };
+  };
+
   return {
-    dispatch, cancel, markAgentActivity, publishEvent, publishResult, startWatchdog,
+    dispatch, cancel, markAgentActivity, publishEvent, publishResult, startWatchdog, lineageOf,
     isWatched: (jobId) => watched.has(jobId),
     forget: (jobId) => { watched.delete(jobId); },
   };

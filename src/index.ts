@@ -29,7 +29,10 @@ import { PROTOCOL_VERSION } from "./types.js";
 import type { PluginConfig } from "./types.js";
 import { resolveConfig } from "./config.js";
 import { createLogger } from "./logger.js";
-import { buildTopics, jobTopicPattern, parseJobTopic, ownerScope } from "./mesh/topics.js";
+import {
+  buildTopics, jobTopicPattern, parseJobTopic, ownerScope,
+  registryPattern, parseRegistryTopic, registryProfileFilter, registryStatusFilter,
+} from "./mesh/topics.js";
 import { normalizeJobPublish } from "./mesh/payload.js";
 import { createCatalog } from "./mesh/catalog.js";
 import { createVarStore } from "./mesh/vars.js";
@@ -37,6 +40,8 @@ import { createJobStore } from "./mesh/jobs.js";
 import { createTransport } from "./mesh/transport.js";
 import { createDispatcher } from "./mesh/dispatch.js";
 import { createRegistry } from "./mesh/registry.js";
+import { createPeerRegistry } from "./mesh/peers.js";
+import { createAskService } from "./mesh/ask.js";
 import { createAuth } from "./http/auth.js";
 import { createSseHub } from "./http/sse.js";
 import { startHttpServer } from "./http/server.js";
@@ -116,6 +121,7 @@ export default definePluginEntry({
     const conf = resolveConfig(cfg, pluginDir);
     const topics = buildTopics(conf.mesh.root, conf.mesh.agentId);
     const jobTopicRe = jobTopicPattern(conf.mesh.root);
+    const registryRe = registryPattern(conf.mesh.root);
 
     const catalog = createCatalog(conf.mesh.servicesFile, logger);
     const vars = createVarStore(conf.mesh.secretsFile, conf.mesh.promptVars, logger);
@@ -123,6 +129,7 @@ export default definePluginEntry({
     const auth = createAuth(conf.web.auth);
     const jobs = createJobStore((rec) => sse.broadcast("job", rec));
     const transport = createTransport(conf, pluginDir, topics.status, logger);
+    const peers = createPeerRegistry(conf.mesh.agentId, logger, () => sse.broadcast("peers", peers.list()));
 
     const snapshot = () => ({
       connected: transport.connected,
@@ -141,6 +148,8 @@ export default definePluginEntry({
       // values are deployment secrets and never reach a browser.
       promptVars: vars.describe().map(({ name, source }) => ({ name, source })),
       secretsAuth: auth.configured,
+      peers: peers.size,
+      maxDepth: conf.mesh.maxDepth,
     });
 
     const registry = createRegistry({
@@ -159,11 +168,36 @@ export default definePluginEntry({
       cfg: conf, logger, catalog, jobs, vars,
       runtime: api.runtime,
       publish: transport.publish,
+      peerSummary: () => peers.summary(),
+      onCancel: (jobId, requestedBy) => ask.cancelChildren(jobId, requestedBy ?? conf.mesh.agentId),
+    });
+
+    const ask = createAskService({
+      selfAgentId: conf.mesh.agentId,
+      meshRoot: conf.mesh.root,
+      maxDepth: conf.mesh.maxDepth,
+      timeoutMs: conf.mesh.askTimeoutMs,
+      logger,
+      publish: transport.publish,
+      peer: (id) => peers.get(id),
+      lineageOf: (jobId) => dispatcher.lineageOf(jobId),
+      onDelegated: (info) => {
+        // Recorded locally so a delegated job is visible in our console even
+        // though a peer is doing the work.
+        jobs.record(
+          { jobId: info.jobId, service: info.service, state: "started",
+            owner: ownerScope(conf.mesh.agentId), requestedBy: conf.mesh.agentId,
+            delegated: true, delegatedTo: info.agent,
+            parentJobId: info.parentJobId, rootJobId: info.rootJobId, depth: info.depth },
+          { type: "delegated", note: `asked ${info.agent} for ${info.service}` },
+        );
+      },
     });
 
     const { server } = startHttpServer({
       cfg: conf, logger, auth, sse, jobs, vars, dispatcher, registry,
       snapshot,
+      peers: () => peers.list(),
       profileWithBroker: () => ({
         ...registry.buildProfile(),
         broker: { connected: transport.connected, stats: transport.stats },
@@ -174,6 +208,14 @@ export default definePluginEntry({
 
     function onMessage(topic: string, raw: string, data: any): void {
       logger.info(`received on ${topic}: ${raw.slice(0, 300)}`);
+
+      // Peer registry: who else is on the mesh and what they can do.
+      const reg = parseRegistryTopic(registryRe, topic);
+      if (reg) {
+        if (reg.kind === "profile") peers.onProfile(reg.agentId, data);
+        else peers.onStatus(reg.agentId, data);
+        return;
+      }
 
       // Job traffic: milestones and results, including our executors' own.
       const parsed = parseJobTopic(jobTopicRe, topic);
@@ -198,6 +240,9 @@ export default definePluginEntry({
           );
           jobs.active.delete(jobId);
           dispatcher.forget(jobId);              // terminal — stop watching
+          // If we asked a peer for this, hand the answer back to the waiting
+          // executor. This is the return path that makes delegation possible.
+          ask.settle(jobId, data);
         }
         return;
       }
@@ -240,7 +285,8 @@ export default definePluginEntry({
 
       if (topic === topics.invoke && data) {
         dispatcher.dispatch(
-          { jobId: data.jobId, service: data.service, args: data.args, requestedBy: data.requestedBy },
+          { jobId: data.jobId, service: data.service, args: data.args, requestedBy: data.requestedBy,
+            parentJobId: data.parentJobId, rootJobId: data.rootJobId, depth: data.depth },
           // Populated by an EMQX rule-engine enrichment when verifyOwner is on.
           { clientUsername: data.client_username ?? data.clientUsername },
         );
@@ -255,6 +301,9 @@ export default definePluginEntry({
       [topics.cancel]: { qos: 1 },
       [topics.config]: { qos: 1 },
       [`${conf.mesh.root}/jobs/#`]: { qos: 1 },   // history for the panel
+      // Retained, so subscribing reveals the whole mesh immediately.
+      [registryProfileFilter(conf.mesh.root)]: { qos: 1 },
+      [registryStatusFilter(conf.mesh.root)]: { qos: 1 },
     });
 
     transport.start({
@@ -263,7 +312,7 @@ export default definePluginEntry({
           JSON.stringify({ status: "online", timestamp: new Date().toISOString() }),
           { qos: 1, retain: true });
         registry.publishProfile();
-        logger.info(`connected (MQTT ${conf.broker.protocolVersion === 5 ? "5" : "3.1.1"}) — commands + jobs-history subscribed`);
+        logger.info(`connected (MQTT ${conf.broker.protocolVersion === 5 ? "5" : "3.1.1"}) — commands, jobs and peer registry subscribed`);
         sse.broadcast("status", snapshot());
       },
       onMessage,
@@ -291,6 +340,75 @@ export default definePluginEntry({
         } catch (err: any) {
           return { content: [{ type: "text" as const, text: `Failed: ${err.message}` }], isError: true };
         }
+      },
+    });
+
+    /**
+     * Delegation. This is what makes it a mesh rather than a set of agents that
+     * happen to share a broker: an executor can hand work to the agent that
+     * owns that capability and use the answer in its own reply.
+     */
+    api.registerTool({
+      name: "mesh_ask",
+      description:
+        "Ask another agent on the mesh to do a job you are not best placed to do, wait for its " +
+        "answer, and receive the result. Use mesh_peers first to see who offers what.",
+      parameters: Type.Object({
+        agent: Type.String({ description: "Agent id of the peer to ask (from mesh_peers)." }),
+        service: Type.String({ description: "Capability that peer offers, e.g. schema.review" }),
+        args: Type.Optional(Type.Any({ description: "Arguments matching that capability's requestSchema." })),
+        parentJobId: Type.Optional(Type.String({
+          description: "The job you are currently executing. Pass it so the chain can be traced and cancelled as one request.",
+        })),
+      }),
+      async execute(_id: string, params: { agent: string; service: string; args?: any; parentJobId?: string }) {
+        const outcome = await ask.ask({
+          agent: params.agent,
+          service: params.service,
+          args: params.args ?? {},
+          parentJobId: params.parentJobId,
+        });
+        if (!outcome.ok) {
+          return {
+            content: [{ type: "text" as const, text: `mesh_ask failed: ${outcome.error}` }],
+            isError: true,
+          };
+        }
+        return {
+          content: [{
+            type: "text" as const,
+            text: `Answer from ${outcome.agent} (job ${outcome.jobId}):\n` +
+                  JSON.stringify(outcome.result, null, 2),
+          }],
+        };
+      },
+    });
+
+    api.registerTool({
+      name: "mesh_peers",
+      description:
+        "List the other agents on this mesh and the capabilities each offers. Use this to find " +
+        "which agent to ask when a job needs expertise you do not have.",
+      parameters: Type.Object({
+        service: Type.Optional(Type.String({ description: "Only show agents offering this capability." })),
+      }),
+      async execute(_id: string, params: { service?: string }) {
+        const list = params.service ? peers.providersOf(params.service) : peers.list();
+        if (!list.length) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: params.service
+                ? `No agent on this mesh offers "${params.service}".`
+                : "No other agents have published a profile to this mesh.",
+            }],
+          };
+        }
+        const text = list.map((p) =>
+          `${p.agentId}${p.online ? "" : " (offline)"} — ${p.displayName ?? "no name"}\n` +
+          p.capabilities.map((c) => `    ${c.service}${c.description ? `: ${c.description}` : ""}`).join("\n"),
+        ).join("\n");
+        return { content: [{ type: "text" as const, text }] };
       },
     });
 

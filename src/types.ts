@@ -5,7 +5,7 @@
  * dragging the MQTT client or the plugin SDK along with them.
  */
 
-export const PROTOCOL_VERSION = "1.2";
+export const PROTOCOL_VERSION = "1.3";
 
 // ── Configuration ──────────────────────────────────────
 
@@ -35,6 +35,13 @@ export interface MeshConfig {
   verifyOwner?: boolean;
   /** Hard wall-clock cap per job before the mesh declares it failed. Default 30 min. */
   maxJobDurationMs?: number;
+  /**
+   * How many delegation hops a request may travel (A asks B asks C = depth 2).
+   * Bounds both runaway fan-out and A→B→A cycles. Default 4.
+   */
+  maxDepth?: number;
+  /** How long mesh_ask waits for a peer's terminal result. Default 10 min. */
+  askTimeoutMs?: number;
   /**
    * Deployment values substituted into ${VAR} placeholders in capability
    * prompts, so one catalog runs everywhere and only the bindings differ.
@@ -104,6 +111,16 @@ export interface JobRecord {
    * all.
    */
   events?: JobEvent[];
+  /** The job that asked for this one; absent on a request that entered the mesh. */
+  parentJobId?: string;
+  /** The original request every job in a delegation chain shares. */
+  rootJobId?: string;
+  /** Hops from the root. 0 for a request that entered the mesh directly. */
+  depth?: number;
+  /** True when this job is one WE asked a peer to do, rather than one we ran. */
+  delegated?: boolean;
+  /** For a delegated job: which peer is doing the work. */
+  delegatedTo?: string;
   createdAt?: number;
   finishedAt?: number;
   updatedAt: number;
@@ -140,6 +157,27 @@ export interface DispatchRequest {
   service: string;
   args?: Record<string, unknown>;
   requestedBy?: string;
+  /** Lineage, set by the asking agent so a chain can be traced end to end. */
+  parentJobId?: string;
+  rootJobId?: string;
+  depth?: number;
+}
+
+/** Another agent on the mesh, learned from its retained registry profile. */
+export interface Peer {
+  agentId: string;
+  displayName?: string;
+  protocolVersion?: string;
+  online: boolean;
+  capabilities: Array<{
+    service: string;
+    description?: string;
+    requestSchema?: Record<string, unknown>;
+    avgLatency?: string;
+  }>;
+  ownerPolicy?: { required?: boolean; verified?: boolean };
+  /** When we last heard anything from this agent. */
+  lastSeen: number;
 }
 
 export interface DispatchOptions {

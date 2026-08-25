@@ -1,4 +1,4 @@
-# Agent Mesh Protocol — v1.2
+# Agent Mesh Protocol — v1.3
 
 MQTT mesh for human/agent → agent job dispatch. Broker root: `agents`.
 
@@ -90,6 +90,87 @@ into the executor's instructions.
 
 Note the boundary this respects: env vars supply *identifiers and configuration*, not
 credentials for the mesh to use. Authentication still belongs to the executor.
+
+## Delegation: agents asking agents
+
+Each agent owns distinct capabilities. An agent that meets work outside its own asks the agent
+that owns it — a human simply enters the mesh at one agent, and work flows from there.
+
+Requests are **directed, never broadcast**. `invoke` names one agent, so a receiving agent never
+decides whether to serve: it was addressed for a capability it publishes, so it does the work.
+There is no bidding and no contention. The only choice happens on the **asking** side — which
+agent to ask — which is why every agent subscribes to the registry.
+
+### Discovery
+
+Every agent subscribes to the retained registry of the whole mesh:
+
+```
+<root>/registry/+/profile      capabilities of every agent
+<root>/registry/+/status       who is online
+```
+
+Because both are retained, an agent learns the entire mesh the moment it subscribes — no
+announcement round, no waiting for peers to speak. An agent's own profile arrives on the
+wildcard and is ignored.
+
+### Asking
+
+An ask is an ordinary `invoke` to the peer's command topic, with `requestedBy` set to the
+**asking agent's id**. Results therefore route to the asker's own owner scope, which it already
+subscribes to — that is the return path.
+
+```json
+{ "service": "schema.review",
+  "args": { "migration": "…" },
+  "requestedBy": "conan",
+  "jobId": "ask-mt7k2p-9f3c",
+  "parentJobId": "rev-118",
+  "rootJobId": "rev-118",
+  "depth": 1 }
+```
+
+The asking agent **waits** for the terminal result and uses it in its own work. That is the point
+of delegation: conan asks dba because it needs dba's answer to finish, so the entry agent returns
+one complete reply rather than the requester assembling fragments.
+
+### Lineage
+
+Every ask creates **its own job with its own id**. A chain of agents is a chain of jobs, not one
+job passed around, so three fields link them:
+
+| Field | Meaning |
+|---|---|
+| `parentJobId` | the job that asked for this one |
+| `rootJobId` | the original request every job in the chain shares |
+| `depth` | hops from the root; `0` entered the mesh directly |
+
+```
+rev-118    parent —          root rev-118    depth 0
+ask-9f3c   parent rev-118    root rev-118    depth 1
+ask-2b71   parent ask-9f3c   root rev-118    depth 2
+```
+
+Without this, a five-agent chain is five unrelated ids: a failure cannot be attributed to the
+request that caused it, and a cancel has no way to find what to stop.
+
+### Hop limit
+
+`mesh.maxDepth` (default `4`) bounds the chain. A request arriving deeper than the limit is
+**rejected before any work starts** — a cycle allowed to begin is a cycle that runs until
+something else stops it. The asking side refuses too, so nothing reaches the wire.
+
+### Cancel propagation
+
+Cancelling a job cancels everything it delegated: the bridge publishes `cancel` to each peer it
+asked, and those peers cancel *their* children in turn. One cancel unwinds the whole chain
+without any agent needing to know its shape.
+
+### What this does not solve
+
+Delegation inherits the trust model below. `requestedBy` on an ask is the asking agent's
+self-declared id, exactly as with a human requester — a peer cannot verify who really asked
+unless the broker enforces it.
 
 ## Credentials & scope boundary
 
@@ -283,6 +364,18 @@ The panel consumes the SSE stream and only falls back to polling if the stream d
 `web.auth` to require a bearer token — it is accepted as an `Authorization` header, or as
 `?token=` for the SSE stream, since `EventSource` cannot set headers. This setting was
 previously declared but never enforced; it is now enforced on every route.
+
+## Changes v1.2 → v1.3
+
+Delegation, which is what makes this a mesh rather than a set of agents sharing a broker:
+
+- Agents subscribe to `registry/+/profile` and `registry/+/status` and keep a live peer
+  directory. Previously every agent published a catalog that nobody read.
+- An agent can ask a peer and **receive the answer**. Publishing to a peer was always possible;
+  the return path was not, so an agent could notify a peer but never use its reply.
+- `parentJobId`, `rootJobId` and `depth` link the jobs of one request into a traceable chain.
+- `mesh.maxDepth` bounds chain length, refusing before anything is published.
+- Cancelling a job cancels what it delegated, recursively.
 
 ## Changes v1.1 → v1.2
 

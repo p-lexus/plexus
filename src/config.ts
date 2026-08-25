@@ -27,6 +27,8 @@ export interface ResolvedConfig {
     requireOwner: boolean;
     verifyOwner: boolean;
     maxJobDurationMs: number;
+    maxDepth: number;
+    askTimeoutMs: number;
     promptVars: Record<string, string>;
   };
   web: {
@@ -46,6 +48,8 @@ export const DEFAULTS = {
   protocolVersion: 4 as const,
   sessionExpirySeconds: 86_400,
   maxJobDurationMs: 30 * 60_000,
+  maxDepth: 4,
+  askTimeoutMs: 10 * 60_000,
   webPort: 8765,
   webBasePath: "/mqtt-bridge/ui",
   sessionKey: "agent:main:main",
@@ -82,6 +86,8 @@ export function resolveConfig(cfg: Partial<PluginConfig>, pluginDir: string): Re
       requireOwner: mesh.requireOwner !== false,   // default true
       verifyOwner: mesh.verifyOwner === true,      // default false
       maxJobDurationMs: mesh.maxJobDurationMs ?? DEFAULTS.maxJobDurationMs,
+      maxDepth: mesh.maxDepth ?? DEFAULTS.maxDepth,
+      askTimeoutMs: mesh.askTimeoutMs ?? DEFAULTS.askTimeoutMs,
       promptVars: (mesh.promptVars ?? {}) as Record<string, string>,
     },
     web: {

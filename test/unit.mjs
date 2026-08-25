@@ -21,9 +21,14 @@ const { resolveConfig, resolveEnvRef, DEFAULTS } = await import(dist("config.js"
 const { deriveClientId } = await import(dist("mesh/transport.js"));
 
 let pass = 0, fail = 0;
+const queue = [];
+// Collected then awaited in order, so async assertions cannot report after the
+// summary has already printed.
 function t(name, fn) {
-  try { fn(); console.log(`✅ ${name}`); pass++; }
-  catch (e) { console.log(`❌ ${name}\n     ${e.message}`); fail++; }
+  queue.push(async () => {
+    try { await fn(); console.log(`✅ ${name}`); pass++; }
+    catch (e) { console.log(`❌ ${name}\n     ${e.message}`); fail++; }
+  });
 }
 const quietLogger = { info() {}, warn() {}, error() {}, alert() {} };
 
@@ -233,6 +238,145 @@ t("clientId differs per install path, and honours an explicit override", () => {
   assert.notEqual(deriveClientId("/plugins/a"), deriveClientId("/plugins/b"));
   assert.equal(deriveClientId("/plugins/a", "mine"), "mine");
 });
+
+
+// ── peer registry ───────────────────────────────────────
+const { createPeerRegistry } = await import(dist("mesh/peers.js"));
+
+t("peers are learned from retained profiles, and self is ignored", () => {
+  const r = createPeerRegistry("me", quietLogger, () => {});
+  r.onProfile("me", { capabilities: [{ service: "x" }] });
+  assert.equal(r.size, 0, "our own profile comes back on the wildcard and must be skipped");
+  r.onProfile("dba", { displayName: "DBA", capabilities: [{ service: "schema.review" }] });
+  assert.equal(r.size, 1);
+  assert.equal(r.get("dba").capabilities[0].service, "schema.review");
+});
+t("presence tracks status messages", () => {
+  const r = createPeerRegistry("me", quietLogger, () => {});
+  r.onProfile("dba", { capabilities: [{ service: "s" }] });
+  r.onStatus("dba", { status: "online" });
+  assert.equal(r.get("dba").online, true);
+  r.onStatus("dba", { status: "offline" });
+  assert.equal(r.get("dba").online, false);
+});
+t("providersOf finds agents by capability, online first", () => {
+  const r = createPeerRegistry("me", quietLogger, () => {});
+  r.onProfile("a", { capabilities: [{ service: "review" }] });
+  r.onProfile("b", { capabilities: [{ service: "review" }] });
+  r.onProfile("c", { capabilities: [{ service: "other" }] });
+  r.onStatus("b", { status: "online" });
+  const found = r.providersOf("review");
+  assert.equal(found.length, 2);
+  assert.equal(found[0].agentId, "b", "online peers rank first");
+  assert.equal(r.providersOf("nothing").length, 0);
+});
+t("summary lists only online peers with capabilities", () => {
+  const r = createPeerRegistry("me", quietLogger, () => {});
+  r.onProfile("dba", { capabilities: [{ service: "schema.review" }] });
+  assert.match(r.summary(), /No other agents/);
+  r.onStatus("dba", { status: "online" });
+  assert.match(r.summary(), /dba: schema\.review/);
+});
+
+// ── delegation ──────────────────────────────────────────
+const { createAskService } = await import(dist("mesh/ask.js"));
+
+function askHarness(opts = {}) {
+  const published = [];
+  const peers = new Map(Object.entries(opts.peers ?? {
+    dba: { agentId: "dba", online: true, capabilities: [{ service: "schema.review" }], lastSeen: 0 },
+  }));
+  const svc = createAskService({
+    selfAgentId: "conan",
+    meshRoot: "agents",
+    maxDepth: opts.maxDepth ?? 4,
+    timeoutMs: opts.timeoutMs ?? 50,
+    logger: quietLogger,
+    publish: (topic, payload) => published.push({ topic, payload: JSON.parse(payload) }),
+    peer: (id) => peers.get(id),
+    lineageOf: opts.lineageOf ?? (() => ({ depth: 0 })),
+    onDelegated: () => {},
+  });
+  return { svc, published };
+}
+
+t("ask publishes to the peer's invoke topic with us as requester", async () => {
+  const { svc, published } = askHarness();
+  const p = svc.ask({ agent: "dba", service: "schema.review", args: { m: "1" }, parentJobId: "rev-1" });
+  assert.equal(published.length, 1);
+  assert.equal(published[0].topic, "agents/commands/dba/invoke");
+  const body = published[0].payload;
+  assert.equal(body.requestedBy, "conan", "results must route back to us");
+  assert.equal(body.parentJobId, "rev-1");
+  assert.equal(body.depth, 1);
+  svc.settle(body.jobId, { type: "review", verdict: "OK" });
+  const out = await p;
+  assert.equal(out.ok, true);
+  assert.equal(out.result.verdict, "OK");
+});
+t("a terminal result resolves the waiting ask", async () => {
+  const { svc, published } = askHarness();
+  const p = svc.ask({ agent: "dba", service: "schema.review" });
+  const jobId = published[0].payload.jobId;
+  assert.equal(svc.pendingCount, 1);
+  assert.equal(svc.settle(jobId, { type: "review", ok: 1 }), true);
+  assert.equal(svc.settle(jobId, { type: "review" }), false, "settling twice is a no-op");
+  await p;
+  assert.equal(svc.pendingCount, 0);
+});
+t("an error result surfaces as a failed ask, not a hang", async () => {
+  const { svc, published } = askHarness();
+  const p = svc.ask({ agent: "dba", service: "schema.review" });
+  svc.settle(published[0].payload.jobId, { type: "error", error: "boom" });
+  const out = await p;
+  assert.equal(out.ok, false);
+  assert.match(out.error, /boom/);
+});
+t("an unanswered ask times out rather than hanging forever", async () => {
+  const { svc } = askHarness({ timeoutMs: 30 });
+  const out = await svc.ask({ agent: "dba", service: "schema.review" });
+  assert.equal(out.ok, false);
+  assert.match(out.error, /did not answer/);
+  assert.equal(svc.pendingCount, 0);
+});
+t("asking yourself is refused", async () => {
+  const { svc } = askHarness();
+  const out = await svc.ask({ agent: "conan", service: "schema.review" });
+  assert.equal(out.ok, false);
+  assert.match(out.error, /cannot ask yourself/);
+});
+t("asking an unknown agent, or for a capability it lacks, is refused", async () => {
+  const { svc } = askHarness();
+  assert.match((await svc.ask({ agent: "ghost", service: "x" })).error, /unknown agent/);
+  assert.match((await svc.ask({ agent: "dba", service: "nope" })).error, /does not offer/);
+});
+t("the hop limit stops a cycle before it is published", async () => {
+  const { svc, published } = askHarness({ maxDepth: 2, lineageOf: () => ({ depth: 2 }) });
+  const out = await svc.ask({ agent: "dba", service: "schema.review", parentJobId: "j" });
+  assert.equal(out.ok, false);
+  assert.match(out.error, /depth limit/);
+  assert.equal(published.length, 0, "nothing may go on the wire once the limit is hit");
+});
+t("cancelling a parent cancels what it delegated, and tells the peer", async () => {
+  const { svc, published } = askHarness({ timeoutMs: 5000 });
+  const p = svc.ask({ agent: "dba", service: "schema.review", parentJobId: "rev-9" });
+  assert.equal(svc.childrenOf("rev-9").length, 1);
+  const n = svc.cancelChildren("rev-9", "alice");
+  assert.equal(n, 1);
+  const cancelMsg = published.find((m) => m.topic === "agents/commands/dba/cancel");
+  assert.ok(cancelMsg, "the peer must be told to stop");
+  const out = await p;
+  assert.equal(out.ok, false);
+  assert.match(out.error, /cancelled/);
+  assert.equal(svc.pendingCount, 0);
+});
+
+// Ask timeouts are unref'd so a pending delegation never keeps the gateway
+// alive. In a bare test process that means the loop can drain before one
+// fires, so hold it open for the duration of the run.
+const keepAlive = setInterval(() => {}, 1000);
+for (const run of queue) await run();
+clearInterval(keepAlive);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
