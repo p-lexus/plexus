@@ -11,7 +11,6 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MoGhali/plexus/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/MoGhali/plexus/actions/workflows/ci.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="License: Apache 2.0" src="https://img.shields.io/badge/license-Apache%202.0-3fb9a5"></a>
   <a href="PROTOCOL.md"><img alt="Protocol v1.3" src="https://img.shields.io/badge/protocol-v1.3-3fb9a5"></a>
   <img alt="Node 18+" src="https://img.shields.io/badge/node-%E2%89%A5%2018-3fb9a5">
@@ -308,9 +307,10 @@ can delegate to agents running on someone else's.
 | yours | [docs/HOSTS.md](docs/HOSTS.md) | |
 
 These two share no code — different languages, different MQTT clients, different plugin APIs,
-nothing in common but [PROTOCOL.md](PROTOCOL.md). CI stands them both up against one broker and
-checks that each can discover, delegate to and answer the other, with lineage intact across the
-language boundary:
+nothing in common but [PROTOCOL.md](PROTOCOL.md). There is a test that stands them both up
+against one broker and checks each can discover, delegate to and answer the other, with lineage
+intact across the language boundary — run it with
+`python hosts/hermes/tests/test_interop.py`:
 
 ```
   hermes plugin online, offering research.summarise
@@ -936,15 +936,19 @@ inflating a deployment. The script says what to install if they are missing.
 
 Five suites. `test/unit.mjs` covers the bridge, `test/render-check.mjs` executes every console
 view, `test/packages.mjs` covers the library and its plugins, and the two Python files cover the
-Hermes host plugin. All of them include **end-to-end tests against a live broker** — skipped if
-none is reachable, run for real in CI. Start one locally with `mosquitto -p 1883` to get them.
+Hermes host plugin.
+
+**Start a broker before you trust a green run.** The end-to-end tests — durability, delegation,
+retained-replay suppression, cross-language interop — skip themselves when no broker is
+reachable, and a suite that prints "48 passed" having quietly skipped the interesting half is
+worse than one that fails. `mosquitto -p 1883 &` is enough.
 
 `test_interop.py` is the one to read if you read one: it stands a Python agent and a Node agent up
 against a single broker and checks each can discover, delegate to and answer the other. It is the
 only test that can catch the protocol drifting between implementations.
 
-The tests import the **built** output, so a missing `.js` extension in an ESM import fails in CI
-rather than at gateway start. The console check executes every view function against fixtures in
+The tests import the **built** output, so a missing `.js` extension in an ESM import fails in
+`npm test` rather than at gateway start. The console check executes every view function against fixtures in
 a stubbed DOM — fetching the HTML and grepping it proves the file is served, but never runs a
 line of it, which is how a `ReferenceError` in a view once reached production.
 
@@ -988,8 +992,8 @@ job payloads go, and friction if you wanted to try it in five minutes.
 
 **No packaged client outside Node.** `plexus-agent` covers JavaScript. There is a complete
 Python implementation in [`hosts/hermes/protocol.py`](hosts/hermes/protocol.py) — about 400 lines,
-and proven against the JS one in CI — but it ships as part of that plugin rather than as a
-library you can `pip install`. From any other language you are implementing
+and tested against the JS one — but it ships as part of that plugin rather than as a library you
+can `pip install`. From any other language you are implementing
 [PROTOCOL.md](PROTOCOL.md) directly, which is deliberately small but is still more ceremony than
 an import.
 
@@ -1006,7 +1010,7 @@ will happily receive a string, and find out inside the prompt.
 In rough order of how much they'd unlock:
 
 - **Extract the Python client.** The implementation already exists inside the Hermes plugin and
-  is CI-proven against the JS one; packaging it as `plexus-agent-py` is mostly moving files.
+  is tested against the JS one; packaging it as `plexus-agent-py` is mostly moving files.
 - **Verified identity end to end.** A working EMQX rule-engine recipe feeding `mesh.verifyOwner`,
   so owner scoping becomes enforcement rather than convention.
 - **Non-blocking delegation.** Let an asking agent hand off instead of waiting, for fan-out

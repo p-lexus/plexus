@@ -108,6 +108,24 @@ broker on every job.
 **An alert nobody can see is not an alert.** Some deployments capture only info-level plugin
 output, which is why `logger.alert` mirrors to info.
 
+## Before you push
+
+There is no CI. This project is deployed by pulling into a running gateway, so a broken push is
+discovered on the machine doing real work — which makes the checklist below the only thing
+standing between a bad commit and a broken agent.
+
+```bash
+mosquitto -p 1883 &        # FIRST — see below
+npm test
+python hosts/hermes/tests/test_plugin.py     # if you touched hosts/hermes
+python hosts/hermes/tests/test_interop.py    # if you touched anything on the wire
+```
+
+**Start the broker first.** Every end-to-end test skips itself when none is reachable, so
+`npm test` will happily print `48 passed` having quietly not run durability, delegation,
+retained-replay suppression, or cross-language interop. A green suite that skipped the
+interesting half is worse than a red one.
+
 ## Testing
 
 `npm test` builds first and the tests import the **built** output, so a missing `.js` extension

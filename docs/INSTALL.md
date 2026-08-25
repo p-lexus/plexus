@@ -184,8 +184,8 @@ No broker configured means the plugin stays quietly offline rather than failing 
 unreachable shouldn't stop you using your agent.
 
 > **Not yet run against a live Hermes.** The protocol half is tested and interoperates with the
-> JavaScript implementation in CI; the Hermes-facing half is written against their published
-> plugin API and verified against a faithful fake. If your build differs it will fail at
+> JavaScript implementation; the Hermes-facing half is written against their published plugin API
+> and verified against a faithful fake. If your build differs it will fail at
 > `register()` and say so in the log — it cannot take Hermes down.
 
 ---

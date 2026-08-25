@@ -20,9 +20,10 @@ Three, sharing no code. This document is what they agree on:
 | [`hosts/hermes/`](hosts/hermes) | Python | Host plugin for Hermes Agent |
 
 A specification with one implementation is a description of that implementation. The Python and
-JavaScript ones were written independently against this document, and CI stands them up against a
-single broker on every push to check that each can discover, delegate to and answer the other with
-lineage intact — see [`hosts/hermes/tests/test_interop.py`](hosts/hermes/tests/test_interop.py).
+JavaScript ones were written independently against this document, and
+[`hosts/hermes/tests/test_interop.py`](hosts/hermes/tests/test_interop.py) stands them up against
+a single broker to check that each can discover, delegate to and answer the other with lineage
+intact. Run it after any change to this document.
 
 ### Conformance
 
