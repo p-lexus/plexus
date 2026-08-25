@@ -213,8 +213,30 @@ install_openclaw() {
   ok "built"
 
   AGENT="${AGENT_ID:-$(hostname -s 2>/dev/null || echo agent)}"
+  OC_CONFIG="$HOME/.openclaw/openclaw.json"
+
+  # If the plugin is already configured, printing a config block to paste is
+  # actively harmful: it carries a freshly generated web.auth, so following the
+  # instruction would rotate a working token or produce duplicate JSON keys.
+  if [ -f "$OC_CONFIG" ] && grep -q '"mqtt-bridge"' "$OC_CONFIG" 2>/dev/null; then
+    ok "already configured in openclaw.json  ${DIM}(left alone)${R}"
+    if grep -q 'mqtt_publish' "$OC_CONFIG" 2>/dev/null; then
+      ok "mesh tools are allowed"
+    else
+      warn "${B}tools.alsoAllow${R} does not mention mqtt_publish"
+      say "    Without it the agent silently has no mesh tools and jobs finish"
+      say "    without publishing a result. Add to $OC_CONFIG:"
+      say "      ${DIM}\"tools\": { \"alsoAllow\": [\"mqtt_publish\", \"mesh_ask\", \"mesh_peers\"] }${R}"
+    fi
+    say ""
+    say "  Nothing else to do. Restart only if the plugin's code changed:"
+    say "    ${DIM}launchctl kickstart -k gui/\$(id -u)/ai.openclaw.gateway${R}   ${DIM}# macOS${R}"
+    say ""
+    return 0
+  fi
+
   say ""
-  say "  ${B}One manual step left.${R} Add this to ${B}~/.openclaw/openclaw.json${R}:"
+  say "  ${B}One manual step left.${R} Add this to ${B}$OC_CONFIG${R}:"
   say ""
   cat <<EOF
 ${DIM}  {
