@@ -252,6 +252,7 @@ footer ul { list-style: none; margin: 0; padding: 0; display: grid; gap: .4rem; 
     <span class="spacer"></span>
     <a class="navlink opt" href="#problem">Why</a>
     <a class="navlink opt" href="#how">How it works</a>
+    <a class="navlink opt" href="#uses">Use cases</a>
     <a class="navlink opt" href="#console">Console</a>
     <a class="navlink opt" href="#compare">Compare</a>
     <a class="navlink" href="#install">Install</a>
@@ -372,6 +373,89 @@ agents/jobs/alice/rev-118/result   {"verdict":"APPROVE"} <span class="c-com">←
     </div>
   </section>
 
+  <!-- ── use cases ────────────────────────────────────────────────── -->
+  <section id="uses">
+    <div class="wrap">
+      <div class="prose">
+        <p class="eyebrow">Use cases</p>
+        <h2>What this is actually for</h2>
+        <p>Every one of these has the same shape: <strong>the agent that can answer is not the
+          agent that was asked</strong>, and it is somewhere you cannot open a port to.</p>
+      </div>
+
+      <div class="grid g2" style="margin-top:2.4rem">
+
+        <div class="card">
+          <span class="tag">Review that knows your systems</span>
+          <h3>The reviewer that asks a DBA</h3>
+          <p>A code review hits a migration. The reviewing agent has no business judging lock
+            behaviour, so it reads the registry, finds the agent that does, delegates that part
+            and folds the answer into <em>one</em> review.</p>
+          <p style="margin-top:.9rem"><strong>Without it:</strong> one prompt that pretends to know
+            everything, or a human relaying between two chats.</p>
+        </div>
+
+        <div class="card">
+          <span class="tag">Inside the VPN</span>
+          <h3>The agent that can reach production</h3>
+          <p>One agent sits where the logs and the read replica are. Everyone else asks it instead
+            of everyone else getting VPN credentials. It dials <em>out</em> to the broker, so
+            nothing inbound is opened and nothing new is exposed.</p>
+          <p style="margin-top:.9rem"><strong>Without it:</strong> a bastion, a tunnel, and a
+            widening circle of people with production access.</p>
+        </div>
+
+        <div class="card">
+          <span class="tag">Machines that sleep</span>
+          <h3>The colleague's laptop</h3>
+          <p>Someone's machine holds context nobody else has — a checked-out monorepo, a decade of
+            domain knowledge. Ask it at 2am; the broker queues the job and delivers it when the
+            lid opens. The result is retained, so you collect it whenever you like.</p>
+          <p style="margin-top:.9rem"><strong>Without it:</strong> "are you online?", or a queue
+            and a retry policy you now maintain.</p>
+        </div>
+
+        <div class="card">
+          <span class="tag">CI and cron</span>
+          <h3>A pipeline that asks for an opinion</h3>
+          <p>A CI job publishes an invoke and exits. No webhook endpoint to host, no connection to
+            hold open, no callback URL that has to be reachable from wherever the agent happens to
+            be. The verdict is on a retained topic when the next stage wants it.</p>
+          <p style="margin-top:.9rem"><strong>Without it:</strong> a public callback endpoint, and
+            a runner that stays alive waiting for it.</p>
+        </div>
+
+        <div class="card">
+          <span class="tag">Different stacks</span>
+          <h3>Agents that were never meant to meet</h3>
+          <p>An OpenClaw agent in TypeScript and a Hermes agent in Python, discovering and
+            delegating to each other with nothing in common but the specification. Adding a
+            platform is a host plugin, not a negotiation.</p>
+          <p style="margin-top:.9rem"><strong>Without it:</strong> whichever framework got there
+            first wins, and the others integrate by scraping.</p>
+        </div>
+
+        <div class="card">
+          <span class="tag">Telling people</span>
+          <h3>One place that does delivery</h3>
+          <p>Results are matched against routes and delivered to Slack, a pull-request comment or
+            a webhook — by a plugin no agent knows about. Adding a channel touches no agent, and
+            no agent needs a Slack token.</p>
+          <p style="margin-top:.9rem"><strong>Without it:</strong> every agent grows a formatter
+            and a credential, and it stops scaling at the third one.</p>
+        </div>
+
+      </div>
+
+      <div class="prose" style="margin-top:2.4rem">
+        <p><strong>When it is the wrong tool:</strong> if your agents are already reachable HTTP
+          services in one cluster, you do not need a broker in the middle — use whatever you have.
+          Plexus earns its place when the interesting agent is behind something, asleep, or
+          somebody else's.</p>
+      </div>
+    </div>
+  </section>
+
   <!-- ── console ──────────────────────────────────────────────────── -->
   <section id="console">
     <div class="wrap">
@@ -397,27 +481,15 @@ agents/jobs/alice/rev-118/result   {"verdict":"APPROVE"} <span class="c-com">←
           longer exists.</figcaption>
       </figure>
 
-      <div class="grid g2" style="margin-top:3rem">
-        <figure style="margin:0">
-          <img src="assets/jobs.png" alt="A job timeline showing each milestone with timestamps." loading="lazy">
-          <figcaption>Every job keeps its milestone timeline, so <em>“why did this run twice?”</em>
-            is answerable afterwards rather than only while it is happening.</figcaption>
-        </figure>
-        <figure style="margin:0">
-          <img src="assets/services.png" alt="The capability editor, checking a prompt against its declared arguments." loading="lazy">
-          <figcaption>Capabilities are edited as data. A prompt using <code>{{repo}}</code> with no
-            matching argument renders empty at dispatch and silently produces a bad job — so the
-            editor refuses to save it.</figcaption>
-        </figure>
+      <div class="prose" style="margin-top:2.2rem">
+        <p>Three things in there are load-bearing rather than decorative. Every job keeps its
+          milestone timeline, so <em>“why did this run twice?”</em> is answerable afterwards rather
+          than only while it is happening. Capabilities are edited as data, and a prompt using
+          <code>{{repo}}</code> with no matching argument is <strong>refused</strong> — it would
+          render empty at dispatch and silently produce a bad job. And deployment variables are
+          write-only: the API returns a name, a source and a masked hint, and has no path that
+          reads a value back.</p>
       </div>
-
-      <figure>
-        <img src="assets/variables.png" alt="The variables tab, showing names and sources with values masked." loading="lazy">
-        <figcaption>Deployment values are <strong>write-only</strong>: the API returns a name, a
-          source and a masked hint, and has no path that reads a value back. They resolve at
-          dispatch and never in the catalog — which is published to a retained topic, where
-          resolving them would broadcast every secret to the registry.</figcaption>
-      </figure>
     </div>
   </section>
 

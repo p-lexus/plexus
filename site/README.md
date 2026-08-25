@@ -5,6 +5,9 @@ where the page sits at the root — which is what makes GitHub Pages and a custo
 without the `/docs` contortion this repository would need. This folder is the source of truth;
 copy `index.html`, `assets/` and `CNAME` across when the page changes.
 
+The only assets are the console tour and its poster frame — the still screenshots came out once
+the video went in, because showing the same six screens twice is just a longer page.
+
 One file, plus screenshots. `site/index.html` is entirely self-contained — the logo is inline SVG, the terminal
 recordings are inline data URIs, the CSS and the tab script are in the page. There is no build
 step, no bundler and no external request at runtime, so it renders identically from `file://`, a
