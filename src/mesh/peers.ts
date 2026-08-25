@@ -53,6 +53,19 @@ export function createPeerRegistry(selfAgentId: string, logger: Logger, onChange
     onProfile(agentId, profile) {
       // Our own retained profile comes back to us on the wildcard; ignore it.
       if (agentId === selfAgentId) return;
+
+      // An empty retained payload is how MQTT deletes a retained message, so an
+      // agent clearing its profile has left the mesh. Drop it rather than
+      // keeping a husk with no capabilities that can never be asked for
+      // anything.
+      if (profile === null || profile === undefined) {
+        if (peers.delete(agentId)) {
+          logger.info(`peer ${agentId} left the mesh`);
+          onChange();
+        }
+        return;
+      }
+
       const p = touch(agentId);
       const known = p.capabilities.length;
       p.displayName = profile?.displayName ?? p.displayName;

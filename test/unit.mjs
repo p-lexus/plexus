@@ -251,6 +251,15 @@ t("peers are learned from retained profiles, and self is ignored", () => {
   assert.equal(r.size, 1);
   assert.equal(r.get("dba").capabilities[0].service, "schema.review");
 });
+t("an agent that clears its retained profile leaves the mesh", () => {
+  const r = createPeerRegistry("me", quietLogger, () => {});
+  r.onProfile("gone", { capabilities: [{ service: "s" }] });
+  assert.equal(r.size, 1);
+  // An empty retained payload parses to null: the agent deleted its profile.
+  r.onProfile("gone", null);
+  assert.equal(r.size, 0, "a departed agent must not linger as an empty row");
+  assert.equal(r.get("gone"), undefined);
+});
 t("presence tracks status messages", () => {
   const r = createPeerRegistry("me", quietLogger, () => {});
   r.onProfile("dba", { capabilities: [{ service: "s" }] });
