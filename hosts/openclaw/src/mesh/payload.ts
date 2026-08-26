@@ -88,6 +88,33 @@ export function publishRefusal(
 }
 
 /**
+ * Declared-required arguments the caller did not supply.
+ *
+ * Narrower than `unresolvedPlaceholders`, and deliberately so. A prompt may
+ * reference `{{something}}` the schema never declared — that is an incomplete
+ * schema, not a malformed request, and refusing it would break capabilities
+ * that work today. But a field the capability's own author declared without a
+ * `?` is required by the author, and a job missing it cannot be executed
+ * meaningfully: the executor is handed "Review pull request  in acme/app" and
+ * spends a real run failing at it.
+ */
+export function missingRequiredArgs(
+  template: string,
+  args: Record<string, unknown>,
+  requestSchema: Record<string, unknown> = {},
+): string[] {
+  const out = new Set<string>();
+  for (const m of String(template).matchAll(/\{\{(\w+)\}\}/g)) {
+    const k = m[1];
+    if (k === "jobId" || k === "requestedBy") continue;
+    if (args?.[k] !== undefined) continue;
+    const declared = requestSchema?.[k];
+    if (typeof declared === "string" && !/\?/.test(declared)) out.add(k);
+  }
+  return [...out];
+}
+
+/**
  * Which placeholders in a template will render as nothing.
  *
  * `renderPrompt` substitutes an empty string for anything it cannot resolve.

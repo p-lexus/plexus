@@ -5,17 +5,46 @@
   "type": "module",
   "main": "./index.js",
   "types": "./index.d.ts",
-  "bin": { "plexus": "./bin/plexus.js" },
-  "exports": {
-    ".": { "types": "./index.d.ts", "import": "./index.js" },
-    "./plugin": "./plugin.js"
+  "bin": {
+    "plexus": "./bin/plexus.js"
   },
-  "files": ["index.js", "index.d.ts", "plugin.js", "bin", "plexus.example.json", "README.md"],
-  "engines": { "node": ">=18" },
-  "keywords": ["agent", "mesh", "mqtt", "multi-agent", "protocol", "plexus", "ai", "delegation"],
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js"
+    },
+    "./plugin": "./plugin.js",
+    "./acl": "./acl.js"
+  },
+  "files": [
+    "index.js",
+    "acl.js",
+    "index.d.ts",
+    "plugin.js",
+    "bin",
+    "plexus.example.json",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "agent",
+    "mesh",
+    "mqtt",
+    "multi-agent",
+    "protocol",
+    "plexus",
+    "ai",
+    "delegation"
+  ],
   "license": "Apache-2.0",
   "author": "Mohanad Ghali",
-  "repository": { "type": "git", "url": "git+https://github.com/MoGhali/plexus.git", "directory": "packages/agent" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MoGhali/plexus.git",
+    "directory": "packages/agent"
+  },
   "homepage": "https://github.com/MoGhali/plexus#readme",
   "dependencies": {
     "mqtt": "^5.10.1"

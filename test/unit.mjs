@@ -13,7 +13,7 @@ import path from "node:path";
 const dist = (p) => new URL(`../dist/${p}`, import.meta.url).href;
 
 const { ownerScope, buildTopics, jobTopicPattern, parseJobTopic, escapeRe } = await import(dist("mesh/topics.js"));
-const { normalizeJobPublish, renderPrompt, unresolvedPlaceholders, publishRefusal } = await import(dist("mesh/payload.js"));
+const { normalizeJobPublish, renderPrompt, unresolvedPlaceholders, publishRefusal, missingRequiredArgs } = await import(dist("mesh/payload.js"));
 const { createJobStore, MAX_HISTORY } = await import(dist("mesh/jobs.js"));
 const { createVarStore, maskValue } = await import(dist("mesh/vars.js"));
 const { createAuth } = await import(dist("http/auth.js"));
@@ -170,6 +170,39 @@ t("with no file configured the store still works, just without persistence", () 
   const s = createJobStore(() => {});
   s.record({ jobId: "x", state: "done" });
   assert.equal(s.history().length, 1);
+});
+
+// ── a job that cannot run is refused, not attempted ─────
+t("a declared-required argument that never arrived is named", () => {
+  const missing = missingRequiredArgs(
+    "Review pull request {{pr}} in {{repo}}", { repo: "acme/app" },
+    { repo: "string (owner/name)", pr: "number" });
+  assert.deepEqual(missing, ["pr"]);
+});
+
+t("an optional argument is never required — the ? is the author's word", () => {
+  const missing = missingRequiredArgs(
+    "Review {{pr}} in {{repo}}. Focus: {{focus}}. Url: {{url}}",
+    { repo: "acme/app", pr: 42 },
+    { repo: "string", pr: "number", focus: "string? (optional)", url: "string? (overrides)" });
+  assert.deepEqual(missing, []);
+});
+
+t("a placeholder the schema never declared is not required", () => {
+  // An incomplete schema is not a malformed request: refusing here would break
+  // capabilities that work today. unresolvedPlaceholders still warns about it.
+  const missing = missingRequiredArgs("Ship {{version}}", {}, {});
+  assert.deepEqual(missing, []);
+  assert.deepEqual(unresolvedPlaceholders("Ship {{version}}", {}, () => true, {}), ["{{version}}"]);
+});
+
+t("a supplied falsy argument counts as supplied", () => {
+  assert.deepEqual(missingRequiredArgs("PR {{pr}}", { pr: 0 }, { pr: "number" }), []);
+  assert.deepEqual(missingRequiredArgs("Force {{force}}", { force: false }, { force: "boolean" }), []);
+});
+
+t("jobId and requestedBy are injected, never demanded from the caller", () => {
+  assert.deepEqual(missingRequiredArgs("job {{jobId}} for {{requestedBy}}", {}, {}), []);
 });
 
 // ── terminal really is terminal ─────────────────────────
