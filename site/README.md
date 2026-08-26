@@ -8,10 +8,10 @@ copy `index.html`, `assets/` and `CNAME` across when the page changes.
 The only assets are the console tour and its poster frame — the still screenshots came out once
 the video went in, because showing the same six screens twice is just a longer page.
 
-One file, plus screenshots. `site/index.html` is entirely self-contained — the logo is inline SVG, the terminal
-recordings are inline data URIs, the CSS and the tab script are in the page. There is no build
-step, no bundler and no external request at runtime, so it renders identically from `file://`, a
-CDN, or a bucket.
+Two pages and three assets. The logo is inline SVG and the terminal recordings are inline data
+URIs; the stylesheet and the theme switch are the only files a page pulls in, and both are served
+from `assets/` beside it. There is no build step, no bundler and no third-party request at
+runtime, so it renders identically from `file://`, a CDN, or a bucket.
 
 ```bash
 open site/index.html          # that's the whole preview process
@@ -24,10 +24,21 @@ open site/index.html          # that's the whole preview process
 | `index.html` | The argument: problem, use cases, console tour, comparison, install |
 | `protocol.html` | The specification — topics, payloads, guarantees, conformance |
 | `assets/plexus.css` | Shared tokens and components. **Both pages use it** |
+| `assets/plexus.js` | The theme switch. **Both pages use it** |
 
 The stylesheet is shared rather than copied into each page, which is why the header nav rules are
 scoped as `header nav` — a bare `nav` selector also claimed the documentation contents rail and
 laid it out as a flex row across the article.
+
+## Light and dark
+
+Both pages follow the reader's system setting, as they always have. The switch in the header pins
+a choice instead, by setting `data-theme` on the root — the attribute the stylesheet was already
+written around — and storing it, so it survives the next visit and the walk between the two pages.
+
+The stored choice is applied by a few lines inline in each `<head>`, not by `plexus.js`. A
+deferred script runs after the first paint, which is one clear flash of the wrong theme on every
+single load.
 
 ## The console tour
 

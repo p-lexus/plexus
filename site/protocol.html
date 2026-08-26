@@ -45,6 +45,19 @@
 .pill.keep { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
 .hero-doc { padding: 3.5rem 0 0; }
 </style>
+<script>
+// Apply a stored theme before the first paint. Doing it at the end of the
+// document is a visible flash of the other theme on every load.
+(function () {
+  try {
+    var t = localStorage.getItem('plexus-theme');
+    if (t === 'dark' || t === 'light') {
+      document.documentElement.setAttribute('data-theme', t);
+      document.documentElement.style.colorScheme = t;
+    }
+  } catch (e) {}
+})();
+</script>
 </head>
 <body>
 
@@ -68,6 +81,12 @@
     <a class="navlink opt" href="index.html#uses">Use cases</a>
     <a class="navlink opt" href="index.html#install">Install</a>
     <a class="navlink" href="protocol.html" style="color:var(--ink)">Protocol</a>
+    <button class="theme" id="theme" type="button" aria-label="Switch theme" title="Switch theme">
+      <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="6" aria-hidden="true">
+        <circle cx="32" cy="32" r="23"/>
+        <path d="M32 9 A23 23 0 0 0 32 55 Z" fill="currentColor" stroke="none"/>
+      </svg>
+    </button>
     <a class="btn" href="https://github.com/MoGhali/plexus">GitHub</a>
   </nav>
 </header>
@@ -652,5 +671,7 @@ deny   subscribe  &lt;root&gt;/jobs/#</code></pre>
   });
 })();
 </script>
+<script src="assets/plexus.js" defer></script>
+
 </body>
 </html>

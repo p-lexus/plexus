@@ -10,6 +10,19 @@
 <meta property="og:type" content="website">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='%2312796a' stroke-width='7' stroke-linecap='square'%3E%3Cpath d='M12 12 L26 26'/%3E%3Cpath d='M38 38 L52 52'/%3E%3Cpath d='M52 12 L38 26'/%3E%3Cpath d='M26 38 L12 52'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="assets/plexus.css">
+<script>
+// Apply a stored theme before the first paint. Doing it at the end of the
+// document is a visible flash of the other theme on every load.
+(function () {
+  try {
+    var t = localStorage.getItem('plexus-theme');
+    if (t === 'dark' || t === 'light') {
+      document.documentElement.setAttribute('data-theme', t);
+      document.documentElement.style.colorScheme = t;
+    }
+  } catch (e) {}
+})();
+</script>
 </head>
 <body>
 
@@ -37,6 +50,12 @@
     <a class="navlink opt" href="#compare">Compare</a>
     <a class="navlink" href="#install">Install</a>
     <a class="navlink" href="protocol.html">Protocol</a>
+    <button class="theme" id="theme" type="button" aria-label="Switch theme" title="Switch theme">
+      <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="6" aria-hidden="true">
+        <circle cx="32" cy="32" r="23"/>
+        <path d="M32 9 A23 23 0 0 0 32 55 Z" fill="currentColor" stroke="none"/>
+      </svg>
+    </button>
     <a class="btn" href="https://github.com/MoGhali/plexus">GitHub</a>
   </nav>
 </header>
@@ -635,5 +654,7 @@ npm run demo</code></pre>
   });
 })();
 </script>
+<script src="assets/plexus.js" defer></script>
+
 </body>
 </html>

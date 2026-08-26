@@ -10,6 +10,10 @@
    ───────────────────────────────────────────────────────────────────── */
 
 :root {
+  /* Native UI — scrollbars, form controls — follows the system until the theme
+     switch pins a choice, which it does by setting color-scheme on the root. */
+  color-scheme: light dark;
+
   --ground:   #f7f6f3;
   --surface:  #ffffff;
   --sunk:     #eeedea;
@@ -103,6 +107,18 @@ header nav .spacer { flex: 1; }
 header nav a.navlink { color: var(--muted); font-size: .84rem; letter-spacing: .02em; }
 header nav a.navlink:hover { color: var(--ink); text-decoration: none; }
 @media (max-width: 720px) { header nav a.navlink.opt { display: none; } }
+
+/* The theme switch. One glyph for both directions: a sun that becomes a moon
+   has to be kept in step with the theme, while a half-filled circle is already
+   the picture of the choice, whichever way round it is. */
+.theme {
+  appearance: none; -webkit-appearance: none; flex: none; cursor: pointer;
+  width: 34px; height: 34px; display: grid; place-items: center; padding: 0;
+  background: var(--surface); color: var(--muted);
+  border: 1px solid var(--wire); border-radius: var(--radius);
+}
+.theme:hover { color: var(--accent); border-color: var(--accent); }
+.theme svg { width: 15px; height: 15px; display: block; }
 
 .btn {
   display: inline-flex; align-items: center; gap: .5rem;
