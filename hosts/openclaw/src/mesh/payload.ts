@@ -56,6 +56,44 @@ export function normalizeJobPublish(
  * pass "${SOME_SECRET}" as an argument value and have the bridge expand it,
  * turning every invoke into an environment read.
  */
+/**
+ * Which placeholders in a template will render as nothing.
+ *
+ * `renderPrompt` substitutes an empty string for anything it cannot resolve.
+ * That is correct at render time and wrong to do silently: the executor is
+ * handed a prompt with holes in it — "Review pull request  in " — and reviews
+ * whatever it can guess from the rest, with nothing anywhere saying an
+ * argument never arrived.
+ *
+ * Optionality comes from the capability's own `requestSchema`, where a `?`
+ * marks a field the caller may omit — the same convention the panel reads. An
+ * omitted optional argument is not a hole; an omitted required one is, and so
+ * is a placeholder the schema never declared at all.
+ */
+export function unresolvedPlaceholders(
+  template: string,
+  args: Record<string, unknown>,
+  isVarBound: (name: string) => boolean,
+  requestSchema: Record<string, unknown> = {},
+): string[] {
+  const out = new Set<string>();
+
+  for (const m of String(template).matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g)) {
+    if (!isVarBound(m[1])) out.add(`\${${m[1]}}`);
+  }
+
+  for (const m of String(template).matchAll(/\{\{(\w+)\}\}/g)) {
+    const k = m[1];
+    if (k === "jobId" || k === "requestedBy") continue;       // injected, never from args
+    if (args?.[k] !== undefined) continue;
+    const declared = requestSchema?.[k];
+    const optional = typeof declared === "string" && /\?/.test(declared);
+    if (!optional) out.add(`{{${k}}}`);
+  }
+
+  return [...out];
+}
+
 export function renderPrompt(
   template: string,
   vars: (name: string) => string,

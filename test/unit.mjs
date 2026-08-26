@@ -13,7 +13,7 @@ import path from "node:path";
 const dist = (p) => new URL(`../dist/${p}`, import.meta.url).href;
 
 const { ownerScope, buildTopics, jobTopicPattern, parseJobTopic, escapeRe } = await import(dist("mesh/topics.js"));
-const { normalizeJobPublish, renderPrompt } = await import(dist("mesh/payload.js"));
+const { normalizeJobPublish, renderPrompt, unresolvedPlaceholders } = await import(dist("mesh/payload.js"));
 const { createJobStore } = await import(dist("mesh/jobs.js"));
 const { createVarStore, maskValue } = await import(dist("mesh/vars.js"));
 const { createAuth } = await import(dist("http/auth.js"));
@@ -103,6 +103,44 @@ t("placeholders and vars both render", () => {
   const out = renderPrompt("DM ${WHO} about {{pr}} in {{repo}} (job {{jobId}})",
     () => "U123", "j1", "alice", { pr: 7, repo: "acme/app" });
   assert.ok(out.includes("U123") && out.includes("7") && out.includes("acme/app") && out.includes("j1"));
+});
+
+// ── prompts that render with holes in them ──────────────
+const bound = (names) => (k) => names.includes(k);
+
+t("a required argument that never arrived is reported", () => {
+  const holes = unresolvedPlaceholders(
+    "Review {{pr}} in {{repo}}", { repo: "acme/app" }, bound([]), { repo: "string", pr: "number" });
+  assert.deepEqual(holes, ["{{pr}}"]);
+});
+
+t("an omitted optional argument is not a hole", () => {
+  const holes = unresolvedPlaceholders(
+    "Review {{pr}} in {{repo}}. Focus: {{focus}}",
+    { repo: "acme/app", pr: 42 }, bound([]),
+    { repo: "string", pr: "number", focus: "string? (optional)" });
+  assert.deepEqual(holes, []);
+});
+
+t("a placeholder the schema never declared is a hole", () => {
+  const holes = unresolvedPlaceholders("Ship {{version}}", {}, bound([]), {});
+  assert.deepEqual(holes, ["{{version}}"]);
+});
+
+t("an unbound variable is reported, a bound one is not", () => {
+  const holes = unresolvedPlaceholders(
+    "DM ${SLACK_REVIEW_RECIPIENTS} and ${MISSING}", {}, bound(["SLACK_REVIEW_RECIPIENTS"]), {});
+  assert.deepEqual(holes, ["${MISSING}"]);
+});
+
+t("jobId and requestedBy are injected, never counted as missing args", () => {
+  const holes = unresolvedPlaceholders("job {{jobId}} for {{requestedBy}}", {}, bound([]), {});
+  assert.deepEqual(holes, []);
+});
+
+t("a falsy argument that was actually supplied is not a hole", () => {
+  const holes = unresolvedPlaceholders("PR {{pr}}", { pr: 0 }, bound([]), { pr: "number" });
+  assert.deepEqual(holes, []);
 });
 
 // ── job store ───────────────────────────────────────────

@@ -16,7 +16,7 @@ import type { Catalog } from "./catalog.js";
 import type { JobStore } from "./jobs.js";
 import type { VarStore } from "./vars.js";
 import { jobEventsTopic, jobResultTopic, ownerScope } from "./topics.js";
-import { renderPrompt } from "./payload.js";
+import { renderPrompt, unresolvedPlaceholders } from "./payload.js";
 
 const WATCHDOG_INTERVAL_MS = 60_000;   // supervisory sweep, not a delivery path
 const REINJECT_AFTER_MS = 5 * 60_000;  // silence required before re-dispatch
@@ -236,6 +236,26 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       : `Agent-mesh job.\nJobId: ${jobId}\nService: ${service}\n` +
         `Description: ${cap.description ?? ""}\nArgs: ${JSON.stringify(args)}\n` +
         (requestedBy ? `Requested by: ${requestedBy}\n` : "") + `\n${briefing}`;
+
+    // A prompt that rendered with holes in it still runs, and still returns
+    // something that reads like an answer. Say so on the job itself: the
+    // gateway log keeps only info-level output from plugins, so a warn here
+    // would be a warning nobody can ever read.
+    if (cap.prompt) {
+      const holes = unresolvedPlaceholders(
+        String(cap.prompt),
+        args,
+        (k) => vars.value(k) !== undefined,
+        (cap.requestSchema ?? {}) as Record<string, unknown>,
+      );
+      if (holes.length) {
+        const note =
+          `rendered empty: ${holes.join(", ")} — the executor was given a prompt ` +
+          `with holes in it`;
+        logger.info(`job ${jobId}: ${note}`);
+        publishEvent(jobId, { type: "prompt_incomplete", note, placeholders: holes }, owner);
+      }
+    }
 
     // Declared delegation: gather what the capability says it depends on,
     // BEFORE the executor starts, then hand it the answers. This path needs no
