@@ -13,7 +13,7 @@ import path from "node:path";
 const dist = (p) => new URL(`../dist/${p}`, import.meta.url).href;
 
 const { ownerScope, buildTopics, jobTopicPattern, parseJobTopic, escapeRe } = await import(dist("mesh/topics.js"));
-const { normalizeJobPublish, renderPrompt, unresolvedPlaceholders } = await import(dist("mesh/payload.js"));
+const { normalizeJobPublish, renderPrompt, unresolvedPlaceholders, publishRefusal } = await import(dist("mesh/payload.js"));
 const { createJobStore } = await import(dist("mesh/jobs.js"));
 const { createVarStore, maskValue } = await import(dist("mesh/vars.js"));
 const { createAuth } = await import(dist("http/auth.js"));
@@ -103,6 +103,30 @@ t("placeholders and vars both render", () => {
   const out = renderPrompt("DM ${WHO} about {{pr}} in {{repo}} (job {{jobId}})",
     () => "U123", "j1", "alice", { pr: 7, repo: "acme/app" });
   assert.ok(out.includes("U123") && out.includes("7") && out.includes("acme/app") && out.includes("j1"));
+});
+
+// ── terminal really is terminal ─────────────────────────
+t("a second result for a finished job is refused — retained means last wins", () => {
+  const why = publishRefusal("result", { cancelled: false, finished: true }, "rev-030");
+  assert.ok(why && /already published a terminal result/.test(why));
+});
+
+t("trailing milestones after completion are allowed — events are not retained", () => {
+  assert.equal(publishRefusal("events", { cancelled: false, finished: true }, "rev-030"), null);
+});
+
+t("a cancelled job refuses everything, milestones included", () => {
+  assert.ok(publishRefusal("result", { cancelled: true, finished: false }, "j1"));
+  assert.ok(publishRefusal("events", { cancelled: true, finished: false }, "j1"));
+});
+
+t("a job still running publishes freely", () => {
+  assert.equal(publishRefusal("result", { cancelled: false, finished: false }, "j1"), null);
+  assert.equal(publishRefusal("events", { cancelled: false, finished: false }, "j1"), null);
+});
+
+t("a topic that is not job traffic is never refused", () => {
+  assert.equal(publishRefusal(null, { cancelled: true, finished: true }, "j1"), null);
 });
 
 // ── prompts that render with holes in them ──────────────

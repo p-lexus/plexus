@@ -57,6 +57,37 @@ export function normalizeJobPublish(
  * turning every invoke into an environment read.
  */
 /**
+ * Whether a publish to a job topic must be refused, and why.
+ *
+ * Results are retained by protocol, so the last publish wins forever. A second
+ * executor — one the watchdog re-dispatched over a job that was merely quiet —
+ * therefore does not produce a duplicate anyone can ignore: it overwrites the
+ * answer with its own, and a late subscriber collects the overwrite. In the
+ * case this was written for, a completed review was replaced by
+ * "already_reviewed" from the executor that arrived second.
+ *
+ * Cancellation refuses everything, which is what the mesh already promises on
+ * cancel_acknowledged. Completion refuses further results only: trailing
+ * milestones are not retained and cost nothing.
+ */
+export function publishRefusal(
+  kind: "events" | "result" | null,
+  state: { cancelled: boolean; finished: boolean },
+  jobId: string,
+): string | null {
+  if (!kind) return null;
+  if (state.cancelled) {
+    return `job ${jobId} was cancelled — its terminal result is already published, ` +
+      `and the mesh promises no further traffic for it`;
+  }
+  if (state.finished && kind === "result") {
+    return `job ${jobId} already published a terminal result — publishing another would ` +
+      `overwrite it on the broker, because results are retained`;
+  }
+  return null;
+}
+
+/**
  * Which placeholders in a template will render as nothing.
  *
  * `renderPrompt` substitutes an empty string for anything it cannot resolve.

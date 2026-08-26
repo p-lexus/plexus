@@ -33,7 +33,7 @@ import {
   buildTopics, jobTopicPattern, parseJobTopic, ownerScope,
   registryPattern, parseRegistryTopic, registryProfileFilter, registryStatusFilter,
 } from "./mesh/topics.js";
-import { normalizeJobPublish } from "./mesh/payload.js";
+import { normalizeJobPublish, publishRefusal } from "./mesh/payload.js";
 import { createCatalog } from "./mesh/catalog.js";
 import { createVarStore } from "./mesh/vars.js";
 import { createJobStore } from "./mesh/jobs.js";
@@ -85,6 +85,8 @@ const ACTIVE_SLOT = Symbol.for("mqtt-bridge.instance");
 interface ActiveInstance {
   publishCounted(topic: string, payload: string, opts?: { qos?: 0 | 1 | 2; retain?: boolean }): void;
   normalize(topic: string, payload: string, retain?: boolean): { payload: string; retain: boolean };
+  /** Why this publish must not go out, or null if it may. */
+  refuse(topic: string): string | null;
   ask(req: { agent: string; service: string; args?: any; parentJobId?: string }): Promise<any>;
   peers(): any[];
   providersOf(service: string): any[];
@@ -139,6 +141,11 @@ export default definePluginEntry({
       async execute(_id: string, params: { payload: string; topic: string; retain?: boolean }) {
         const inst = active();
         if (!inst) return notReady("mqtt_publish");
+        const refusal = inst.refuse(params.topic);
+        if (refusal) {
+          logger.info(`mqtt_publish refused: ${refusal}`);
+          return { content: [{ type: "text" as const, text: `Refused: ${refusal}.` }], isError: true };
+        }
         try {
           const { payload, retain } = inst.normalize(params.topic, params.payload, params.retain);
           inst.publishCounted(params.topic, payload, { qos: 1, retain });
@@ -451,6 +458,14 @@ export default definePluginEntry({
       publishCounted: transport.publishCounted,
       normalize: (topic: string, payload: string, retain?: boolean) =>
         normalizeJobPublish(jobTopicRe, topic, payload, retain),
+      refuse: (topic: string) => {
+        const parsed = parseJobTopic(jobTopicRe, topic);
+        if (!parsed) return null;
+        return publishRefusal(parsed.kind, {
+          cancelled: jobs.cancelled.has(parsed.jobId),
+          finished: Boolean(jobs.find(parsed.jobId)?.finishedAt),
+        }, parsed.jobId);
+      },
       ask: (req: any) => ask.ask(req),
       peers: () => peers.list(),
       providersOf: (service: string) => peers.providersOf(service),
