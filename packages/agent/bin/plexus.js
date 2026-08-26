@@ -39,7 +39,7 @@ if (has("help") || command === "help") {
   A config names the agent and the plugins it loads:
 
     { "broker": "mqtt://localhost:1883",
-      "agentId": "conan",
+      "agentId": "reviewer",
       "plugins": {
         "plexus-notify": { "channels": {…}, "routes": […] }
       } }

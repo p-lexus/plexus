@@ -1,18 +1,25 @@
 {
   "broker": "mqtt://localhost:1883",
   "root": "agents",
-  "agentId": "conan",
-  "displayName": "Conan",
-
+  "agentId": "reviewer",
+  "displayName": "Reviewer",
   "plugins": {
     "plexus-notify": {
       "state": "./notify.state.json",
       "replay": "skip",
-
       "channels": {
-        "log": { "type": "console" },
-        "audit": { "type": "file", "path": "./notify.audit.jsonl" },
-        "slack": { "type": "slack", "enabled": false, "webhookUrl": "${SLACK_WEBHOOK_URL}" },
+        "log": {
+          "type": "console"
+        },
+        "audit": {
+          "type": "file",
+          "path": "./notify.audit.jsonl"
+        },
+        "slack": {
+          "type": "slack",
+          "enabled": false,
+          "webhookUrl": "${SLACK_WEBHOOK_URL}"
+        },
         "pr": {
           "type": "github",
           "enabled": false,
@@ -21,34 +28,49 @@
           "issue": "{{args.pr}}"
         }
       },
-
       "routes": [
         {
           "id": "everything",
           "when": {},
-          "to": ["audit"],
+          "to": [
+            "audit"
+          ],
           "title": "{{service}} {{type}}",
           "body": "{{result}}"
         },
         {
           "id": "review-needs-changes",
-          "when": { "service": "code.review", "verdict": "REQUEST_CHANGES" },
-          "to": ["log", "slack", "pr"],
+          "when": {
+            "service": "code.review",
+            "verdict": "REQUEST_CHANGES"
+          },
+          "to": [
+            "log",
+            "slack",
+            "pr"
+          ],
           "level": "warn",
           "title": "Changes requested on {{args.repo}}#{{args.pr}}",
-          "body": "{{summary}}\n\n_reviewed for {{owner}} · job `{{jobId}}`_"
+          "body": "{{summary}}\n\n_reviewed for {{owner}} \u00b7 job `{{jobId}}`_"
         },
         {
           "id": "failures",
-          "when": { "type": ["error", "timeout"] },
-          "to": ["log", "slack"],
+          "when": {
+            "type": [
+              "error",
+              "timeout"
+            ]
+          },
+          "to": [
+            "log",
+            "slack"
+          ],
           "level": "error",
           "title": "{{service}} failed for {{owner}}",
           "body": "```{{error}}```\n\njob `{{jobId}}`"
         }
       ]
     },
-
     "./my-plugin.js": {
       "enabled": false
     }

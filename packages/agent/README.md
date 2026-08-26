@@ -115,7 +115,7 @@ Then run an agent that hosts it:
 
 ```json
 { "broker": "mqtt://localhost:1883",
-  "agentId": "conan",
+  "agentId": "reviewer",
   "plugins": {
     "plexus-notify": { "channels": { }, "routes": [] },
     "./my-plugin.js": { }
