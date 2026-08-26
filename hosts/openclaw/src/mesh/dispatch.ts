@@ -16,7 +16,7 @@ import type { Catalog } from "./catalog.js";
 import type { JobStore } from "./jobs.js";
 import type { VarStore } from "./vars.js";
 import { jobEventsTopic, jobResultTopic, ownerScope } from "./topics.js";
-import { renderPrompt, unresolvedPlaceholders } from "./payload.js";
+import { renderPrompt, unresolvedPlaceholders, missingRequiredArgs } from "./payload.js";
 
 const WATCHDOG_INTERVAL_MS = 60_000;   // supervisory sweep, not a delivery path
 const REINJECT_AFTER_MS = 5 * 60_000;  // silence required before re-dispatch
@@ -216,6 +216,24 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       publishResult(jobId, { type: "duplicate", note: "jobId already active" }, owner);
       jobs.record({ jobId, service, state: "duplicate", requestedBy, owner }, { type: "duplicate" });
       return { ok: false, error: "duplicate jobId", jobId };
+    }
+
+    // ── Required arguments (declared by the capability, not by us) ──
+    // Rejected here rather than warned about later: a job missing one produces
+    // a prompt with a hole in it, and the executor spends a real run failing at
+    // it. Terminal and immediate is both cheaper and clearer.
+    const missing = cap.prompt
+      ? missingRequiredArgs(String(cap.prompt), args, (cap.requestSchema ?? {}) as Record<string, unknown>)
+      : [];
+    if (missing.length) {
+      const err =
+        `missing required argument${missing.length === 1 ? "" : "s"}: ` +
+        `${missing.join(", ")} — declared in ${service}'s requestSchema and not supplied`;
+      logger.info(`rejected job ${jobId} — ${err}`);
+      publishResult(jobId, { type: "error", error: err, service }, owner);
+      jobs.record({ jobId, service, state: "rejected", requestedBy, owner, lastEvent: "missing required args" },
+        { type: "rejected", note: err });
+      return { ok: false, error: err, jobId };
     }
 
     jobs.cancelled.delete(jobId);
