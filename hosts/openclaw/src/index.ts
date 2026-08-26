@@ -255,7 +255,10 @@ export default definePluginEntry({
     const vars = createVarStore(conf.mesh.secretsFile, conf.mesh.promptVars, logger);
     const sse = createSseHub();
     const auth = createAuth(conf.web.auth);
-    const jobs = createJobStore((rec) => sse.broadcast("job", rec));
+    const jobs = createJobStore((rec) => sse.broadcast("job", rec), {
+      file: conf.mesh.historyFile,
+      log: (m) => logger.info(m),
+    });
     const transport = createTransport(conf, pluginDir, topics.status, logger);
     const peers = createPeerRegistry(conf.mesh.agentId, logger, () => sse.broadcast("peers", peers.list()));
 
