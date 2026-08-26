@@ -24,6 +24,8 @@ export interface ResolvedConfig {
     agentId: string;
     servicesFile: string;
     secretsFile: string;
+    /** Job history, so the panel is not empty after a restart. */
+    historyFile: string;
     requireOwner: boolean;
     verifyOwner: boolean;
     maxJobDurationMs: number;
@@ -85,6 +87,7 @@ export function resolveConfig(cfg: Partial<PluginConfig>, pluginDir: string): Re
       agentId: mesh.agentId ?? DEFAULTS.agentId,
       servicesFile: mesh.servicesFile ?? path.join(pluginDir, "services.json"),
       secretsFile: path.join(pluginDir, "mesh.local.json"),
+      historyFile: mesh.historyFile ?? path.join(pluginDir, "jobs.local.json"),
       requireOwner: mesh.requireOwner !== false,   // default true
       verifyOwner: mesh.verifyOwner === true,      // default false
       maxJobDurationMs: mesh.maxJobDurationMs ?? DEFAULTS.maxJobDurationMs,

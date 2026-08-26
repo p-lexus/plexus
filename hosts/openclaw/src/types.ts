@@ -25,6 +25,8 @@ export interface MeshConfig {
   root?: string;
   agentId?: string;
   servicesFile?: string;
+  /** Where job history is kept so the panel survives a restart. */
+  historyFile?: string;
   /** Reject invokes with no requestedBy (protocol 1.2 requires it). Default true. */
   requireOwner?: boolean;
   /**

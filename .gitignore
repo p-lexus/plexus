@@ -31,3 +31,6 @@ mesh.local.json
 .venv*/
 __pycache__/
 *.pyc
+
+# panel job history (deployment-local)
+jobs.local.json

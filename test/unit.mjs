@@ -14,7 +14,7 @@ const dist = (p) => new URL(`../dist/${p}`, import.meta.url).href;
 
 const { ownerScope, buildTopics, jobTopicPattern, parseJobTopic, escapeRe } = await import(dist("mesh/topics.js"));
 const { normalizeJobPublish, renderPrompt, unresolvedPlaceholders, publishRefusal } = await import(dist("mesh/payload.js"));
-const { createJobStore } = await import(dist("mesh/jobs.js"));
+const { createJobStore, MAX_HISTORY } = await import(dist("mesh/jobs.js"));
 const { createVarStore, maskValue } = await import(dist("mesh/vars.js"));
 const { createAuth } = await import(dist("http/auth.js"));
 const { resolveConfig, resolveEnvRef, DEFAULTS } = await import(dist("config.js"));
@@ -103,6 +103,73 @@ t("placeholders and vars both render", () => {
   const out = renderPrompt("DM ${WHO} about {{pr}} in {{repo}} (job {{jobId}})",
     () => "U123", "j1", "alice", { pr: 7, repo: "acme/app" });
   assert.ok(out.includes("U123") && out.includes("7") && out.includes("acme/app") && out.includes("j1"));
+});
+
+// ── history outlives the process ────────────────────────
+const flushed = () => new Promise((r) => setTimeout(r, 600));   // the store debounces its writes
+
+t("job history is restored after a restart", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-hist-"));
+  const file = path.join(dir, "jobs.local.json");
+
+  const first = createJobStore(() => {}, { file });
+  first.record({ jobId: "ci-1", service: "code.review", owner: "ci", state: "started" },
+    { type: "accepted" });
+  first.record({ jobId: "ci-1", state: "done", result: { verdict: "APPROVE" } }, { type: "review" });
+  await flushed();
+
+  const restarted = createJobStore(() => {}, { file });
+  const rec = restarted.find("ci-1");
+  assert.ok(rec, "the job survived the restart");
+  assert.equal(rec.service, "code.review", "and kept its service, which a retained result does not carry");
+  assert.equal(rec.state, "done");
+  assert.equal(rec.events.length, 2, "and kept its timeline");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+t("a replayed retained result merges into the real record, it does not flatten it", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-hist-"));
+  const file = path.join(dir, "jobs.local.json");
+
+  const before = createJobStore(() => {}, { file });
+  before.record({ jobId: "ci-2", service: "build.diagnose", owner: "ci", state: "started" },
+    { type: "started" });
+  await flushed();
+
+  // What the broker replays on resubscribe: the answer, and nothing else.
+  const after = createJobStore(() => {}, { file });
+  after.record({ jobId: "ci-2", state: "done", result: { type: "diagnosis" } }, { type: "result" });
+  const rec = after.find("ci-2");
+  assert.equal(rec.service, "build.diagnose", "service is not lost to the replay");
+  assert.equal(rec.events.length, 2);
+});
+
+t("the ring stays bounded across restarts", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-hist-"));
+  const file = path.join(dir, "jobs.local.json");
+  const s1 = createJobStore(() => {}, { file });
+  for (let i = 0; i < MAX_HISTORY + 25; i++) s1.record({ jobId: `j${i}`, state: "done" });
+  await flushed();
+  const s2 = createJobStore(() => {}, { file });
+  assert.equal(s2.history().length, MAX_HISTORY);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+t("a corrupt history file starts empty rather than throwing", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-hist-"));
+  const file = path.join(dir, "jobs.local.json");
+  fs.writeFileSync(file, "{ not json");
+  const said = [];
+  const s = createJobStore(() => {}, { file, log: (m) => said.push(m) });
+  assert.equal(s.history().length, 0);
+  assert.ok(said.some((m) => /unreadable/.test(m)), "and says so");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+t("with no file configured the store still works, just without persistence", () => {
+  const s = createJobStore(() => {});
+  s.record({ jobId: "x", state: "done" });
+  assert.equal(s.history().length, 1);
 });
 
 // ── terminal really is terminal ─────────────────────────
