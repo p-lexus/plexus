@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { ownerScope, topics, deriveClientId, PROTOCOL_VERSION, connect } from "plexus-agent";
+import { aclFor, permits, topicMatches } from "plexus-agent/acl";
 import { get, testCondition, matches, render, plan, deliveryContext } from "plexus-notify/routes";
 import { expandEnv, redact, loadChannels } from "plexus-notify/channels";
 import { createHost, definePlugin } from "plexus-agent/plugin";
@@ -61,6 +62,79 @@ t("clientId is stable across calls and distinct per agent and mesh", () => {
 
 t("protocol version is the one the bridge speaks", () => {
   assert.equal(PROTOCOL_VERSION, "1.3");
+});
+
+// ── plexus-agent: broker rules ──────────────────────────
+const R = "acme/agents";
+
+t("a requester sees its own job scope and nobody else's", () => {
+  const ci = aclFor({ root: R, role: "requester", id: "ci" });
+  assert.ok(permits(ci.subscribe, `${R}/jobs/ci/ci-42/result`));
+  assert.ok(!permits(ci.subscribe, `${R}/jobs/mohanad/rev-030/result`),
+    "the whole point: one requester cannot read another's answers");
+  assert.ok(!permits(ci.subscribe, `${R}/jobs/mohanad/rev-030/events`));
+});
+
+t("an agent may publish its own identity and no other", () => {
+  const rev = aclFor({ root: R, role: "agent", id: "reviewer" });
+  assert.ok(permits(rev.publish, `${R}/registry/reviewer/profile`));
+  assert.ok(permits(rev.publish, `${R}/registry/reviewer/status`));
+  assert.ok(!permits(rev.publish, `${R}/registry/dba/profile`),
+    "impersonation is the attack these rules exist to stop");
+});
+
+t("an agent answers for many owners but reads only its own commands", () => {
+  const rev = aclFor({ root: R, role: "agent", id: "reviewer" });
+  assert.ok(permits(rev.publish, `${R}/jobs/anyone/j1/result`), "it serves whoever asks");
+  assert.ok(permits(rev.subscribe, `${R}/commands/reviewer/invoke`));
+  assert.ok(!permits(rev.subscribe, `${R}/commands/dba/invoke`),
+    "one agent must not receive another's work");
+});
+
+t("an agent can delegate, and collect the answer in its own scope", () => {
+  const rev = aclFor({ root: R, role: "agent", id: "reviewer" });
+  assert.ok(permits(rev.publish, `${R}/commands/dba/invoke`), "asking a peer");
+  assert.ok(permits(rev.subscribe, `${R}/jobs/reviewer/ask-9f3c/result`), "the answer comes back");
+});
+
+t("nobody but the console may read the whole mesh", () => {
+  const con = aclFor({ root: R, role: "console", id: "console" });
+  const ci = aclFor({ root: R, role: "requester", id: "ci" });
+  assert.ok(permits(con.subscribe, `${R}/jobs/mohanad/rev-030/result`));
+  assert.ok(!permits(ci.subscribe, `${R}/jobs/mohanad/rev-030/result`));
+});
+
+t("the v1.4 proposal puts the owner where a broker can enforce it", () => {
+  const loose = aclFor({ root: R, role: "requester", id: "ci" });
+  const tight = aclFor({ root: R, role: "requester", id: "ci", ownerInTopic: true });
+
+  // Today: any authenticated client may publish any invoke, and requestedBy is
+  // a payload field no ACL can police.
+  assert.ok(permits(loose.publish, `${R}/commands/reviewer/invoke`));
+
+  // With the owner in the topic, claiming to be someone else is refused by the
+  // broker, before any agent sees it.
+  assert.ok(permits(tight.publish, `${R}/commands/reviewer/invoke/ci`));
+  assert.ok(!permits(tight.publish, `${R}/commands/reviewer/invoke/mohanad`));
+});
+
+t("an id that would widen a filter is refused, not sanitised", () => {
+  for (const bad of ["ci/+", "#", "+", "a/b", "", "-lead"]) {
+    assert.throws(() => aclFor({ root: R, role: "requester", id: bad }), TypeError,
+      `id ${JSON.stringify(bad)} must be refused`);
+  }
+  assert.throws(() => aclFor({ root: "acme/#", role: "requester", id: "ci" }), TypeError);
+  assert.throws(() => aclFor({ root: R, role: "admin", id: "x" }), TypeError);
+});
+
+t("topic matching follows MQTT, including the $SYS exclusion", () => {
+  assert.ok(topicMatches("a/+/c", "a/b/c"));
+  assert.ok(!topicMatches("a/+/c", "a/b/x/c"));
+  assert.ok(topicMatches("a/#", "a/b/c/d"));
+  assert.ok(!topicMatches("a/#", "b/c"));
+  assert.ok(!topicMatches("#", "$SYS/broker/uptime"), "a bare wildcard never reaches $SYS");
+  assert.ok(topicMatches("$SYS/#", "$SYS/broker/uptime"));
+  assert.ok(!topicMatches("a/b", "a/b/c"));
 });
 
 // ── notify: matching ────────────────────────────────────
