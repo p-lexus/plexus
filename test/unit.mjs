@@ -18,7 +18,7 @@ const { createJobStore, MAX_HISTORY } = await import(dist("mesh/jobs.js"));
 const { createVarStore, maskValue } = await import(dist("mesh/vars.js"));
 const { createAuth } = await import(dist("http/auth.js"));
 const { resolveConfig, resolveEnvRef, DEFAULTS } = await import(dist("config.js"));
-const { deriveClientId } = await import(dist("mesh/transport.js"));
+const { deriveClientId, deniedFilters } = await import(dist("mesh/transport.js"));
 
 let pass = 0, fail = 0;
 const queue = [];
@@ -33,6 +33,39 @@ function t(name, fn) {
 const quietLogger = { info() {}, warn() {}, error() {}, alert() {} };
 
 // ── topics ──────────────────────────────────────────────
+t("a refused subscription is read from the SUBACK codes, not from `granted`", () => {
+  // Verified against mosquitto with dynsec: it answers [1,1,128,1], mqtt.js
+  // raises an error, and the `granted` it passes still says qos 1 for the
+  // filter that was refused. Only err.packet.granted tells the truth.
+  const asked = ["a/commands/x/#", "a/registry/+/profile", "a/jobs/#", "a/jobs/x/#"];
+  const granted = asked.map((topic) => ({ topic, qos: 1 }));
+  const err = Object.assign(new Error("Subscribe error: Unspecified error"),
+    { packet: { granted: [1, 1, 128, 1] } });
+  assert.deepEqual(deniedFilters(asked, granted, err), ["a/jobs/#"]);
+});
+
+t("MQTT 5 refusal reason codes count as denials too", () => {
+  // 135 is "not authorized" in v5. Anything above the three real QoS values is
+  // a refusal, whichever protocol version answered.
+  const asked = ["a/jobs/#"];
+  const err = Object.assign(new Error("nope"), { packet: { granted: [135] } });
+  assert.deepEqual(deniedFilters(asked, [{ topic: "a/jobs/#", qos: 1 }], err), ["a/jobs/#"]);
+});
+
+t("a subscription error that refused nothing is not read as a denial", () => {
+  // A dropped connection mid-subscribe has no SUBACK at all. Reporting every
+  // filter as denied there would narrow the agent for a network blip.
+  const asked = ["a/jobs/#"];
+  assert.deepEqual(deniedFilters(asked, null, new Error("connection closed")), []);
+});
+
+t("granted subscriptions are never reported as denied", () => {
+  const asked = ["x", "y", "z"];
+  assert.deepEqual(deniedFilters(asked, [{ topic: "x", qos: 0 }, { topic: "y", qos: 1 }, { topic: "z", qos: 2 }]), []);
+  assert.deepEqual(deniedFilters([], []), []);
+  assert.deepEqual(deniedFilters(["a"], undefined), []);
+});
+
 t("ownerScope sanitises to the documented charset", () => {
   assert.equal(ownerScope("Mohanad.Q!"), "mohanad-q");
   assert.equal(ownerScope("--ci--"), "ci");

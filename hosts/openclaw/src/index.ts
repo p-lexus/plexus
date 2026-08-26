@@ -249,6 +249,14 @@ export default definePluginEntry({
     const conf = resolveConfig(cfg, pluginDir);
     const topics = buildTopics(conf.mesh.root, conf.mesh.agentId);
     const jobTopicRe = jobTopicPattern(conf.mesh.root);
+    // How much job traffic the broker lets us see. "mesh" is the whole root:
+    // the panel's history, and — because a broker echoes a publish back to a
+    // subscriber, even the one that sent it — our own executors' results.
+    // A generated agent ACL refuses that filter, so `scoped` is the fallback:
+    // our own owner scope only, with our executors' publishes observed locally
+    // instead of heard back. See onSubscribeDenied.
+    let jobFeed: "mesh" | "scoped" = "mesh";
+    const refusedFilters: string[] = [];
     const registryRe = registryPattern(conf.mesh.root);
 
     const catalog = createCatalog(conf.mesh.servicesFile, logger);
@@ -276,6 +284,10 @@ export default definePluginEntry({
       protocolVersion: PROTOCOL_VERSION,
       session: { ...transport.session },
       ownerPolicy: { required: conf.mesh.requireOwner, verified: conf.mesh.verifyOwner },
+      // What the broker allows, as opposed to what was asked for. A mesh whose
+      // ACLs have narrowed us should say so somewhere an operator looks.
+      jobFeed,
+      refusedFilters: [...refusedFilters],
       // Names and SOURCES only. The panel flags unbound ${VAR} references;
       // values are deployment secrets and never reach a browser.
       promptVars: vars.describe().map(({ name, source }) => ({ name, source })),
@@ -342,6 +354,61 @@ export default definePluginEntry({
 
     // ── Inbound message routing ────────────────────────
 
+    /**
+     * Job traffic: milestones and results, including our executors' own.
+     *
+     * Called for every message that arrives, and — when the broker refuses the
+     * mesh-wide filter — for our own publishes too, so that a job's bookkeeping
+     * never depends on hearing ourselves come back. Returns whether the topic
+     * was job traffic.
+     */
+    function recordJobTraffic(topic: string, raw: string, data: any): boolean {
+      const parsed = parseJobTopic(jobTopicRe, topic);
+      if (!parsed) return false;
+      const { owner, jobId, kind } = parsed;
+
+      // A cancelled job is terminal — suppress late executor publishes so the
+      // client's view matches the cancel_acknowledged contract.
+      if (jobs.cancelled.has(jobId)) return true;
+
+      if (kind === "events") {
+        const type = String(data?.type ?? "message");
+        const note = data?.note ?? data?.stage ?? data?.error ?? (data ? undefined : raw.slice(0, 120));
+        jobs.record(
+          { jobId, lastEvent: type, requestedBy: data?.owner, owner },
+          { type, note: note ? String(note).slice(0, 240) : undefined },
+        );
+        dispatcher.markAgentActivity(jobId);   // any publish proves it is alive
+      } else {
+        jobs.record(
+          { jobId, result: data, state: data?.type === "error" ? "error" : "done", requestedBy: data?.owner, owner },
+          { type: String(data?.type ?? "result"), note: data?.error ? String(data.error).slice(0, 240) : undefined },
+        );
+        jobs.active.delete(jobId);
+        dispatcher.forget(jobId);              // terminal — stop watching
+        // If we asked a peer for this, hand the answer back to the waiting
+        // executor. This is the return path that makes delegation possible.
+        ask.settle(jobId, data);
+      }
+      return true;
+    }
+
+    /**
+     * Our own publish, observed locally.
+     *
+     * Only used when the broker refuses the mesh-wide job filter. Topics inside
+     * our own scope are skipped: those we are still subscribed to, so the
+     * broker delivers them back and recording here as well would double every
+     * entry in the timeline.
+     */
+    function observeOwnPublish(topic: string, payload: string): void {
+      if (jobFeed !== "scoped") return;
+      if (topic.startsWith(`${conf.mesh.root}/jobs/${ownerScope(conf.mesh.agentId)}/`)) return;
+      let data: any = null;
+      try { data = JSON.parse(payload); } catch { /* plaintext is allowed */ }
+      recordJobTraffic(topic, payload, data);
+    }
+
     function onMessage(topic: string, raw: string, data: any): void {
       logger.info(`received on ${topic}: ${raw.slice(0, 300)}`);
 
@@ -353,35 +420,7 @@ export default definePluginEntry({
         return;
       }
 
-      // Job traffic: milestones and results, including our executors' own.
-      const parsed = parseJobTopic(jobTopicRe, topic);
-      if (parsed) {
-        const { owner, jobId, kind } = parsed;
-        // A cancelled job is terminal — suppress late executor publishes so the
-        // client's view matches the cancel_acknowledged contract.
-        if (jobs.cancelled.has(jobId)) return;
-
-        if (kind === "events") {
-          const type = String(data?.type ?? "message");
-          const note = data?.note ?? data?.stage ?? data?.error ?? (data ? undefined : raw.slice(0, 120));
-          jobs.record(
-            { jobId, lastEvent: type, requestedBy: data?.owner, owner },
-            { type, note: note ? String(note).slice(0, 240) : undefined },
-          );
-          dispatcher.markAgentActivity(jobId);   // any publish proves it is alive
-        } else {
-          jobs.record(
-            { jobId, result: data, state: data?.type === "error" ? "error" : "done", requestedBy: data?.owner, owner },
-            { type: String(data?.type ?? "result"), note: data?.error ? String(data.error).slice(0, 240) : undefined },
-          );
-          jobs.active.delete(jobId);
-          dispatcher.forget(jobId);              // terminal — stop watching
-          // If we asked a peer for this, hand the answer back to the waiting
-          // executor. This is the return path that makes delegation possible.
-          ask.settle(jobId, data);
-        }
-        return;
-      }
+      if (recordJobTraffic(topic, raw, data)) return;
 
       if (topic === topics.config) {
         transport.publish(`${topics.config}/reply`, JSON.stringify(registry.runConfigAction(data)), { qos: 1 });
@@ -401,6 +440,10 @@ export default definePluginEntry({
               agentId: conf.mesh.agentId,
               protocolVersion: svc.protocolVersion ?? PROTOCOL_VERSION,
               ownerPolicy: { required: conf.mesh.requireOwner, verified: conf.mesh.verifyOwner },
+      // What the broker allows, as opposed to what was asked for. A mesh whose
+      // ACLs have narrowed us should say so somewhere an operator looks.
+      jobFeed,
+      refusedFilters: [...refusedFilters],
               services: svc.capabilities.map((c) => ({
                 service: c.service, description: c.description, requestSchema: c.requestSchema,
               })),
@@ -453,12 +496,41 @@ export default definePluginEntry({
       },
       onMessage,
       onStateChange: () => sse.broadcast("status", snapshot()),
+
+      onSubscribeDenied(filters) {
+        for (const f of filters) if (!refusedFilters.includes(f)) refusedFilters.push(f);
+        // logger.info, deliberately: the gateway keeps info from plugins and
+        // drops warn and error, so a warning here would be a warning nobody
+        // can read.
+        logger.info(
+          `[acl] broker refused ${filters.length} subscription(s): ${filters.join(", ")} — ` +
+          `this is expected on a broker with per-agent ACLs, and is not a connection fault`,
+        );
+
+        const firehose = `${conf.mesh.root}/jobs/#`;
+        if (filters.includes(firehose) && jobFeed === "mesh") {
+          // An agent ACL grants jobs/<agentId>/# and nothing wider. Take it:
+          // it carries the answers to what we delegated, which is the one part
+          // of the firehose the mesh cannot work without.
+          jobFeed = "scoped";
+          transport.subscribe({ [`${conf.mesh.root}/jobs/${ownerScope(conf.mesh.agentId)}/#`]: { qos: 1 } });
+          logger.info(
+            `[acl] job history is now local: subscribed ${conf.mesh.root}/jobs/` +
+            `${ownerScope(conf.mesh.agentId)}/# instead. Jobs this agent serves are recorded as it ` +
+            `publishes them, so the panel keeps its own history; other owners' traffic is no longer visible`,
+          );
+        }
+        sse.broadcast("status", snapshot());
+      },
     });
 
     // Publish this registration as the live instance so the tools — registered
     // in every session — operate on the one transport that actually exists.
     globalAny[ACTIVE_SLOT] = {
-      publishCounted: transport.publishCounted,
+      publishCounted: (topic: string, payload: string, opts?: { qos?: 0 | 1 | 2; retain?: boolean }) => {
+        transport.publishCounted(topic, payload, opts);
+        observeOwnPublish(topic, payload);
+      },
       normalize: (topic: string, payload: string, retain?: boolean) =>
         normalizeJobPublish(jobTopicRe, topic, payload, retain),
       refuse: (topic: string) => {
