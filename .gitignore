@@ -4,6 +4,9 @@ node_modules/
 # build output — produced by `npm run build`
 dist/
 
+# recordings for the website, which lives in MoGhali/plexus-site
+out/
+
 # code intelligence index (machine-local)
 .gitnexus/
 

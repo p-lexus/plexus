@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <a href="site/index.html">Website</a> ·
+  <a href="https://github.com/MoGhali/plexus-site">Website</a> ·
   <a href="PROTOCOL.md">Specification</a> ·
   <a href="PROTOCOL.pdf">PDF</a> ·
   <a href="packages/agent">Client library</a> ·

@@ -92,6 +92,11 @@ The repository is an npm workspace: `npm install` links `plexus-agent` and `plex
 so is `hosts/hermes/`. If a change only makes sense for one platform it belongs in that host; if
 it is protocol behaviour it belongs in `PROTOCOL.md` and in every implementation.
 
+**The website is not in this repository.** It lives in
+[MoGhali/plexus-site](https://github.com/MoGhali/plexus-site), where the pages sit at the root —
+which is what GitHub Pages and a custom domain need, and what a `site/` folder here could never
+be. Two copies of a page are two pages the moment one of them is edited, so there is only the one.
+
 `hosts/openclaw/src/mesh/topics.ts` and `.../payload.ts` are pure. Keep them that way — they are the
 easiest parts of the system to reason about, and the most load-bearing.
 
@@ -154,13 +159,15 @@ topics, ids or repository names, and no dependence on the wall clock.
 
 ## Generated artifacts
 
-Three things in the repository are generated, and all three go stale silently:
+Four things are generated, and all four go stale silently — the last of them into a
+checkout of the website's repository rather than this one:
 
 | | Regenerate with | When |
 |---|---|---|
 | `docs/screenshots/*.png` | `node tools/screenshots.mjs` | the console's appearance changes |
 | `docs/demo*.svg` | `node tools/record-demo.mjs examples/with-plugins.mjs docs/demo.svg` | an example changes |
 | `PROTOCOL.pdf` | `npm install --no-save marked mermaid && npm run pdf` | `PROTOCOL.md` changes |
+| the console tour | `npm run site:video -- ../plexus-site/assets` | the console's appearance changes |
 
 Screenshots and demos are produced from **real runs** with the network stubbed and the clock
 frozen — so they cannot drift from what the code does, but they also will not update themselves.

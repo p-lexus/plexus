@@ -8,10 +8,14 @@
  * live deployment's data. Each view is held, then cross-faded to the next,
  * with the Plexus wordmark burned into the corner.
  *
- * Output: `site/assets/console.mp4` plus a poster frame. MP4/H.264 rather than
- * WebM because it is the one format every browser and every social preview
- * will play, and this file exists to be looked at by people who have not
- * installed anything.
+ * Output: `console.mp4` plus a poster frame, written to the directory given as
+ * the first argument. The website lives in its own repository now, so the
+ * useful invocation is `npm run site:video -- ../plexus-site/assets`; with no
+ * argument they land in `out/console/`, which is not committed.
+ *
+ * MP4/H.264 rather than WebM because it is the one format every browser and
+ * every social preview will play, and this file exists to be looked at by
+ * people who have not installed anything.
  *
  * Requires Chrome and ffmpeg.
  */
@@ -22,7 +26,8 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { CHROME, root, loadFixtures, writeFrame } from "./panel-harness.mjs";
 
-const OUT_DIR = path.join(root, "site/assets");
+const OUT_DIR = path.resolve(process.argv[2] || path.join(root, "out/console"));
+fs.mkdirSync(OUT_DIR, { recursive: true });
 const VIDEO = path.join(OUT_DIR, "console.mp4");
 const POSTER = path.join(OUT_DIR, "console-poster.png");
 
@@ -156,5 +161,6 @@ execFileSync("ffmpeg", ["-y", "-i", VIDEO, "-ss", "0.4", "-frames:v", "1", POSTE
 fs.rmSync(tmp, { recursive: true, force: true });
 
 const mb = (p) => (fs.statSync(p).size / 1024 / 1024).toFixed(2);
-console.log(`\nwrote site/assets/console.mp4        ${mb(VIDEO)} MB`);
-console.log(`      site/assets/console-poster.png  ${mb(POSTER)} MB`);
+const where = (p) => path.relative(process.cwd(), p);
+console.log(`\nwrote ${where(VIDEO)}   ${mb(VIDEO)} MB`);
+console.log(`      ${where(POSTER)}   ${mb(POSTER)} MB`);
