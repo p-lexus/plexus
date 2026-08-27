@@ -5,7 +5,7 @@
  * dragging the MQTT client or the plugin SDK along with them.
  */
 
-export const PROTOCOL_VERSION = "1.3";
+export const PROTOCOL_VERSION = "1.4";
 
 // ── Configuration ──────────────────────────────────────
 
@@ -35,6 +35,22 @@ export interface MeshConfig {
    * Default false — requires broker-side payload enrichment to be wired first.
    */
   verifyOwner?: boolean;
+  /**
+   * v1.4: what to do with `commands/<agentId>/invoke/<owner>`.
+   *
+   * "accept" (default) serves both forms and prefers the topic. "require"
+   * refuses the payload form, which is the only mode in which this agent can
+   * honestly claim the owner was established by something other than the
+   * sender's word. "off" serves the v1.3 form only.
+   */
+  ownerInTopic?: "off" | "accept" | "require";
+  /**
+   * Assert that the broker enforces per-identity ACLs, for brokers that grant a
+   * wildcard subscription and filter deliveries rather than refusing it — where
+   * the agent has no way to observe enforcement. An assertion, so it is the
+   * operator's claim to make.
+   */
+  ownerEnforced?: boolean;
   /** Hard wall-clock cap per job before the mesh declares it failed. Default 30 min. */
   maxJobDurationMs?: number;
   /**
@@ -210,7 +226,7 @@ export interface Peer {
     requestSchema?: Record<string, unknown>;
     avgLatency?: string;
   }>;
-  ownerPolicy?: { required?: boolean; verified?: boolean };
+  ownerPolicy?: { required?: boolean; verified?: boolean; topic?: "off" | "accept" | "require" };
   /** When we last heard anything from this agent. */
   lastSeen: number;
 }
@@ -220,6 +236,14 @@ export interface DispatchOptions {
   defaultOwner?: string;
   /** Broker-supplied identity, when owner verification is enabled. */
   clientUsername?: string;
+  /**
+   * v1.4: the owner carried by the invoke topic, exactly as it arrived.
+   *
+   * This is the string a broker ACL matched, so it is authoritative — and it is
+   * NOT scoped on the way in, because scoping it here would accept topics a
+   * broker rule would never have allowed.
+   */
+  topicOwner?: string;
 }
 
 // ── Logging ────────────────────────────────────────────

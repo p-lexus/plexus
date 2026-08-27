@@ -116,6 +116,7 @@ class MeshAgent:
         max_depth: int = 4,
         ask_timeout: float = 300.0,
         require_owner: bool = True,
+        owner_in_topic: str = "accept",
         keepalive: int = 30,
         max_workers: int = 4,
         max_job_seconds: float = 1800.0,
@@ -127,6 +128,9 @@ class MeshAgent:
         self.max_depth = max_depth
         self.ask_timeout = ask_timeout
         self.require_owner = require_owner
+        # v1.4: "off" serves the v1.3 form only, "accept" serves both and
+        # prefers the topic, "require" refuses the v1.3 form.
+        self.owner_in_topic = owner_in_topic if owner_in_topic in ("off", "accept", "require") else "accept"
         self.keepalive = keepalive
         self.max_job_seconds = max_job_seconds
 
@@ -238,7 +242,13 @@ class MeshAgent:
                 "status": "online",
                 "protocolVersion": PROTOCOL_VERSION,
                 "capabilities": self.capabilities(),
-                "ownerPolicy": {"required": self.require_owner, "verified": False},
+                "ownerPolicy": {
+                    "required": self.require_owner,
+                    "topic": self.owner_in_topic,
+                    # False while both forms are served: accepting the v1.3 form
+                    # means an unverifiable invoke can still arrive.
+                    "verified": False,
+                },
                 "ts": _now(),
             },
             retain=True,
@@ -255,13 +265,18 @@ class MeshAgent:
         if getattr(reason, "is_failure", False):
             log.error("broker refused the connection: %s", reason)
             return
-        client.subscribe([
+        subscriptions = [
             (topics.invoke(self.root, self.agent_id), 1),
             (topics.cancel(self.root, self.agent_id), 1),
             (f"{self.root}/registry/+/profile", 1),
             (f"{self.root}/registry/+/status", 1),
             (f"{self.root}/jobs/{self._self_scope}/#", 1),
-        ])
+        ]
+        if self.owner_in_topic != "off":
+            # v1.4. Subscribed separately from the v1.3 form, so a broker that
+            # refuses one does not take the other with it.
+            subscriptions.append((topics.invoke_filter(self.root, self.agent_id), 1))
+        client.subscribe(subscriptions)
         self._advertise()
         self._ready.set()
         log.info("connected to %s as %s", self.broker, self.agent_id)
@@ -276,6 +291,15 @@ class MeshAgent:
         job = self._job_re.match(msg.topic)
         if job:
             return self._on_job_topic(job.group(1), job.group(2), job.group(3), raw)
+
+        # v1.4: the owner is a topic segment, and it reaches the handler exactly
+        # as it arrived — it is the string the broker authorised.
+        topic_owner = topics.invoke_topic_owner(self.root, self.agent_id, msg.topic)
+        if topic_owner is not None:
+            if self.owner_in_topic == "off":
+                log.info("invoke/<owner> received but owner_in_topic is off")
+                return None
+            return self._pool.submit(self._on_invoke, raw, topic_owner) and None
 
         cmd = self._cmd_re.match(msg.topic)
         if cmd and cmd.group(1) == self.agent_id:
@@ -322,7 +346,7 @@ class MeshAgent:
 
     # ── serving work ─────────────────────────────────────────────────────────
 
-    def _on_invoke(self, raw: str) -> None:
+    def _on_invoke(self, raw: str, topic_owner: str | None = None) -> None:
         try:
             msg = json.loads(raw)
         except ValueError:
@@ -330,7 +354,10 @@ class MeshAgent:
             return
 
         job_id = msg.get("jobId") or _job_id()
-        owner = owner_scope(msg.get("requestedBy"))
+        # v1.4: the topic wins, because it is the part a broker can check. The
+        # payload is not preferred over it and not ignored either — they have to
+        # agree.
+        owner = topic_owner if topic_owner is not None else owner_scope(msg.get("requestedBy"))
 
         def reject(kind: str, error: str) -> None:
             self._publish(
@@ -342,7 +369,27 @@ class MeshAgent:
 
         # Each of these refuses *before* any work starts, which is the only
         # point at which refusing is cheap.
-        if self.require_owner and not msg.get("requestedBy"):
+        if topic_owner is not None:
+            if owner_scope(topic_owner) != topic_owner:
+                return reject(
+                    "rejected",
+                    f'invoke topic owner "{topic_owner}" is not owner-scoped — '
+                    f'use "{owner_scope(topic_owner)}"',
+                )
+            claimed = msg.get("requestedBy")
+            if claimed and owner_scope(claimed) != topic_owner:
+                return reject(
+                    "rejected",
+                    f'requestedBy "{owner_scope(claimed)}" disagrees with the invoke '
+                    f'topic\'s owner "{topic_owner}"',
+                )
+        elif self.owner_in_topic == "require":
+            return reject(
+                "rejected",
+                "this mesh requires the owner in the invoke topic — "
+                "publish to commands/<agentId>/invoke/<owner>",
+            )
+        elif self.require_owner and not msg.get("requestedBy"):
             return reject("rejected", "requestedBy is required")
         with self._lock:
             if job_id in self._active:
@@ -546,7 +593,17 @@ class MeshAgent:
         # An ask is an ordinary invoke with requestedBy set to *this* agent, so
         # the peer's result lands in our own owner scope — which we already
         # subscribe to. That is the whole return path.
-        self._publish(topics.invoke(self.root, peer_id), {
+        # v1.4: publish where a broker can check who we claim to be, but only to
+        # a peer whose profile says it serves that form. A peer we have not
+        # heard from gets the v1.3 form, which every version understands.
+        with self._lock:
+            peer_topic = (self._peers.get(peer_id) or {}).get("ownerPolicy", {}).get("topic")
+        invoke_topic = (
+            topics.invoke_as(self.root, peer_id, owner_scope(self.agent_id))
+            if peer_topic in ("accept", "require")
+            else topics.invoke(self.root, peer_id)
+        )
+        self._publish(invoke_topic, {
             "service": service,
             "args": args or {},
             "requestedBy": self.agent_id,

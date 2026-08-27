@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 
-PROTOCOL_VERSION = "1.3"
+PROTOCOL_VERSION = "1.4"
 
 _OWNER_STRIP = re.compile(r"[^a-z0-9_-]+")
 _OWNER_EDGES = re.compile(r"^-+|-+$")
@@ -41,6 +41,33 @@ def status(root: str, agent_id: str) -> str:
 
 def invoke(root: str, agent_id: str) -> str:
     return f"{root}/commands/{agent_id}/invoke"
+
+
+def invoke_as(root: str, agent_id: str, owner: str) -> str:
+    """Where a peer accepts work as a particular owner (v1.4).
+
+    The owner must already be scoped. This does not scope it, because a topic
+    that normalised quietly would make one identity two spellings — and a broker
+    ACL matches only one of them.
+    """
+    return f"{root}/commands/{agent_id}/invoke/{owner}"
+
+
+def invoke_filter(root: str, agent_id: str) -> str:
+    return f"{root}/commands/{agent_id}/invoke/+"
+
+
+def invoke_topic_owner(root: str, agent_id: str, topic: str) -> str | None:
+    """The owner an invoke topic carries, or None if this is not one.
+
+    Returned exactly as it arrived: the string in the topic is the one the
+    broker authorised, and any other string is a different identity.
+    """
+    prefix = f"{root}/commands/{agent_id}/invoke/"
+    if not topic.startswith(prefix):
+        return None
+    rest = topic[len(prefix):]
+    return rest if rest and "/" not in rest else None
 
 
 def cancel(root: str, agent_id: str) -> str:

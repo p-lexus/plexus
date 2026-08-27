@@ -32,7 +32,7 @@ import os from "node:os";
 import { createHash, randomBytes } from "node:crypto";
 
 /** The protocol revision this client implements. */
-export const PROTOCOL_VERSION = "1.3";
+export const PROTOCOL_VERSION = "1.4";
 
 const DEFAULTS = {
   root: "agents",
@@ -41,6 +41,11 @@ const DEFAULTS = {
   keepalive: 30,
   reconnectPeriod: 5_000,
   requireOwner: true,
+  // v1.4: what to do with commands/<agentId>/invoke/<owner>.
+  //   "off"     — the v1.3 form only
+  //   "accept"  — both, the topic preferred, disagreement refused (transition)
+  //   "require" — the v1.3 form is refused
+  ownerInTopic: "accept",
 };
 
 /** Terminal result types. Anything unrecognised is also terminal — treat it so. */
@@ -66,6 +71,14 @@ export const topics = {
   profile: (root, id) => `${root}/registry/${id}/profile`,
   status: (root, id) => `${root}/registry/${id}/status`,
   invoke: (root, id) => `${root}/commands/${id}/invoke`,
+  /**
+   * v1.4: the owner in the topic, so a broker ACL can enforce who a requester
+   * claims to be. The owner must ALREADY be scoped — this does not scope it,
+   * because a topic that normalises quietly would make one identity two
+   * spellings, and an ACL matches only one of them.
+   */
+  invokeAs: (root, id, owner) => `${root}/commands/${id}/invoke/${owner}`,
+  invokeFilter: (root, id) => `${root}/commands/${id}/invoke/+`,
   cancel: (root, id) => `${root}/commands/${id}/cancel`,
   events: (root, owner, jobId) => `${root}/jobs/${owner}/${jobId}/events`,
   result: (root, owner, jobId) => `${root}/jobs/${owner}/${jobId}/result`,
@@ -134,6 +147,9 @@ export async function connect(options = {}) {
   const jobRe = topics.jobPattern(root);
   const regRe = topics.registryPattern(root);
   const cmdRe = new RegExp(`^${escapeRe(root)}/commands/([^/]+)/invoke$`);
+  // The v1.4 form. Captured separately so the owner segment reaches onInvoke as
+  // it arrived — it is the string the broker authorised.
+  const cmdOwnerRe = new RegExp(`^${escapeRe(root)}/commands/([^/]+)/invoke/([^/]+)$`);
 
   const client = mqtt.connect(cfg.broker, {
     clientId: cfg.clientId ?? deriveClientId(agentId, root),
@@ -163,7 +179,11 @@ export async function connect(options = {}) {
       status: "online",
       protocolVersion: PROTOCOL_VERSION,
       capabilities,
-      ownerPolicy: { required: cfg.requireOwner, verified: false },
+      // What this deployment does with the two invoke forms, so a publisher
+      // reads it rather than guessing. `verified` stays false here: this
+      // library serves both forms, and accepting both means an unverified
+      // invoke can still arrive.
+      ownerPolicy: { required: cfg.requireOwner, topic: cfg.ownerInTopic, verified: false },
       ts: nowIso(),
     }, true);
     pub(topics.status(root, agentId), { status: "online", ts: nowIso() }, true);
@@ -196,6 +216,27 @@ export async function connect(options = {}) {
       }
       if (decodeURIComponent(cmd[1]) === agentId) return onInvoke(raw);
       return;
+    }
+
+    const cmdOwner = cmdOwnerRe.exec(topic);
+    if (cmdOwner) {
+      // Observers first, and for every agent's invoke — not just ours. The
+      // owner is in the topic now, so it is supplied to the handler rather than
+      // left to be dug out of a payload that need not carry it.
+      if (commandObservers.size) {
+        let parsed = null;
+        try { parsed = JSON.parse(raw); } catch { /* ignore unparseable */ }
+        if (parsed) {
+          const owner = decodeURIComponent(cmdOwner[2]);
+          for (const o of commandObservers) {
+            try { o(decodeURIComponent(cmdOwner[1]), { requestedBy: owner, ...parsed }); }
+            catch (err) { log(`observer threw: ${err.message}`); }
+          }
+        }
+      }
+      if (decodeURIComponent(cmdOwner[1]) !== agentId) return;
+      if (cfg.ownerInTopic === "off") return log("invoke/<owner> received but ownerInTopic is off");
+      return onInvoke(raw, decodeURIComponent(cmdOwner[2]));
     }
 
     if (topic === topics.cancel(root, agentId)) return onCancel(raw);
@@ -241,12 +282,15 @@ export async function connect(options = {}) {
 
   // ── serving work ──────────────────────────────────────────────────────────
 
-  async function onInvoke(raw) {
+  async function onInvoke(raw, topicOwner) {
     let msg;
     try { msg = JSON.parse(raw); } catch { return log("invoke: unparseable payload, dropped"); }
 
     const jobId = msg.jobId || newJobId();
-    const owner = ownerScope(msg.requestedBy);
+    // v1.4: the topic wins, because it is the part a broker can check. The
+    // payload's claim is not preferred over it and not quietly ignored either —
+    // they have to agree.
+    const owner = topicOwner ?? ownerScope(msg.requestedBy);
     const reject = (type, error) => {
       pub(topics.result(root, owner, jobId), { jobId, owner, type, error, ts: nowIso() }, true);
       log(`rejected ${jobId}: ${error}`);
@@ -254,7 +298,19 @@ export async function connect(options = {}) {
 
     // Order matters: each of these refuses *before* any work starts, which is
     // the only point at which refusing is cheap.
-    if (cfg.requireOwner && !msg.requestedBy) {
+    if (topicOwner !== undefined) {
+      if (ownerScope(topicOwner) !== topicOwner) {
+        return reject("rejected",
+          `invoke topic owner "${topicOwner}" is not owner-scoped — use "${ownerScope(topicOwner)}"`);
+      }
+      if (msg.requestedBy && ownerScope(msg.requestedBy) !== topicOwner) {
+        return reject("rejected",
+          `requestedBy "${ownerScope(msg.requestedBy)}" disagrees with the invoke topic's owner "${topicOwner}"`);
+      }
+    } else if (cfg.ownerInTopic === "require") {
+      return reject("rejected",
+        "this mesh requires the owner in the invoke topic — publish to commands/<agentId>/invoke/<owner>");
+    } else if (cfg.requireOwner && !msg.requestedBy) {
       return reject("rejected", "requestedBy is required");
     }
     if (active.has(jobId)) {
@@ -379,7 +435,15 @@ export async function connect(options = {}) {
       pending.set(jobId, { resolve, reject, timer });
       opts.track?.children.push({ peerId, jobId });
 
-      pub(topics.invoke(root, peerId), {
+      // v1.4: publish where a broker can check who we claim to be — but only to
+      // a peer whose profile says it serves that form. A peer we have not heard
+      // from gets the v1.3 form, which every version understands.
+      const peerTopic = peers.get(peerId)?.ownerPolicy?.topic;
+      const invokeTopic = peerTopic === "accept" || peerTopic === "require"
+        ? topics.invokeAs(root, peerId, ownerScope(agentId))
+        : topics.invoke(root, peerId);
+
+      pub(invokeTopic, {
         service, args: args ?? {},
         requestedBy: agentId,
         jobId,
@@ -400,6 +464,11 @@ export async function connect(options = {}) {
       client.removeListener("error", fail);
       client.subscribe({
         [topics.invoke(root, agentId)]: { qos: 1 },
+        // v1.4. Subscribed separately from the v1.3 form, so a broker that
+        // refuses one does not take the other with it.
+        ...(cfg.ownerInTopic === "off"
+          ? {}
+          : { [topics.invokeFilter(root, agentId)]: { qos: 1 } }),
         [topics.cancel(root, agentId)]: { qos: 1 },
         [`${root}/registry/+/profile`]: { qos: 1 },
         [`${root}/registry/+/status`]: { qos: 1 },
@@ -511,15 +580,23 @@ export async function connect(options = {}) {
      */
     async observeCommands(handler) {
       commandObservers.add(handler);
+      // Both forms. An observer that watched only `+/invoke` would go quiet the
+      // day a mesh moved to v1.4 — and quietly, since there is nothing to see
+      // when nobody publishes the old form any more.
       const wide = `${root}/commands/+/invoke`;
+      const wideOwned = `${root}/commands/+/invoke/+`;
       const own = topics.invoke(root, agentId);
-      await new Promise((r) => client.subscribe({ [wide]: { qos: 1 } }, r));
+      const ownOwned = topics.invokeFilter(root, agentId);
+      await new Promise((r) => client.subscribe({ [wide]: { qos: 1 }, [wideOwned]: { qos: 1 } }, r));
       await new Promise((r) => client.unsubscribe(own, r));
+      await new Promise((r) => client.unsubscribe(ownOwned, r));
       return () => {
         commandObservers.delete(handler);
         if (commandObservers.size) return;
         client.unsubscribe(wide);
+        client.unsubscribe(wideOwned);
         client.subscribe({ [own]: { qos: 1 } });
+        if (cfg.ownerInTopic !== "off") client.subscribe({ [ownOwned]: { qos: 1 } });
       };
     },
 

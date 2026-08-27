@@ -61,7 +61,7 @@ t("clientId is stable across calls and distinct per agent and mesh", () => {
 });
 
 t("protocol version is the one the bridge speaks", () => {
-  assert.equal(PROTOCOL_VERSION, "1.3");
+  assert.equal(PROTOCOL_VERSION, "1.4");
 });
 
 // ── plexus-agent: broker rules ──────────────────────────
@@ -116,6 +116,13 @@ t("the v1.4 proposal puts the owner where a broker can enforce it", () => {
   // broker, before any agent sees it.
   assert.ok(permits(tight.publish, `${R}/commands/reviewer/invoke/ci`));
   assert.ok(!permits(tight.publish, `${R}/commands/reviewer/invoke/mohanad`));
+});
+
+t("v1.4: the invoke topic builders put the owner where an ACL can see it", () => {
+  assert.equal(topics.invokeAs("acme/agents", "reviewer", "ci"), "acme/agents/commands/reviewer/invoke/ci");
+  assert.equal(topics.invokeFilter("acme/agents", "reviewer"), "acme/agents/commands/reviewer/invoke/+");
+  // The v1.3 form is untouched: both are served during the transition.
+  assert.equal(topics.invoke("acme/agents", "reviewer"), "acme/agents/commands/reviewer/invoke");
 });
 
 t("an id that would widen a filter is refused, not sanitised", () => {
@@ -322,6 +329,69 @@ if (!reachable) {
     const res = await c.invoke("a", "nope.nope", {}, { timeoutMs: 8000 });
     assert.equal(res.type, "error");
     assert.match(res.error, /unknown service/);
+    await Promise.all([c.close(), a.close()]);
+  });
+
+  t("end to end v1.4: an invoke carrying its owner in the topic is served", async () => {
+    // The whole point of the form: the owner is a topic segment, so a broker
+    // ACL can enforce it. Here we simply prove the agent answers it.
+    const r = `${root}-v14`;
+    const a = await connect({ broker: brokerUrl, root: r, agentId: "a" });
+    a.serve("echo", (msg) => ({ heard: msg.args.what }));   // handlers get the whole invoke
+    const c = await connect({ broker: brokerUrl, root: r, agentId: "ci", durable: false });
+    await c.waitForPeer("echo", 5000);
+    const res = await c.invoke("a", "echo", { what: "hello" }, { timeoutMs: 8000 });
+    assert.equal(res.heard, "hello");
+    await Promise.all([c.close(), a.close()]);
+  });
+
+  t("end to end v1.4: a payload that disagrees with the topic is refused", async () => {
+    // Publishing by hand, because a well-behaved client never produces this —
+    // and it is exactly what a dishonest one would.
+    const r = `${root}-v14-mismatch`;
+    const a = await connect({ broker: brokerUrl, root: r, agentId: "a" });
+    a.serve("echo", () => ({ ok: true }));
+    const spy = await connect({ broker: brokerUrl, root: r, agentId: "watcher", durable: false });
+
+    const seen = new Promise((resolve) => {
+      spy.watch((msg) => { if (msg?.type === "rejected") resolve(msg); }, "jobs");
+    });
+    await new Promise((r2) => setTimeout(r2, 300));
+    spy.publish(topics.invokeAs(r, "a", "ci"),
+      { service: "echo", args: {}, requestedBy: "mohanad", jobId: "mismatch-1" });
+
+    const rejected = await Promise.race([
+      seen,
+      new Promise((_, rej) => setTimeout(() => rej(new Error("no rejection published")), 8000)),
+    ]);
+    assert.match(rejected.error, /disagrees with the invoke topic/);
+    await Promise.all([spy.close(), a.close()]);
+  });
+
+  t("end to end v1.4: require mode refuses the v1.3 form", async () => {
+    const r = `${root}-v14-require`;
+    const a = await connect({ broker: brokerUrl, root: r, agentId: "a", ownerInTopic: "require" });
+    a.serve("echo", () => ({ ok: true }));
+    const c = await connect({ broker: brokerUrl, root: r, agentId: "ci", durable: false });
+    await c.waitForPeer("echo", 5000);
+
+    // The client sees "require" in the peer's profile and uses the topic form,
+    // so the ordinary path still works.
+    const ok = await c.invoke("a", "echo", {}, { timeoutMs: 8000 });
+    assert.equal(ok.ok, true);
+
+    // And the old form, published deliberately, is refused rather than served.
+    const seen = new Promise((resolve) => {
+      c.watch((msg) => { if (msg?.type === "rejected") resolve(msg); }, "jobs");
+    });
+    await new Promise((r2) => setTimeout(r2, 300));
+    c.publish(topics.invoke(r, "a"),
+      { service: "echo", args: {}, requestedBy: "ci", jobId: "oldform-1" });
+    const rejected = await Promise.race([
+      seen,
+      new Promise((_, rej) => setTimeout(() => rej(new Error("the v1.3 form was not refused")), 8000)),
+    ]);
+    assert.match(rejected.error, /requires the owner in the invoke topic/);
     await Promise.all([c.close(), a.close()]);
   });
 

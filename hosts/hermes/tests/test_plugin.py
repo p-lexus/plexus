@@ -61,6 +61,35 @@ def _():
     assert topics.profile("agents", "dba") == "agents/registry/dba/profile"
 
 
+@t("v1.4: the invoke topic carries the owner, and reads back unchanged")
+def _():
+    assert topics.invoke_as("agents", "dba", "ci") == "agents/commands/dba/invoke/ci"
+    assert topics.invoke_filter("agents", "dba") == "agents/commands/dba/invoke/+"
+    assert topics.invoke_topic_owner("agents", "dba", "agents/commands/dba/invoke/ci") == "ci"
+    # Unnormalised on purpose: the string in the topic is the one a broker ACL
+    # matched, and lower-casing it here would accept what the broker refused.
+    assert topics.invoke_topic_owner("agents", "dba", "agents/commands/dba/invoke/Mohanad.Q!") == "Mohanad.Q!"
+
+
+@t("v1.4: what is not an owner-scoped invoke topic is not read as one")
+def _():
+    assert topics.invoke_topic_owner("agents", "dba", "agents/commands/dba/invoke") is None
+    assert topics.invoke_topic_owner("agents", "dba", "agents/commands/dba/invoke/ci/more") is None
+    assert topics.invoke_topic_owner("agents", "dba", "agents/commands/other/invoke/ci") is None
+    assert topics.invoke_topic_owner("agents", "dba", "agents/commands/dba/cancel") is None
+
+
+@t("the three implementations agree on the protocol version")
+def _():
+    # A version that differs between implementations is a mesh whose peers
+    # disagree about what they can speak.
+    root = Path(__file__).resolve().parents[3]
+    js = (root / "packages" / "agent" / "index.js").read_text()
+    ts = (root / "hosts" / "openclaw" / "src" / "types.ts").read_text()
+    assert f'PROTOCOL_VERSION = "{topics.PROTOCOL_VERSION}"' in js, "JS disagrees"
+    assert f'PROTOCOL_VERSION = "{topics.PROTOCOL_VERSION}"' in ts, "TypeScript disagrees"
+
+
 @t("the job pattern refuses the unscoped form")
 def _():
     pattern = topics.job_pattern("agents")

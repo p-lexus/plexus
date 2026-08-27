@@ -90,6 +90,20 @@ def main() -> int:
             "prompt": "Research {{topic}}.",
         }],
     }))
+    # A spy on the wire. The point of v1.4 is which TOPIC an invoke is published
+    # to, and no amount of correct answers proves that — an implementation that
+    # silently kept using the v1.3 form would pass every other assertion here.
+    import paho.mqtt.client as _mqtt
+
+    invoke_topics: list[str] = []
+    spy = _mqtt.Client(_mqtt.CallbackAPIVersion.VERSION2, client_id="interop-spy")
+    spy.on_message = lambda _c, _u, m: invoke_topics.append(m.topic)
+    spy_host, _, spy_port = BROKER.replace("mqtt://", "").partition(":")
+    spy.connect(spy_host, int(spy_port or 1883), 30)
+    spy.subscribe(f"{ROOT}/commands/+/invoke")
+    spy.subscribe(f"{ROOT}/commands/+/invoke/+")
+    spy.loop_start()
+
     os.environ["PLEXUS_CONFIG"] = str(config)
     hermes._agent = None
 
@@ -199,6 +213,26 @@ def main() -> int:
         print(f"❌ {failure}")
     if failures:
         return 1
+    spy.loop_stop()
+    spy.disconnect()
+
+    # Both implementations advertise `topic: "accept"`, so both should have
+    # published the owner-scoped form to each other.
+    v14 = [t for t in invoke_topics if t.count("/") == 4]
+    v13 = [t for t in invoke_topics if t.count("/") == 3]
+    if not v14:
+        failures.append(
+            f"no invoke used the v1.4 owner-scoped topic — saw {invoke_topics}")
+    if v13:
+        failures.append(
+            f"an invoke fell back to the v1.3 form despite the peer advertising support: {v13}")
+    if failures:
+        print()
+        for f in failures:
+            print(f"❌ {f}")
+        print(f"\n❌ interop FAILED ({len(failures)} problem(s))")
+        return 1
+    print(f"  both directions used the v1.4 topic form: {sorted(set(v14))}")
     print("✅ a Hermes agent and a JavaScript agent interoperate, both directions, lineage intact")
     return 0
 

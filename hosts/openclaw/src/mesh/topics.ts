@@ -90,9 +90,37 @@ export function parseRegistryTopic(pattern: RegExp, topic: string): ParsedRegist
   return m ? { agentId: decodeURIComponent(m[1]), kind: m[2] as "profile" | "status" } : null;
 }
 
-/** Where a peer accepts work. */
+/** Where a peer accepts work, in the v1.3 form: the owner is in the payload. */
 export const peerInvokeTopic = (root: string, agentId: string): string =>
   `${root}/commands/${agentId}/invoke`;
+
+/**
+ * Where a peer accepts work as a particular owner (v1.4).
+ *
+ * The owner is already scoped by the caller — this does not scope it, because a
+ * topic that silently normalises `Mohanad.Q!` into `mohanad-q` would make one
+ * identity two spellings, only one of which a broker ACL matches.
+ */
+export const peerInvokeTopicFor = (root: string, agentId: string, owner: string): string =>
+  `${root}/commands/${agentId}/invoke/${owner}`;
+
+/** Everything published to this agent's invoke topic, in either form. */
+export const invokeFilter = (root: string, agentId: string): string =>
+  `${root}/commands/${agentId}/invoke/+`;
+
+/**
+ * The owner an invoke topic carries, or null if this is not one.
+ *
+ * Returns the segment as it arrived. A caller that finds it is not already
+ * scoped must reject the message rather than fix it: the string in the topic is
+ * the one the broker authorised, and any other string is a different identity.
+ */
+export function invokeTopicOwner(root: string, agentId: string, topic: string): string | null {
+  const prefix = `${root}/commands/${agentId}/invoke/`;
+  if (!topic.startsWith(prefix)) return null;
+  const rest = topic.slice(prefix.length);
+  return rest && !rest.includes("/") ? rest : null;
+}
 
 export const peerCancelTopic = (root: string, agentId: string): string =>
   `${root}/commands/${agentId}/cancel`;
