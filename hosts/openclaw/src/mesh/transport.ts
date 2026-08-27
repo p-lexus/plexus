@@ -44,6 +44,11 @@ export interface TransportHandlers {
   onConnect(): void;
   onMessage(topic: string, raw: string, data: any): void;
   onStateChange(): void;
+  /**
+   * Filters the broker refused. Never called with an empty list, and called
+   * again only if a later reconnect is refused something new.
+   */
+  onSubscribeDenied?(filters: string[]): void;
 }
 
 export interface Transport {
@@ -59,6 +64,38 @@ export interface Transport {
   publishCounted(topic: string, payload: string, opts?: { qos?: 0 | 1 | 2; retain?: boolean }): void;
   end(force?: boolean): void;
   client(): mqtt.MqttClient | null;
+}
+
+/**
+ * The filters a broker refused, read from what SUBACK actually returns.
+ *
+ * Verified against mosquitto 2.1.2 with the dynamic security plugin, because
+ * the shape is not what the API suggests:
+ *
+ *   - the broker answers every filter with a code, `128` meaning refused;
+ *   - mqtt.js surfaces that as an ERROR, not as a value in `granted`;
+ *   - and the `granted` array it hands the callback carries the QoS that was
+ *     *asked for*, so a denied filter still reads as `qos: 1` there.
+ *
+ * The true codes are on `err.packet.granted`, positionally aligned with the
+ * filters as they were sent. Reading `granted` alone — or trusting `err` to
+ * mean "nothing was subscribed" — both give the wrong answer.
+ *
+ * Some brokers refuse nothing and filter deliveries instead: mosquitto with a
+ * static `acl_file` grants a wildcard subscription and then drops the messages
+ * the client may not see. Nothing is reported there because nothing was
+ * refused, and this returns an empty list — the agent simply receives less.
+ */
+export function deniedFilters(
+  requested: string[],
+  granted?: Array<{ topic: string; qos: number }> | null,
+  err?: (Error & { packet?: { granted?: number[] } }) | null,
+): string[] {
+  const codes = err?.packet?.granted;
+  if (Array.isArray(codes)) {
+    return requested.filter((_, i) => Number(codes[i]) > 2);
+  }
+  return (granted ?? []).filter((g) => Number(g.qos) > 2).map((g) => g.topic);
 }
 
 /**
@@ -126,6 +163,32 @@ export function createTransport(
     attach();
   }
 
+  /**
+   * Subscribe, and read the answer. Denied filters are dropped from the set we
+   * re-send on reconnect: the broker's answer will not change until its ACLs
+   * do, and re-requesting it every reconnect only buries the one report that
+   * mattered.
+   */
+  function send(topics: Record<string, { qos: 0 | 1 | 2 }>): void {
+    const filters = Object.keys(topics);
+    if (!client || !filters.length) return;
+    client.subscribe(topics, (err, granted) => {
+      const denied = deniedFilters(
+        filters,
+        granted as Array<{ topic: string; qos: number }>,
+        err as Error & { packet?: { granted?: number[] } },
+      );
+      if (!denied.length) {
+        // A refusal arrives as an error too, so only report one that turned
+        // out to be something else — a dropped connection, a malformed filter.
+        if (err) logger.error(`subscribe failed: ${err.message}`);
+        return;
+      }
+      for (const f of denied) delete subscriptions[f];
+      handlers?.onSubscribeDenied?.(denied);
+    });
+  }
+
   function attach(): void {
     if (!client || !handlers) return;
     const h = handlers;
@@ -157,9 +220,7 @@ export function createTransport(
         return;
       }
 
-      if (Object.keys(subscriptions).length) {
-        client!.subscribe(subscriptions, (err) => err && logger.error(`subscribe failed: ${err.message}`));
-      }
+      send(subscriptions);
       h.onConnect();
     });
 
@@ -201,9 +262,7 @@ export function createTransport(
 
     subscribe(topics) {
       subscriptions = { ...subscriptions, ...topics };
-      if (client?.connected) {
-        client.subscribe(topics, (err) => err && logger.error(`subscribe failed: ${err.message}`));
-      }
+      if (client?.connected) send(topics);
     },
 
     publish(topic, payload, opts) {
