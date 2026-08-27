@@ -80,26 +80,43 @@ t("the catalog lives beside openclaw.json, not inside the plugin", () => {
   assert.equal(conf.mesh.historyFile, path.join(deploymentDir(), "jobs.local.json"));
 });
 
+// Isolated from whatever this machine happens to have. These tests exercise the
+// FALLBACK, which only applies when the deployment directory has no catalog —
+// and the moment a real deployment on this machine has one, an un-isolated test
+// silently starts testing the other branch and fails. It found exactly that.
+function withEmptyDeployment(fn) {
+  const previous = process.env.OPENCLAW_HOME;
+  process.env.OPENCLAW_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "home-"));
+  try { fn(); } finally {
+    if (previous === undefined) delete process.env.OPENCLAW_HOME;
+    else process.env.OPENCLAW_HOME = previous;
+  }
+}
+
 t("a catalog in the checkout root is found, not just one in dist/", () => {
   // pluginDir is the BUILT module's directory — dist/ — and the deployment's
   // catalog sits one level up, in the checkout. Checking only dist/ found
   // nothing once the build stopped copying it there, and the agent silently
   // served the shipped example: right capability names, example prompts.
-  const checkout = fs.mkdtempSync(path.join(os.tmpdir(), "checkout-"));
-  const distDir = path.join(checkout, "dist");
-  fs.mkdirSync(distDir);
-  fs.writeFileSync(path.join(checkout, "services.json"), JSON.stringify({ capabilities: [] }));
-  const conf = resolveConfig({ broker: { url: "mqtt://x" } }, distDir);
-  assert.equal(conf.mesh.servicesFile, path.join(checkout, "services.json"));
+  withEmptyDeployment(() => {
+    const checkout = fs.mkdtempSync(path.join(os.tmpdir(), "checkout-"));
+    const distDir = path.join(checkout, "dist");
+    fs.mkdirSync(distDir);
+    fs.writeFileSync(path.join(checkout, "services.json"), JSON.stringify({ capabilities: [] }));
+    const conf = resolveConfig({ broker: { url: "mqtt://x" } }, distDir);
+    assert.equal(conf.mesh.servicesFile, path.join(checkout, "services.json"));
+  });
 });
 
 t("an existing catalog in the old place keeps being used", () => {
   // The upgrade case. Reading the new, empty path instead would bring the agent
   // up offering nothing at all, which looks exactly like working.
-  const plugin = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-"));
-  fs.writeFileSync(path.join(plugin, "services.json"), JSON.stringify({ capabilities: [] }));
-  const conf = resolveConfig({ broker: { url: "mqtt://x" } }, plugin);
-  assert.equal(conf.mesh.servicesFile, path.join(plugin, "services.json"));
+  withEmptyDeployment(() => {
+    const plugin = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-"));
+    fs.writeFileSync(path.join(plugin, "services.json"), JSON.stringify({ capabilities: [] }));
+    const conf = resolveConfig({ broker: { url: "mqtt://x" } }, plugin);
+    assert.equal(conf.mesh.servicesFile, path.join(plugin, "services.json"));
+  });
 });
 
 t("an explicitly configured servicesFile still wins", () => {
