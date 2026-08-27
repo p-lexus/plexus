@@ -21,7 +21,7 @@ export interface Catalog {
   watch(onChange: () => void): () => void;
 }
 
-export function createCatalog(servicesFile: string, logger: Logger): Catalog {
+export function createCatalog(servicesFile: string, logger: Logger, exampleFile?: string): Catalog {
   let lastMtime = 0;
 
   const read = (): ServicesFile => {
@@ -31,12 +31,19 @@ export function createCatalog(servicesFile: string, logger: Logger): Catalog {
       // On a fresh clone the catalog does not exist yet, because it is
       // gitignored. Fall back to the shipped example rather than starting with
       // an empty, silently useless agent.
-      const example = servicesFile.replace(/\.json$/, ".example.json");
+      // The example ships WITH THE PLUGIN, while the catalog belongs to the
+      // deployment — so it is not simply this path with another extension.
+      const example = exampleFile ?? servicesFile.replace(/\.json$/, ".example.json");
       try {
         const svc = JSON.parse(fs.readFileSync(example, "utf8")) as ServicesFile;
-        logger.warn(
-          `${path.basename(servicesFile)} not readable — falling back to ` +
-          `${path.basename(example)}. Copy it to ${path.basename(servicesFile)} to customise.`,
+        // logger.info, not warn: the gateway keeps info from plugins and drops
+        // warn, so this said nothing where it mattered. And it matters — an
+        // agent serving the example's prompts under its own name looks right
+        // in every listing and answers with somebody else's instructions.
+        logger.info(
+          `CATALOG NOT FOUND at ${servicesFile} — serving ${path.basename(example)} instead. ` +
+          `These are EXAMPLE capabilities, not this deployment's: same names, different prompts. ` +
+          `Put this deployment's catalog at ${servicesFile}.`,
         );
         return svc;
       } catch { /* no example either — report the original failure */ }
@@ -47,6 +54,10 @@ export function createCatalog(servicesFile: string, logger: Logger): Catalog {
 
   const write = (svc: ServicesFile): boolean => {
     try {
+      // The panel creates this file, it does not merely edit one: a deployment
+      // that has never written a catalog has no directory for it either, and a
+      // failed write here is a capability the operator believes they added.
+      fs.mkdirSync(path.dirname(servicesFile), { recursive: true });
       fs.writeFileSync(servicesFile, JSON.stringify(svc, null, 2) + "\n");
       return true;
     } catch (e: any) {
@@ -76,6 +87,11 @@ export function createCatalog(servicesFile: string, logger: Logger): Catalog {
       // Watch the DIRECTORY, not the file: editors save by rename, which
       // silently detaches a file watch.
       const dir = path.dirname(servicesFile);
+      // And the directory has to exist to be watched. On a deployment whose
+      // catalog has not been written yet, creating it here is the difference
+      // between edits being noticed and the reconciler picking them up five
+      // minutes later.
+      fs.mkdirSync(dir, { recursive: true });
       const baseName = path.basename(servicesFile);
       watcher = fs.watch(dir, { persistent: false }, (_ev, fname) => {
         if (!fname || fname === baseName) schedule();

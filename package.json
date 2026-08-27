@@ -29,7 +29,7 @@
   ],
   "scripts": {
     "build": "tsc && npm run copy:assets",
-    "copy:assets": "rm -rf dist/web && mkdir -p dist/web && cp -R web/. dist/web/ && cp services.example.json dist/ && { cp services.json dist/ 2>/dev/null || true; }",
+    "copy:assets": "rm -rf dist/web && mkdir -p dist/web && cp -R web/. dist/web/ && cp services.example.json dist/",
     "typecheck": "tsc --noEmit",
     "test": "npm run build && node test/unit.mjs && node test/render-check.mjs && node test/packages.mjs",
     "test:unit": "node test/unit.mjs",

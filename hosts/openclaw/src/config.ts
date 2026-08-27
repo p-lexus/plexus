@@ -2,10 +2,13 @@
  * Configuration resolution.
  *
  * Every default lives here, so "what happens if I leave this out?" has one
- * answer in one place. Pure and synchronous — takes raw plugin config, returns
- * fully-resolved settings.
+ * answer in one place. Synchronous, and pure but for one thing: choosing where
+ * this deployment's files live looks at whether they are already somewhere
+ * else, so an upgrade cannot silently start reading an empty catalog.
  */
 
+import * as fs from "fs";
+import * as os from "os";
 import * as path from "path";
 import type { PluginConfig } from "./types.js";
 
@@ -69,6 +72,49 @@ export function resolveEnvRef(val?: string): string | undefined {
   return m ? process.env[m[1]] : val;
 }
 
+/**
+ * Where this deployment's own files live: the capability catalog, the prompt
+ * variables, the job history.
+ *
+ * Beside `openclaw.json`, not inside the plugin. What an agent DOES is the
+ * deployment's, and the plugin is a thing that gets replaced — reinstalled,
+ * rebuilt, pulled over. A catalog living inside it is one `rm -rf` from gone,
+ * and it rode into `dist/` on every build, which put six capabilities and their
+ * prompts inside a build artefact that has no business carrying them.
+ *
+ * `OPENCLAW_HOME` first, because that is what the gateway itself honours.
+ */
+export function deploymentDir(env: NodeJS.ProcessEnv = process.env): string {
+  const raw = env.OPENCLAW_HOME?.trim();
+  const home = raw
+    ? path.resolve(raw.replace(/^~(?=$|[/\\])/, os.homedir()))
+    : os.homedir();
+  return path.join(home, ".openclaw", "plexus");
+}
+
+/**
+ * The new path, unless a file is already sitting at an old one.
+ *
+ * TWO old ones, and the second is the reason this needs saying: `pluginDir` is
+ * the directory of the BUILT module — `dist/` — not the checkout that contains
+ * it. That is exactly why the build used to copy `services.json` into `dist/`:
+ * the plugin never read the checkout's copy at all.
+ *
+ * Checking only `dist/` therefore finds nothing the moment that copy stops
+ * being made, and the catalog falls through to the shipped example. Tried on a
+ * live agent, that produced six capabilities with the right NAMES and the
+ * example's prompts — an agent that looks correct in every list and answers
+ * with somebody else's instructions.
+ */
+function deploymentFile(name: string, pluginDir: string, exists = fs.existsSync): string {
+  const current = path.join(deploymentDir(), name);
+  if (exists(current)) return current;
+  for (const legacy of [path.join(pluginDir, name), path.join(pluginDir, "..", name)]) {
+    if (exists(legacy)) return path.resolve(legacy);
+  }
+  return current;
+}
+
 export function resolveConfig(cfg: Partial<PluginConfig>, pluginDir: string): ResolvedConfig {
   const mesh = cfg.mesh ?? {};
   const web = cfg.web ?? {};
@@ -85,9 +131,9 @@ export function resolveConfig(cfg: Partial<PluginConfig>, pluginDir: string): Re
     mesh: {
       root: mesh.root ?? DEFAULTS.meshRoot,
       agentId: mesh.agentId ?? DEFAULTS.agentId,
-      servicesFile: mesh.servicesFile ?? path.join(pluginDir, "services.json"),
-      secretsFile: path.join(pluginDir, "mesh.local.json"),
-      historyFile: mesh.historyFile ?? path.join(pluginDir, "jobs.local.json"),
+      servicesFile: mesh.servicesFile ?? deploymentFile("services.json", pluginDir),
+      secretsFile: deploymentFile("mesh.local.json", pluginDir),
+      historyFile: mesh.historyFile ?? deploymentFile("jobs.local.json", pluginDir),
       requireOwner: mesh.requireOwner !== false,   // default true
       verifyOwner: mesh.verifyOwner === true,      // default false
       maxJobDurationMs: mesh.maxJobDurationMs ?? DEFAULTS.maxJobDurationMs,

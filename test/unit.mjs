@@ -17,7 +17,9 @@ const { normalizeJobPublish, renderPrompt, unresolvedPlaceholders, publishRefusa
 const { createJobStore, MAX_HISTORY } = await import(dist("mesh/jobs.js"));
 const { createVarStore, maskValue } = await import(dist("mesh/vars.js"));
 const { createAuth } = await import(dist("http/auth.js"));
-const { resolveConfig, resolveEnvRef, DEFAULTS } = await import(dist("config.js"));
+const { resolveConfig, resolveEnvRef, DEFAULTS, deploymentDir } = await import(dist("config.js"));
+const { createCatalog } = await import(dist("mesh/catalog.js"));
+const { createRegistry } = await import(dist("mesh/registry.js"));
 const { deriveClientId, deniedFilters } = await import(dist("mesh/transport.js"));
 
 let pass = 0, fail = 0;
@@ -64,6 +66,128 @@ t("granted subscriptions are never reported as denied", () => {
   assert.deepEqual(deniedFilters(asked, [{ topic: "x", qos: 0 }, { topic: "y", qos: 1 }, { topic: "z", qos: 2 }]), []);
   assert.deepEqual(deniedFilters([], []), []);
   assert.deepEqual(deniedFilters(["a"], undefined), []);
+});
+
+t("the catalog lives beside openclaw.json, not inside the plugin", () => {
+  const plugin = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-"));
+  const conf = resolveConfig({ broker: { url: "mqtt://x" } }, plugin);
+  assert.equal(conf.mesh.servicesFile, path.join(deploymentDir(), "services.json"));
+  assert.ok(!conf.mesh.servicesFile.startsWith(plugin),
+    "the deployment's catalog must not resolve inside the plugin directory");
+  // The same reasoning for the rest of the deployment's own state.
+  assert.equal(conf.mesh.secretsFile, path.join(deploymentDir(), "mesh.local.json"));
+  assert.equal(conf.mesh.historyFile, path.join(deploymentDir(), "jobs.local.json"));
+});
+
+t("a catalog in the checkout root is found, not just one in dist/", () => {
+  // pluginDir is the BUILT module's directory — dist/ — and the deployment's
+  // catalog sits one level up, in the checkout. Checking only dist/ found
+  // nothing once the build stopped copying it there, and the agent silently
+  // served the shipped example: right capability names, example prompts.
+  const checkout = fs.mkdtempSync(path.join(os.tmpdir(), "checkout-"));
+  const distDir = path.join(checkout, "dist");
+  fs.mkdirSync(distDir);
+  fs.writeFileSync(path.join(checkout, "services.json"), JSON.stringify({ capabilities: [] }));
+  const conf = resolveConfig({ broker: { url: "mqtt://x" } }, distDir);
+  assert.equal(conf.mesh.servicesFile, path.join(checkout, "services.json"));
+});
+
+t("an existing catalog in the old place keeps being used", () => {
+  // The upgrade case. Reading the new, empty path instead would bring the agent
+  // up offering nothing at all, which looks exactly like working.
+  const plugin = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-"));
+  fs.writeFileSync(path.join(plugin, "services.json"), JSON.stringify({ capabilities: [] }));
+  const conf = resolveConfig({ broker: { url: "mqtt://x" } }, plugin);
+  assert.equal(conf.mesh.servicesFile, path.join(plugin, "services.json"));
+});
+
+t("an explicitly configured servicesFile still wins", () => {
+  const plugin = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-"));
+  const mine = path.join(plugin, "elsewhere.json");
+  const conf = resolveConfig({ broker: { url: "mqtt://x" }, mesh: { servicesFile: mine } }, plugin);
+  assert.equal(conf.mesh.servicesFile, mine);
+});
+
+t("the panel can create a catalog where none exists", async () => {
+  // What the panel does on a fresh deployment: the directory has never been
+  // written, so a write that assumes it exists fails and the operator is told
+  // their capability was added when it was not.
+  const dir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "deploy-")), "never", "written");
+  const file = path.join(dir, "services.json");
+  const cat = createCatalog(file, { info() {}, warn() {}, error() {} });
+  assert.equal(cat.write({ capabilities: [{ service: "a.b", prompt: "x" }] }), true);
+  assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).capabilities[0].service, "a.b");
+});
+
+t("the panel's edits round-trip through the new location", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "deploy-"));
+  const file = path.join(dir, "services.json");
+  const cat = createCatalog(file, { info() {}, warn() {}, error() {} });
+  cat.write({ capabilities: [{ service: "one", prompt: "p" }] });
+  assert.equal(cat.read().capabilities.length, 1);
+  cat.write({ capabilities: [{ service: "one", prompt: "p" }, { service: "two", prompt: "q" }] });
+  assert.deepEqual(cat.read().capabilities.map((c) => c.service), ["one", "two"]);
+  cat.write({ capabilities: [] });
+  assert.deepEqual(cat.read().capabilities, [], "removing the last capability must not fall back to the example");
+});
+
+t("a missing catalog falls back to the example that ships with the plugin", () => {
+  // The example is the PLUGIN's and the catalog is the DEPLOYMENT's, so they no
+  // longer sit side by side — the fallback has to be told where to look.
+  const plugin = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-"));
+  const example = path.join(plugin, "services.example.json");
+  fs.writeFileSync(example, JSON.stringify({ capabilities: [{ service: "shipped", prompt: "p" }] }));
+  const deploy = fs.mkdtempSync(path.join(os.tmpdir(), "deploy-"));
+  const cat = createCatalog(path.join(deploy, "services.json"), { info() {}, warn() {}, error() {} }, example);
+  assert.equal(cat.read().capabilities[0].service, "shipped");
+});
+
+t("watching a catalog whose directory does not exist yet does not throw", () => {
+  const dir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "deploy-")), "not", "yet");
+  const cat = createCatalog(path.join(dir, "services.json"), { info() {}, warn() {}, error() {} });
+  const stop = cat.watch(() => {});
+  assert.equal(typeof stop, "function");
+  stop();
+});
+
+t("the panel adds and removes capabilities at the new location, and republishes", () => {
+  // This is the path /api/config takes — the panel's real one, not a proxy for
+  // it. Adding a capability has to reach the file AND the retained profile: a
+  // catalog the mesh never hears about is a capability nobody can invoke.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "deploy-"));
+  const file = path.join(dir, "services.json");
+  fs.writeFileSync(file, JSON.stringify({ capabilities: [] }));
+  const published = [];
+  const registry = createRegistry({
+    agentId: "conan",
+    profileTopic: "r/registry/conan/profile",
+    requireOwner: true,
+    verifyOwner: false,
+    catalog: createCatalog(file, { info() {}, warn() {}, error() {} }),
+    logger: { info() {}, warn() {}, error() {} },
+    connected: () => true,
+    publish: (topic, payload, opts) => published.push({ topic, payload, opts }),
+    onPublished: () => {},
+  });
+
+  const added = registry.runConfigAction({
+    action: "add_service",
+    service: { service: "docs.summarize", prompt: "Summarize: {{content}}" },
+  });
+  assert.equal(added.ok, true, JSON.stringify(added));
+  assert.deepEqual(
+    JSON.parse(fs.readFileSync(file, "utf8")).capabilities.map((c) => c.service),
+    ["docs.summarize"],
+    "the panel's write did not reach the deployment's catalog",
+  );
+  const profile = JSON.parse(published.at(-1).payload);
+  assert.equal(profile.capabilities[0].service, "docs.summarize",
+    "the retained profile was not republished with the new capability");
+  assert.equal(published.at(-1).opts.retain, true, "a profile that is not retained is not discoverable");
+
+  const removed = registry.runConfigAction({ action: "remove_service", service: "docs.summarize" });
+  assert.equal(removed.ok, true, JSON.stringify(removed));
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")).capabilities, []);
 });
 
 t("ownerScope sanitises to the documented charset", () => {
