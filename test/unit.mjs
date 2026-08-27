@@ -218,14 +218,27 @@ t("v1.4: what is not an owner-scoped invoke topic is not read as one", () => {
   assert.equal(invokeTopicOwner(R, "reviewer", `${R}/commands/reviewer/cancel`), null);
 });
 
-t("v1.4 config: accept is the transition default, and unknown values do not silently disable it", () => {
+t("v1.4 config: both forms are served by default, and there is no refusing mode", () => {
   const plugin = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-"));
   const base = { broker: { url: "mqtt://x" } };
   assert.equal(resolveConfig(base, plugin).mesh.ownerInTopic, "accept");
-  assert.equal(resolveConfig({ ...base, mesh: { ownerInTopic: "require" } }, plugin).mesh.ownerInTopic, "require");
   assert.equal(resolveConfig({ ...base, mesh: { ownerInTopic: "off" } }, plugin).mesh.ownerInTopic, "off");
-  // A typo must not turn enforcement off — it falls back to the documented default.
-  assert.equal(resolveConfig({ ...base, mesh: { ownerInTopic: "REQUIRE" } }, plugin).mesh.ownerInTopic, "accept");
+  // "require" was a mode in which the agent refused the v1.3 form. Refusing is
+  // enforcement, enforcement is the broker's, so it does not exist — and an
+  // unknown value falls back to serving both rather than to anything stricter.
+  assert.equal(resolveConfig({ ...base, mesh: { ownerInTopic: "require" } }, plugin).mesh.ownerInTopic, "accept");
+});
+
+t("v1.4: verified is stated by the deployment, never inferred by the agent", () => {
+  // The agent cannot observe that its broker scopes invoke topics. Whoever
+  // applied the rules can, and says so — plexus-server writes it into the
+  // config it generates.
+  const plugin = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-"));
+  const base = { broker: { url: "mqtt://x" } };
+  assert.equal(resolveConfig(base, plugin).mesh.ownerEnforced, false);
+  assert.equal(resolveConfig({ ...base, mesh: { ownerEnforced: true } }, plugin).mesh.ownerEnforced, true);
+  // Not a boolean is not a claim.
+  assert.equal(resolveConfig({ ...base, mesh: { ownerEnforced: "yes" } }, plugin).mesh.ownerEnforced, false);
 });
 
 t("ownerScope sanitises to the documented charset", () => {

@@ -41,11 +41,14 @@ const DEFAULTS = {
   keepalive: 30,
   reconnectPeriod: 5_000,
   requireOwner: true,
-  // v1.4: what to do with commands/<agentId>/invoke/<owner>.
-  //   "off"     — the v1.3 form only
-  //   "accept"  — both, the topic preferred, disagreement refused (transition)
-  //   "require" — the v1.3 form is refused
+  // v1.4: whether to serve commands/<agentId>/invoke/<owner>. "accept" (both
+  // forms) or "off" (the v1.3 form only). There is no mode that refuses the
+  // old form: refusing is enforcement, and enforcement is the broker's.
   ownerInTopic: "accept",
+  // Whether the broker enforces who a requester may claim to be. Stated by
+  // whoever applied the rules — this library cannot find it out, and guessing
+  // would advertise a guarantee nobody made.
+  ownerEnforced: false,
 };
 
 /** Terminal result types. Anything unrecognised is also terminal — treat it so. */
@@ -180,10 +183,13 @@ export async function connect(options = {}) {
       protocolVersion: PROTOCOL_VERSION,
       capabilities,
       // What this deployment does with the two invoke forms, so a publisher
-      // reads it rather than guessing. `verified` stays false here: this
-      // library serves both forms, and accepting both means an unverified
-      // invoke can still arrive.
-      ownerPolicy: { required: cfg.requireOwner, topic: cfg.ownerInTopic, verified: false },
+      // reads it rather than guessing — and what the BROKER does about owners,
+      // which this library only reports.
+      ownerPolicy: {
+        required: cfg.requireOwner,
+        topic: cfg.ownerInTopic,
+        verified: cfg.ownerEnforced === true,
+      },
       ts: nowIso(),
     }, true);
     pub(topics.status(root, agentId), { status: "online", ts: nowIso() }, true);
@@ -307,9 +313,6 @@ export async function connect(options = {}) {
         return reject("rejected",
           `requestedBy "${ownerScope(msg.requestedBy)}" disagrees with the invoke topic's owner "${topicOwner}"`);
       }
-    } else if (cfg.ownerInTopic === "require") {
-      return reject("rejected",
-        "this mesh requires the owner in the invoke topic — publish to commands/<agentId>/invoke/<owner>");
     } else if (cfg.requireOwner && !msg.requestedBy) {
       return reject("rejected", "requestedBy is required");
     }

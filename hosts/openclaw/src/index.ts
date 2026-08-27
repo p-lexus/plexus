@@ -301,28 +301,23 @@ export default definePluginEntry({
     });
 
     /**
-     * What this deployment actually enforces about who a requester is.
+     * What this deployment enforces about who a requester is — reported, not
+     * decided here. The agent serves both invoke forms and refuses neither;
+     * whether anyone is stopped is the broker's business.
      *
-     * `verified` is the careful one. Refusing the v1.3 form stops a careless
-     * client, not a dishonest one: on a broker with no ACLs anyone may still
-     * publish `invoke/somebody-else`. So it is claimed only in "require" mode
-     * AND with evidence that the broker enforces per-identity rules at all —
-     * and the evidence is free, because an enforcing broker REFUSES this agent
-     * the mesh-wide job filter. That refusal is what `jobFeed: "scoped"` means.
-     *
-     * It is inference, and its limit is worth stating: a broker could scope job
-     * topics and not scope invokes. Where the evidence cannot be observed at
-     * all — brokers that grant the wildcard and silently filter deliveries —
-     * `mesh.ownerEnforced` lets an operator assert it and own the claim.
+     * `verified` therefore does not come from anything this agent does. It
+     * comes from whoever configured the broker's rules and stated so, which is
+     * what `plexus-server add-agent --owner-in-topic` writes into the config it
+     * generates. Inferring it here — from a refused subscription, say — would
+     * mean advertising a guarantee nobody actually made: a broker can scope job
+     * topics without scoping invokes, and the difference is exactly the one
+     * this field exists to report.
      */
-    const ownerPolicy = () => {
-      const brokerEnforces = jobFeed === "scoped" || conf.mesh.ownerEnforced;
-      return {
-        required: conf.mesh.requireOwner,
-        topic: conf.mesh.ownerInTopic,
-        verified: conf.mesh.verifyOwner || (conf.mesh.ownerInTopic === "require" && brokerEnforces),
-      };
-    };
+    const ownerPolicy = () => ({
+      required: conf.mesh.requireOwner,
+      topic: conf.mesh.ownerInTopic,
+      verified: conf.mesh.verifyOwner || conf.mesh.ownerEnforced,
+    });
 
     const registry = createRegistry({
       agentId: conf.mesh.agentId,

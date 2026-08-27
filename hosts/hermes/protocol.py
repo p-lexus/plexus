@@ -117,6 +117,7 @@ class MeshAgent:
         ask_timeout: float = 300.0,
         require_owner: bool = True,
         owner_in_topic: str = "accept",
+        owner_enforced: bool = False,
         keepalive: int = 30,
         max_workers: int = 4,
         max_job_seconds: float = 1800.0,
@@ -128,9 +129,13 @@ class MeshAgent:
         self.max_depth = max_depth
         self.ask_timeout = ask_timeout
         self.require_owner = require_owner
-        # v1.4: "off" serves the v1.3 form only, "accept" serves both and
-        # prefers the topic, "require" refuses the v1.3 form.
-        self.owner_in_topic = owner_in_topic if owner_in_topic in ("off", "accept", "require") else "accept"
+        # v1.4: "off" serves the v1.3 form only, "accept" serves both. There is
+        # no mode that refuses the old form — refusing is enforcement, and
+        # enforcement belongs to the broker.
+        self.owner_in_topic = "off" if owner_in_topic == "off" else "accept"
+        # Whether the broker enforces who a requester may claim to be. Stated by
+        # whoever applied the rules; this agent cannot observe it.
+        self.owner_enforced = bool(owner_enforced)
         self.keepalive = keepalive
         self.max_job_seconds = max_job_seconds
 
@@ -245,9 +250,7 @@ class MeshAgent:
                 "ownerPolicy": {
                     "required": self.require_owner,
                     "topic": self.owner_in_topic,
-                    # False while both forms are served: accepting the v1.3 form
-                    # means an unverifiable invoke can still arrive.
-                    "verified": False,
+                    "verified": self.owner_enforced,
                 },
                 "ts": _now(),
             },
@@ -383,12 +386,6 @@ class MeshAgent:
                     f'requestedBy "{owner_scope(claimed)}" disagrees with the invoke '
                     f'topic\'s owner "{topic_owner}"',
                 )
-        elif self.owner_in_topic == "require":
-            return reject(
-                "rejected",
-                "this mesh requires the owner in the invoke topic — "
-                "publish to commands/<agentId>/invoke/<owner>",
-            )
         elif self.require_owner and not msg.get("requestedBy"):
             return reject("rejected", "requestedBy is required")
         with self._lock:

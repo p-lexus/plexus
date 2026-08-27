@@ -31,7 +31,7 @@ export interface ResolvedConfig {
     historyFile: string;
     requireOwner: boolean;
     verifyOwner: boolean;
-    ownerInTopic: "off" | "accept" | "require";
+    ownerInTopic: "off" | "accept";
     ownerEnforced: boolean;
     maxJobDurationMs: number;
     maxDepth: number;
@@ -137,15 +137,11 @@ export function resolveConfig(cfg: Partial<PluginConfig>, pluginDir: string): Re
       secretsFile: deploymentFile("mesh.local.json", pluginDir),
       historyFile: mesh.historyFile ?? deploymentFile("jobs.local.json", pluginDir),
       requireOwner: mesh.requireOwner !== false,   // default true
-      // v1.4. "accept" is the transition the spec asks for: both forms served,
-      // the topic preferred, disagreement refused. "require" refuses the v1.3
-      // form outright, which is what makes ownerPolicy.verified claimable.
-      ownerInTopic: (["off", "accept", "require"] as const).includes(mesh.ownerInTopic as any)
-        ? (mesh.ownerInTopic as "off" | "accept" | "require")
-        : "accept",
-      // An operator's assertion that the broker enforces per-identity rules,
-      // for brokers that filter deliveries silently instead of refusing a
-      // subscription — where the agent cannot find that out for itself.
+      // v1.4. Both forms served, the owner taken from the topic when it is
+      // there. There is no mode in which the agent refuses the old form:
+      // refusing is enforcement, and enforcement belongs to the broker.
+      ownerInTopic: mesh.ownerInTopic === "off" ? "off" : "accept",
+      // Stated by whoever applied the broker's rules, because only they know.
       ownerEnforced: mesh.ownerEnforced === true,
       verifyOwner: mesh.verifyOwner === true,      // default false
       maxJobDurationMs: mesh.maxJobDurationMs ?? DEFAULTS.maxJobDurationMs,

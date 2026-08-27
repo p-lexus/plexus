@@ -36,19 +36,28 @@ export interface MeshConfig {
    */
   verifyOwner?: boolean;
   /**
-   * v1.4: what to do with `commands/<agentId>/invoke/<owner>`.
+   * v1.4: whether to serve `commands/<agentId>/invoke/<owner>`.
    *
-   * "accept" (default) serves both forms and prefers the topic. "require"
-   * refuses the payload form, which is the only mode in which this agent can
-   * honestly claim the owner was established by something other than the
-   * sender's word. "off" serves the v1.3 form only.
+   * "accept" (default) serves both forms and takes the owner from the topic
+   * when it is there. "off" serves the v1.3 form only.
+   *
+   * There is deliberately no mode in which this agent refuses the old form.
+   * Refusing is enforcement, enforcement is the broker's, and an ACL that
+   * grants `commands/+/invoke/<owner>` does not grant `commands/+/invoke` — so
+   * the old form is already unpublishable wherever it matters. An agent that
+   * refused it as well would only be blocking clients the broker already
+   * blocks, on a mesh where nobody is being stopped anyway.
    */
-  ownerInTopic?: "off" | "accept" | "require";
+  ownerInTopic?: "off" | "accept";
   /**
-   * Assert that the broker enforces per-identity ACLs, for brokers that grant a
-   * wildcard subscription and filter deliveries rather than refusing it — where
-   * the agent has no way to observe enforcement. An assertion, so it is the
-   * operator's claim to make.
+   * Whether the broker enforces who a requester may claim to be.
+   *
+   * The agent cannot find this out for itself — it can observe that some
+   * subscription was refused, but not that invoke topics are scoped, and
+   * guessing from one to the other would advertise a guarantee nobody made.
+   * So it is stated in configuration by whoever applied the rules;
+   * `plexus-server add-agent --owner-in-topic` writes it into the config it
+   * generates, because at that moment it knows exactly what it applied.
    */
   ownerEnforced?: boolean;
   /** Hard wall-clock cap per job before the mesh declares it failed. Default 30 min. */
@@ -226,7 +235,7 @@ export interface Peer {
     requestSchema?: Record<string, unknown>;
     avgLatency?: string;
   }>;
-  ownerPolicy?: { required?: boolean; verified?: boolean; topic?: "off" | "accept" | "require" };
+  ownerPolicy?: { required?: boolean; verified?: boolean; topic?: "off" | "accept" };
   /** When we last heard anything from this agent. */
   lastSeen: number;
 }

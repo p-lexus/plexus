@@ -202,15 +202,11 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
           { type: "rejected", note: err });
         return { ok: false, error: err, jobId };
       }
-    } else if (cfg.mesh.ownerInTopic === "require") {
-      const err = "this mesh requires the owner in the invoke topic — " +
-        "publish to commands/<agentId>/invoke/<owner>";
-      logger.info(`rejected job ${jobId} — ${err}`);
-      publishResult(jobId, { type: "error", error: err, service }, ownerScope(data.requestedBy));
-      jobs.record({ jobId, service, state: "rejected", lastEvent: "owner not in topic" },
-        { type: "rejected", note: err });
-      return { ok: false, error: err, jobId };
     }
+    // Deliberately no `else`: an invoke that arrives in the v1.3 form is
+    // served. Refusing it would be this agent enforcing a policy, and on a
+    // broker with rules the old form cannot be published at all — an ACL that
+    // grants commands/+/invoke/<owner> does not grant commands/+/invoke.
 
     // ── Owner resolution (protocol 1.2: requestedBy is REQUIRED) ──
     let requestedBy = topicOwner ?? String(data.requestedBy ?? "").trim();

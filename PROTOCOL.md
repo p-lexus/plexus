@@ -508,29 +508,30 @@ a cloud broker — rather than one vendor's rule engine.
   "verified": false }      // the owner was established by something other than the sender's word
 ```
 
-`topic` is what this agent does with the two forms:
+`topic` is what this agent serves:
 
 | | Meaning |
 |---|---|
 | `off` | Only the v1.3 form is served. An invoke on the topic form is not answered |
-| `accept` | Both forms served, topic preferred, disagreement rejected. **The transition default** |
-| `require` | The v1.3 form is **refused**. Every accepted invoke carried its owner in the topic |
+| `accept` | Both forms served, and the owner is taken from the topic when it is there. **The default** |
 
-**`verified` is not `topic: "require"`.** Refusing the old form stops a *careless* client, not a
-dishonest one: on a broker with no ACLs, anyone may still publish `invoke/somebody-else`. So an
-implementation may report `verified: true` only when both hold:
+**There is no mode in which an agent refuses the v1.3 form**, and that is deliberate. Refusing is
+enforcement, and enforcement belongs to the broker: an ACL granting
+`publish commands/+/invoke/<owner>` does not grant `publish commands/+/invoke`, so wherever the
+rules are applied the old form cannot be published at all. An agent that refused it as well would
+block only the clients the broker already blocks — and on a mesh with no rules, it would block the
+careless while the dishonest carry on.
 
-- it is in `require` mode, **and**
-- it has evidence the broker enforces per-identity rules at all.
+**`verified` is not something an agent can decide.** It says the owner was established by something
+other than the sender's word, which is a fact about the broker's configuration. An agent cannot
+observe that: it may notice that some subscription was refused, but not that invoke topics are
+scoped, and inferring one from the other advertises a guarantee nobody made.
 
-The evidence a client already has costs nothing: an agent asks to subscribe to the mesh-wide job
-filter, and on an enforcing broker that subscription is **refused** (`SUBACK` 128). A broker that
-refuses an agent the traffic of every owner is a broker applying per-identity ACLs. This is
-inference, and its limit should be stated rather than hidden: a broker could scope job topics and
-still not scope invokes. It is evidence, not proof, and it is strictly better than a deployment
-asserting its own security. Where the evidence cannot be obtained — brokers that grant a wildcard
-subscription and silently filter deliveries instead of refusing it — an operator may assert
-enforcement explicitly, and takes responsibility for the claim.
+So it is **stated by whoever applied the rules** — in the agent's configuration, written there by
+the tooling that applied them at the moment it knew exactly what it applied. An implementation
+reports `verified: true` when its deployment says so, and `false` otherwise. A deployment that lies
+about this is lying to its own clients; nothing in the protocol can prevent that, and no inference
+would make it safer.
 
 **Publishers** should prefer the topic form when the receiving agent's retained profile advertises
 `topic: "accept"` or `"require"`, and fall back to the v1.3 form otherwise. A profile that has not
@@ -689,11 +690,11 @@ One change, and it closes the gap the trust model has documented since v1.2.
   payloads. `publish commands/+/invoke/ci` is a rule any MQTT broker can apply.
 - **The topic wins over the payload.** A `requestedBy` that disagrees with the topic's owner is
   refused before any work starts, rather than one of them quietly being preferred.
-- **`ownerPolicy` gains `topic`** — `off`, `accept` or `require` — so a client reads what a
-  deployment does with the two forms instead of inferring it from a version number.
+- **`ownerPolicy` gains `topic`** — `off` or `accept` — so a client reads which forms a deployment
+  serves instead of inferring it from a version number.
 - **`verified` is redefined**: it no longer means "EMQX enriched the payload", but "the owner was
-  established by something other than the sender's word". An agent may claim it only in `require`
-  mode and with evidence that the broker enforces per-identity rules.
+  established by something other than the sender's word" — a fact about the broker's rules, stated
+  by whoever applied them, never inferred by the agent.
 - **Both forms are accepted.** v1.3 clients keep working unchanged, and a v1.4 publisher falls back
   to the old form for any agent that has not advertised support.
 
