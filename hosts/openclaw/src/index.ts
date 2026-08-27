@@ -259,7 +259,9 @@ export default definePluginEntry({
     const refusedFilters: string[] = [];
     const registryRe = registryPattern(conf.mesh.root);
 
-    const catalog = createCatalog(conf.mesh.servicesFile, logger);
+    const catalog = createCatalog(
+      conf.mesh.servicesFile, logger, path.join(pluginDir, "services.example.json"),
+    );
     const vars = createVarStore(conf.mesh.secretsFile, conf.mesh.promptVars, logger);
     const sse = createSseHub();
     const auth = createAuth(conf.web.auth);

@@ -254,12 +254,31 @@ install_openclaw() {
   run sh -c "cd '$DEST' && npm install --silent"
   ok "dependencies installed"
 
-  if [ ! -f "$DEST/services.json" ]; then
-    run cp "$DEST/services.example.json" "$DEST/services.json"
-    ok "created services.json  ${DIM}(your capability catalog — edit it)${R}"
+  # The catalog is the deployment's, not the plugin's: what an agent DOES
+  # outlives any particular checkout of the thing that carries it. It lives
+  # beside openclaw.json, so reinstalling, rebuilding or deleting this directory
+  # cannot take it with them.
+  PLEXUS_DIR="${OPENCLAW_HOME:-$HOME}/.openclaw/plexus"
+  run mkdir -p "$PLEXUS_DIR"
+  if [ -f "$PLEXUS_DIR/services.json" ]; then
+    ok "services.json kept  ${DIM}($PLEXUS_DIR — yours, untouched)${R}"
+  elif [ -f "$DEST/services.json" ]; then
+    # Moved, not copied: two catalogs and no way to tell which one is live is
+    # worse than either place on its own.
+    run mv "$DEST/services.json" "$PLEXUS_DIR/services.json"
+    ok "moved services.json out of the plugin  ${DIM}(now $PLEXUS_DIR)${R}"
   else
-    ok "services.json kept  ${DIM}(yours, untouched)${R}"
+    run cp "$DEST/services.example.json" "$PLEXUS_DIR/services.json"
+    ok "created services.json  ${DIM}($PLEXUS_DIR — your capability catalog, edit it)${R}"
   fi
+
+  # The same reasoning for the rest of this deployment's own state.
+  for f in mesh.local.json jobs.local.json; do
+    if [ -f "$DEST/$f" ] && [ ! -f "$PLEXUS_DIR/$f" ]; then
+      run mv "$DEST/$f" "$PLEXUS_DIR/$f"
+      ok "moved $f out of the plugin  ${DIM}(now $PLEXUS_DIR)${R}"
+    fi
+  done
 
   # Checksum around the build. The gateway caches the loaded module, so a
   # rebuilt dist/ sits unused until the process restarts — but restarting for a
