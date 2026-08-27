@@ -18,6 +18,12 @@ export interface RegistryDeps {
   profileTopic: string;
   requireOwner: boolean;
   verifyOwner: boolean;
+  /**
+   * What this deployment actually enforces about who a requester is, read at
+   * publish time rather than fixed at construction: whether the broker refuses
+   * an over-broad subscription is not known until it has refused one.
+   */
+  ownerPolicy(): { required: boolean; topic: string; verified: boolean };
   catalog: Catalog;
   logger: Logger;
   connected(): boolean;
@@ -46,7 +52,7 @@ export function createRegistry(deps: RegistryDeps): Registry {
       executionModel: "transport in framework; logic in agent",
       // Advertised so clients read what this deployment enforces rather than
       // inferring it from the version number.
-      ownerPolicy: { required: deps.requireOwner, verified: deps.verifyOwner },
+      ownerPolicy: deps.ownerPolicy(),
       updatedAt: new Date().toISOString(),
     };
   }

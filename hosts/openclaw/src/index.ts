@@ -32,6 +32,7 @@ import { createLogger } from "./logger.js";
 import {
   buildTopics, jobTopicPattern, parseJobTopic, ownerScope,
   registryPattern, parseRegistryTopic, registryProfileFilter, registryStatusFilter,
+  invokeFilter, invokeTopicOwner,
 } from "./mesh/topics.js";
 import { normalizeJobPublish, publishRefusal } from "./mesh/payload.js";
 import { createCatalog } from "./mesh/catalog.js";
@@ -285,7 +286,7 @@ export default definePluginEntry({
       meshRoot: conf.mesh.root,
       protocolVersion: PROTOCOL_VERSION,
       session: { ...transport.session },
-      ownerPolicy: { required: conf.mesh.requireOwner, verified: conf.mesh.verifyOwner },
+      ownerPolicy: ownerPolicy(),
       // What the broker allows, as opposed to what was asked for. A mesh whose
       // ACLs have narrowed us should say so somewhere an operator looks.
       jobFeed,
@@ -299,11 +300,31 @@ export default definePluginEntry({
       delegation: conf.mesh.delegation,
     });
 
+    /**
+     * What this deployment enforces about who a requester is — reported, not
+     * decided here. The agent serves both invoke forms and refuses neither;
+     * whether anyone is stopped is the broker's business.
+     *
+     * `verified` therefore does not come from anything this agent does. It
+     * comes from whoever configured the broker's rules and stated so, which is
+     * what `plexus-server add-agent --owner-in-topic` writes into the config it
+     * generates. Inferring it here — from a refused subscription, say — would
+     * mean advertising a guarantee nobody actually made: a broker can scope job
+     * topics without scoping invokes, and the difference is exactly the one
+     * this field exists to report.
+     */
+    const ownerPolicy = () => ({
+      required: conf.mesh.requireOwner,
+      topic: conf.mesh.ownerInTopic,
+      verified: conf.mesh.verifyOwner || conf.mesh.ownerEnforced,
+    });
+
     const registry = createRegistry({
       agentId: conf.mesh.agentId,
       profileTopic: topics.profile,
       requireOwner: conf.mesh.requireOwner,
       verifyOwner: conf.mesh.verifyOwner,
+      ownerPolicy,
       catalog,
       logger,
       connected: () => transport.connected,
@@ -330,6 +351,9 @@ export default definePluginEntry({
       logger,
       publish: transport.publish,
       peer: (id) => peers.get(id),
+      // Read from the peer's retained profile, so what we publish follows what
+      // it says it serves rather than what this deployment happens to prefer.
+      peerOwnerTopicMode: (id) => (peers.get(id) as any)?.ownerPolicy?.topic,
       lineageOf: (jobId) => dispatcher.lineageOf(jobId),
       onDelegated: (info) => {
         // Recorded locally so a delegated job is visible in our console even
@@ -424,6 +448,19 @@ export default definePluginEntry({
 
       if (recordJobTraffic(topic, raw, data)) return;
 
+      // v1.4: an invoke whose topic carries the owner. The segment is passed on
+      // exactly as it arrived — the dispatcher decides whether it is acceptable,
+      // because that decision is the protocol's, not the router's.
+      const topicOwner = invokeTopicOwner(conf.mesh.root, conf.mesh.agentId, topic);
+      if (topicOwner !== null) {
+        dispatcher.dispatch(
+          { jobId: data?.jobId, service: data?.service, args: data?.args, requestedBy: data?.requestedBy,
+            parentJobId: data?.parentJobId, rootJobId: data?.rootJobId, depth: data?.depth },
+          { topicOwner },
+        );
+        return;
+      }
+
       if (topic === topics.config) {
         transport.publish(`${topics.config}/reply`, JSON.stringify(registry.runConfigAction(data)), { qos: 1 });
         return;
@@ -441,7 +478,7 @@ export default definePluginEntry({
           : {
               agentId: conf.mesh.agentId,
               protocolVersion: svc.protocolVersion ?? PROTOCOL_VERSION,
-              ownerPolicy: { required: conf.mesh.requireOwner, verified: conf.mesh.verifyOwner },
+              ownerPolicy: ownerPolicy(),
       // What the broker allows, as opposed to what was asked for. A mesh whose
       // ACLs have narrowed us should say so somewhere an operator looks.
       jobFeed,
@@ -478,6 +515,11 @@ export default definePluginEntry({
 
     transport.subscribe({
       [topics.invoke]: { qos: 1 },
+      // v1.4. Separate from commands/<id>/# so that a broker refusing it is
+      // reported as itself rather than taking every command topic with it.
+      ...(conf.mesh.ownerInTopic === "off"
+        ? {}
+        : { [invokeFilter(conf.mesh.root, conf.mesh.agentId)]: { qos: 1 as const } }),
       [topics.query]: { qos: 1 },
       [topics.cancel]: { qos: 1 },
       [topics.config]: { qos: 1 },

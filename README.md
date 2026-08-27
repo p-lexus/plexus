@@ -933,23 +933,48 @@ has no path that reads a value back.
 
 ## Security model
 
-**Owner scoping is a convention, not authentication.** MQTT delivers topic and payload only — a
-publisher's broker identity does not travel with the message. So `requestedBy` is self-declared,
-and anyone with broker credentials can claim any owner scope. The profile advertises
-`ownerPolicy` so clients read what a deployment actually enforces instead of guessing.
+**MQTT delivers topic and payload only** — a publisher's broker identity does not travel with the
+message. Whether that leaves owner scoping a convention or a boundary depends on where the owner
+is written, and v1.4 moved it somewhere a broker can see.
 
-Enforce isolation at the boundary that can see identity — the broker:
+**Results were always enforceable.** They go to `jobs/<owner>/<jobId>/result`, so
+`subscribe jobs/ci/#` is an ordinary ACL and no client reads another owner's answers.
+
+**Invokes became enforceable in v1.4.** The owner moves into the topic:
 
 ```
-# EMQX ACL sketch
-allow  subscribe  agents/jobs/${username}/#
-allow  publish    agents/commands/+/invoke
-deny   subscribe  agents/jobs/#
+agents/commands/<agentId>/invoke/<owner>
 ```
 
-Set `mesh.verifyOwner: true` once your broker injects `client_username` into invoke payloads
-(EMQX rule-engine enrichment). It **fails closed**: with it on, an invoke arriving without
-`client_username` is rejected.
+so `publish commands/+/invoke/ci` is a rule any broker can apply. With `requestedBy` in the payload
+— the v1.3 form, still accepted — anyone with credentials can claim to be anyone, because no broker
+can police a field inside a payload.
+
+The rules are generated from the topic map rather than written by hand:
+
+```js
+import { aclFor } from "plexus-agent/acl";
+aclFor({ root: "agents", role: "requester", id: "ci", ownerInTopic: true });
+// publish:   agents/commands/+/invoke/ci, agents/commands/+/cancel
+// subscribe: agents/jobs/ci/#, agents/registry/+/profile, agents/registry/+/status
+```
+
+`mesh.ownerInTopic` says what an agent does with the two forms — `off`, `accept` (default: both,
+topic preferred, disagreement refused) or `require` (the v1.3 form is refused). The profile
+advertises it as `ownerPolicy.topic`, so clients read what a deployment enforces instead of
+inferring it.
+
+`mesh.verifyOwner: true` is the older path to the same end: it verifies `requestedBy` against a
+`client_username` that an EMQX rule injects into the payload, and fails closed. It still works, and
+it needs a rule engine — which is why the owner moved into the topic instead, where every broker can
+enforce it.
+
+**`ownerPolicy.verified` is claimed carefully.** Refusing the v1.3 form stops a careless client, not
+a dishonest one: on a broker with no ACLs anyone may still publish `invoke/somebody-else`. So an
+agent reports `verified: true` only in `require` mode **and** with evidence that the broker enforces
+per-identity rules — the evidence being that the broker refused it the mesh-wide job filter. That is
+inference rather than proof, and the limit is worth knowing: a broker could scope job topics without
+scoping invokes.
 
 **The console.** Bound to `127.0.0.1`. `web.auth` protects the API; the page shell is served
 unauthenticated so it can present a sign-in screen instead of a raw 401. Managing variables

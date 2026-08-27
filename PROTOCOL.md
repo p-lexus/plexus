@@ -1,4 +1,4 @@
-# Plexus — Agent Mesh Protocol v1.3
+# Plexus — Agent Mesh Protocol v1.4
 
 A protocol for autonomous agents to dispatch work to each other over MQTT — across laptops,
 VPNs and containers, none of which can accept an inbound connection. Broker root: `agents`.
@@ -42,6 +42,9 @@ another client on the same broker, and each has a test:
 7. A delegated ask carries `parentJobId`, `rootJobId` and `depth`, and a request arriving deeper
    than `maxDepth` is refused **before** any work starts.
 8. `${VAR}` expands **before** `{{args}}` wherever prompts are rendered.
+9. An invoke carrying its owner in the topic is served, and one whose payload `requestedBy`
+   disagrees with that owner is **refused before any work starts**. What the implementation does
+   with the two forms is published in `ownerPolicy.topic`.
 
 ## Why MQTT
 
@@ -212,7 +215,8 @@ actually enforces, so you never have to infer enforcement from the version numbe
 
 | Topic | Direction | Notes |
 |---|---|---|
-| `agents/commands/<agentId>/invoke` | you → agent | `{ service, args, requestedBy, jobId? }` — **`requestedBy` is REQUIRED and is now enforced** |
+| `agents/commands/<agentId>/invoke/<owner>` | you → agent | **v1.4, preferred.** The owner is in the topic, so a broker ACL can enforce it |
+| `agents/commands/<agentId>/invoke` | you → agent | `{ service, args, requestedBy, jobId? }` — the v1.3 form. Still accepted; `requestedBy` is required |
 | `agents/commands/<agentId>/query` | you → agent | `{}` lists services; `{ jobId }` checks state. Reply on `.../query/reply` |
 | `agents/commands/<agentId>/cancel` | you → agent | `{ jobId, requestedBy }`. Reply as a terminal `cancelled` result |
 | `agents/commands/<agentId>/config` | you → agent | service CRUD. Reply on `.../config/reply` |
@@ -466,16 +470,86 @@ publisher's broker identity never travels with the message. Therefore:
 - Privacy/isolation is therefore **conventional, not enforced**, unless you enable
   verification below.
 
-### Optional owner verification (`mesh.verifyOwner`)
+### Owner in the invoke topic (v1.4)
+
+The asymmetry v1.3 left behind: a **result** goes to `jobs/<owner>/<jobId>/result`, so `subscribe
+jobs/ci/#` is an ordinary ACL and no client can read another owner's answers. An **invoke** goes to
+`commands/<agentId>/invoke` with `requestedBy` inside the payload — and no broker can police a field
+inside a payload. Anyone with credentials can claim to be anyone.
+
+So the owner moves into the topic:
+
+```
+<root>/commands/<agentId>/invoke/<owner>
+```
+
+`publish commands/+/invoke/ci` is then a rule any MQTT broker can enforce — Mosquitto, EMQX, HiveMQ,
+a cloud broker — rather than one vendor's rule engine.
+
+**The rules an implementation must follow:**
+
+1. The `<owner>` segment is already-scoped: lowercase, `[a-z0-9_-]`, exactly what `ownerScope`
+   produces. A topic whose owner segment is not already scoped is **rejected**, not silently
+   normalised — normalising it would let `Mohanad.Q!` and `mohanad-q` be two spellings of one
+   identity, one of which a broker ACL would not match.
+2. The **topic wins**. If the payload also carries `requestedBy` and the two disagree once scoped,
+   the job is **rejected before any work starts**, with the terminal result published to the topic's
+   owner scope.
+3. A payload without `requestedBy` is fine when the topic carries the owner. It is the topic that
+   was authenticated, not the field.
+4. Both forms are accepted during the transition. An implementation says which it is doing in
+   `ownerPolicy.topic`.
+
+**`ownerPolicy` becomes three fields:**
+
+```jsonc
+{ "required": true,        // an invoke with no owner at all is refused
+  "topic": "accept",       // "off" | "accept" | "require"
+  "verified": false }      // the owner was established by something other than the sender's word
+```
+
+`topic` is what this agent serves:
+
+| | Meaning |
+|---|---|
+| `off` | Only the v1.3 form is served. An invoke on the topic form is not answered |
+| `accept` | Both forms served, and the owner is taken from the topic when it is there. **The default** |
+
+**There is no mode in which an agent refuses the v1.3 form**, and that is deliberate. Refusing is
+enforcement, and enforcement belongs to the broker: an ACL granting
+`publish commands/+/invoke/<owner>` does not grant `publish commands/+/invoke`, so wherever the
+rules are applied the old form cannot be published at all. An agent that refused it as well would
+block only the clients the broker already blocks — and on a mesh with no rules, it would block the
+careless while the dishonest carry on.
+
+**`verified` is not something an agent can decide.** It says the owner was established by something
+other than the sender's word, which is a fact about the broker's configuration. An agent cannot
+observe that: it may notice that some subscription was refused, but not that invoke topics are
+scoped, and inferring one from the other advertises a guarantee nobody made.
+
+So it is **stated by whoever applied the rules** — in the agent's configuration, written there by
+the tooling that applied them at the moment it knew exactly what it applied. An implementation
+reports `verified: true` when its deployment says so, and `false` otherwise. A deployment that lies
+about this is lying to its own clients; nothing in the protocol can prevent that, and no inference
+would make it safer.
+
+**Publishers** should prefer the topic form when the receiving agent's retained profile advertises
+`topic: "accept"` or `"require"`, and fall back to the v1.3 form otherwise. A profile that has not
+been seen is not evidence of anything: use the old form, which every version understands.
+
+**Transition.** Accept both, prefer the new, reject disagreement, and say which is in force. A
+change that only works once everything is upgraded at once is not a protocol change, it is a fork.
+
+### Legacy owner verification (`mesh.verifyOwner`)
 
 The bridge can verify `requestedBy` against a broker-injected `client_username`, using an EMQX
 rule-engine payload enrichment. When enabled it **fails closed**: an invoke that arrives
 without `client_username` is rejected, and one whose `requestedBy` disagrees with the broker
 identity is rejected with the mismatch reported.
 
-This is **off by default** because it requires broker-side setup first. Wire the EMQX rule, then
-turn it on. Until you do, `ownerPolicy.verified` is `false` in the profile and clients should
-treat owner scoping as a convention.
+This is **off by default** because it requires broker-side setup first, and it is superseded by the
+owner in the topic, which needs no rule engine and works on any broker. It remains specified because
+a deployment already running it should not have to change to keep what it has.
 
 Stronger isolation remains a broker-side concern: EMQX ACLs (`subscribe jobs/${username}/#`,
 publish `commands/+/invoke`) enforce it at the boundary rather than in the agent.
@@ -606,6 +680,26 @@ The panel consumes the SSE stream and only falls back to polling if the stream d
 `web.auth` to require a bearer token — it is accepted as an `Authorization` header, or as
 `?token=` for the SSE stream, since `EventSource` cannot set headers. This setting was
 previously declared but never enforced; it is now enforced on every route.
+
+## Changes v1.3 → v1.4
+
+One change, and it closes the gap the trust model has documented since v1.2.
+
+- **`<root>/commands/<agentId>/invoke/<owner>`.** The owner moves into the topic, so who a requester
+  claims to be is enforceable by an ordinary broker ACL rather than by a rule engine that rewrites
+  payloads. `publish commands/+/invoke/ci` is a rule any MQTT broker can apply.
+- **The topic wins over the payload.** A `requestedBy` that disagrees with the topic's owner is
+  refused before any work starts, rather than one of them quietly being preferred.
+- **`ownerPolicy` gains `topic`** — `off` or `accept` — so a client reads which forms a deployment
+  serves instead of inferring it from a version number.
+- **`verified` is redefined**: it no longer means "EMQX enriched the payload", but "the owner was
+  established by something other than the sender's word" — a fact about the broker's rules, stated
+  by whoever applied them, never inferred by the agent.
+- **Both forms are accepted.** v1.3 clients keep working unchanged, and a v1.4 publisher falls back
+  to the old form for any agent that has not advertised support.
+
+`mesh.verifyOwner` and its EMQX rule are unchanged and still work. They are no longer the only way
+to answer "is this requester who it says it is", which is the point.
 
 ## Changes v1.2 → v1.3
 

@@ -5,7 +5,7 @@
  * dragging the MQTT client or the plugin SDK along with them.
  */
 
-export const PROTOCOL_VERSION = "1.3";
+export const PROTOCOL_VERSION = "1.4";
 
 // ── Configuration ──────────────────────────────────────
 
@@ -35,6 +35,31 @@ export interface MeshConfig {
    * Default false — requires broker-side payload enrichment to be wired first.
    */
   verifyOwner?: boolean;
+  /**
+   * v1.4: whether to serve `commands/<agentId>/invoke/<owner>`.
+   *
+   * "accept" (default) serves both forms and takes the owner from the topic
+   * when it is there. "off" serves the v1.3 form only.
+   *
+   * There is deliberately no mode in which this agent refuses the old form.
+   * Refusing is enforcement, enforcement is the broker's, and an ACL that
+   * grants `commands/+/invoke/<owner>` does not grant `commands/+/invoke` — so
+   * the old form is already unpublishable wherever it matters. An agent that
+   * refused it as well would only be blocking clients the broker already
+   * blocks, on a mesh where nobody is being stopped anyway.
+   */
+  ownerInTopic?: "off" | "accept";
+  /**
+   * Whether the broker enforces who a requester may claim to be.
+   *
+   * The agent cannot find this out for itself — it can observe that some
+   * subscription was refused, but not that invoke topics are scoped, and
+   * guessing from one to the other would advertise a guarantee nobody made.
+   * So it is stated in configuration by whoever applied the rules;
+   * `plexus-server add-agent --owner-in-topic` writes it into the config it
+   * generates, because at that moment it knows exactly what it applied.
+   */
+  ownerEnforced?: boolean;
   /** Hard wall-clock cap per job before the mesh declares it failed. Default 30 min. */
   maxJobDurationMs?: number;
   /**
@@ -210,7 +235,7 @@ export interface Peer {
     requestSchema?: Record<string, unknown>;
     avgLatency?: string;
   }>;
-  ownerPolicy?: { required?: boolean; verified?: boolean };
+  ownerPolicy?: { required?: boolean; verified?: boolean; topic?: "off" | "accept" };
   /** When we last heard anything from this agent. */
   lastSeen: number;
 }
@@ -220,6 +245,14 @@ export interface DispatchOptions {
   defaultOwner?: string;
   /** Broker-supplied identity, when owner verification is enabled. */
   clientUsername?: string;
+  /**
+   * v1.4: the owner carried by the invoke topic, exactly as it arrived.
+   *
+   * This is the string a broker ACL matched, so it is authoritative — and it is
+   * NOT scoped on the way in, because scoping it here would accept topics a
+   * broker rule would never have allowed.
+   */
+  topicOwner?: string;
 }
 
 // ── Logging ────────────────────────────────────────────

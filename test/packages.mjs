@@ -61,7 +61,7 @@ t("clientId is stable across calls and distinct per agent and mesh", () => {
 });
 
 t("protocol version is the one the bridge speaks", () => {
-  assert.equal(PROTOCOL_VERSION, "1.3");
+  assert.equal(PROTOCOL_VERSION, "1.4");
 });
 
 // ── plexus-agent: broker rules ──────────────────────────
@@ -116,6 +116,13 @@ t("the v1.4 proposal puts the owner where a broker can enforce it", () => {
   // broker, before any agent sees it.
   assert.ok(permits(tight.publish, `${R}/commands/reviewer/invoke/ci`));
   assert.ok(!permits(tight.publish, `${R}/commands/reviewer/invoke/mohanad`));
+});
+
+t("v1.4: the invoke topic builders put the owner where an ACL can see it", () => {
+  assert.equal(topics.invokeAs("acme/agents", "reviewer", "ci"), "acme/agents/commands/reviewer/invoke/ci");
+  assert.equal(topics.invokeFilter("acme/agents", "reviewer"), "acme/agents/commands/reviewer/invoke/+");
+  // The v1.3 form is untouched: both are served during the transition.
+  assert.equal(topics.invoke("acme/agents", "reviewer"), "acme/agents/commands/reviewer/invoke");
 });
 
 t("an id that would widen a filter is refused, not sanitised", () => {
@@ -323,6 +330,98 @@ if (!reachable) {
     assert.equal(res.type, "error");
     assert.match(res.error, /unknown service/);
     await Promise.all([c.close(), a.close()]);
+  });
+
+  t("end to end v1.4: an invoke carrying its owner in the topic is served", async () => {
+    // The whole point of the form: the owner is a topic segment, so a broker
+    // ACL can enforce it. Here we simply prove the agent answers it.
+    const r = `${root}-v14`;
+    const a = await connect({ broker: brokerUrl, root: r, agentId: "a" });
+    a.serve("echo", (msg) => ({ heard: msg.args.what }));   // handlers get the whole invoke
+    const c = await connect({ broker: brokerUrl, root: r, agentId: "ci", durable: false });
+    await c.waitForPeer("echo", 5000);
+    const res = await c.invoke("a", "echo", { what: "hello" }, { timeoutMs: 8000 });
+    assert.equal(res.heard, "hello");
+    await Promise.all([c.close(), a.close()]);
+  });
+
+  t("end to end v1.4: a payload that disagrees with the topic is refused", async () => {
+    // Publishing by hand, because a well-behaved client never produces this —
+    // and it is exactly what a dishonest one would.
+    const r = `${root}-v14-mismatch`;
+    const a = await connect({ broker: brokerUrl, root: r, agentId: "a" });
+    a.serve("echo", () => ({ ok: true }));
+    const spy = await connect({ broker: brokerUrl, root: r, agentId: "watcher", durable: false });
+
+    const seen = new Promise((resolve) => {
+      spy.watch((msg) => { if (msg?.type === "rejected") resolve(msg); }, "jobs");
+    });
+    await new Promise((r2) => setTimeout(r2, 300));
+    spy.publish(topics.invokeAs(r, "a", "ci"),
+      { service: "echo", args: {}, requestedBy: "mohanad", jobId: "mismatch-1" });
+
+    const rejected = await Promise.race([
+      seen,
+      new Promise((_, rej) => setTimeout(() => rej(new Error("no rejection published")), 8000)),
+    ]);
+    assert.match(rejected.error, /disagrees with the invoke topic/);
+    await Promise.all([spy.close(), a.close()]);
+  });
+
+  t("end to end v1.4: the v1.3 form is still served — refusing is the broker's job", async () => {
+    // There is deliberately no mode in which an agent refuses the old form.
+    // Where rules are applied, an ACL granting commands/+/invoke/<owner> does
+    // not grant commands/+/invoke, so the old form cannot be published at all;
+    // where they are not, refusing would block the careless and not the
+    // dishonest. Either way it is not the agent's call.
+    const r = `${root}-v14-both`;
+    const a = await connect({ broker: brokerUrl, root: r, agentId: "a" });
+    a.serve("echo", (msg) => ({ heard: msg.args.what }));
+    const c = await connect({ broker: brokerUrl, root: r, agentId: "ci", durable: false });
+    await c.waitForPeer("echo", 5000);
+
+    // The client sees "accept" in the peer's profile and uses the topic form.
+    const viaTopic = await c.invoke("a", "echo", { what: "new" }, { timeoutMs: 8000 });
+    assert.equal(viaTopic.heard, "new");
+
+    // And the v1.3 form, published deliberately, is served rather than refused.
+    let resolveSeen;
+    const seen = new Promise((resolve) => { resolveSeen = resolve; });
+    // Awaited: watch() swaps the narrow filter for the wide one, and a message
+    // published during that swap is lost — which looks exactly like the agent
+    // having refused it. And `kind`, not `type`: events carry a type too, and
+    // the first of them would resolve this before any answer exists.
+    await c.watch((msg) => {
+      if (msg?.jobId === "oldform-1" && msg.kind === "result") resolveSeen(msg);
+    }, "jobs");
+    c.publish(topics.invoke(r, "a"),
+      { service: "echo", args: { what: "old" }, requestedBy: "ci", jobId: "oldform-1" });
+    const answer = await Promise.race([
+      seen,
+      new Promise((_, rej) => setTimeout(() => rej(new Error("the v1.3 form was not served")), 8000)),
+    ]);
+    assert.equal(answer.heard, "old", "the old form must still be answered");
+    await Promise.all([c.close(), a.close()]);
+  });
+
+  t("end to end v1.4: verified is what the deployment states, not what the agent infers", async () => {
+    // The agent cannot observe that its broker scopes invoke topics. Whoever
+    // applied the rules knows; plexus-server writes it into the config it
+    // generates. So this field follows configuration, and nothing else.
+    const r = `${root}-v14-verified`;
+    const plain = await connect({ broker: brokerUrl, root: r, agentId: "plain" });
+    const stated = await connect({ broker: brokerUrl, root: `${r}-2`, agentId: "stated", ownerEnforced: true });
+    const watcher = await connect({ broker: brokerUrl, root: r, agentId: "w", durable: false });
+    await watcher.waitForPeer(undefined, 3000).catch(() => {});
+    await new Promise((r2) => setTimeout(r2, 500));
+
+    assert.equal(watcher.peers().find((p) => p.agentId === "plain")?.ownerPolicy?.verified, false);
+    // Read from the second mesh's own profile rather than across roots.
+    const w2 = await connect({ broker: brokerUrl, root: `${r}-2`, agentId: "w2", durable: false });
+    await new Promise((r2) => setTimeout(r2, 500));
+    assert.equal(w2.peers().find((p) => p.agentId === "stated")?.ownerPolicy?.verified, true);
+
+    await Promise.all([plain.close(), stated.close(), watcher.close(), w2.close()]);
   });
 
   t("end to end: a handler that throws still produces a terminal result", async () => {

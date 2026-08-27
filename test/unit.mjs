@@ -12,7 +12,8 @@ import path from "node:path";
 
 const dist = (p) => new URL(`../dist/${p}`, import.meta.url).href;
 
-const { ownerScope, buildTopics, jobTopicPattern, parseJobTopic, escapeRe } = await import(dist("mesh/topics.js"));
+const { ownerScope, buildTopics, jobTopicPattern, parseJobTopic, escapeRe,
+  peerInvokeTopicFor, invokeFilter, invokeTopicOwner } = await import(dist("mesh/topics.js"));
 const { normalizeJobPublish, renderPrompt, unresolvedPlaceholders, publishRefusal, missingRequiredArgs } = await import(dist("mesh/payload.js"));
 const { createJobStore, MAX_HISTORY } = await import(dist("mesh/jobs.js"));
 const { createVarStore, maskValue } = await import(dist("mesh/vars.js"));
@@ -163,6 +164,7 @@ t("the panel adds and removes capabilities at the new location, and republishes"
     profileTopic: "r/registry/conan/profile",
     requireOwner: true,
     verifyOwner: false,
+    ownerPolicy: () => ({ required: true, topic: "accept", verified: false }),
     catalog: createCatalog(file, { info() {}, warn() {}, error() {} }),
     logger: { info() {}, warn() {}, error() {} },
     connected: () => true,
@@ -188,6 +190,55 @@ t("the panel adds and removes capabilities at the new location, and republishes"
   const removed = registry.runConfigAction({ action: "remove_service", service: "docs.summarize" });
   assert.equal(removed.ok, true, JSON.stringify(removed));
   assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")).capabilities, []);
+});
+
+t("v1.4: the invoke topic carries the owner, and is read back exactly", () => {
+  const R = "acme/agents";
+  assert.equal(peerInvokeTopicFor(R, "reviewer", "ci"), `${R}/commands/reviewer/invoke/ci`);
+  assert.equal(invokeFilter(R, "reviewer"), `${R}/commands/reviewer/invoke/+`);
+  assert.equal(invokeTopicOwner(R, "reviewer", `${R}/commands/reviewer/invoke/ci`), "ci");
+});
+
+t("v1.4: the owner segment is returned unnormalised, so a mismatch can be seen", () => {
+  const R = "acme/agents";
+  // If this lower-cased for us, the agent would accept a topic the broker's ACL
+  // never matched — one identity with two spellings.
+  assert.equal(invokeTopicOwner(R, "reviewer", `${R}/commands/reviewer/invoke/Mohanad.Q!`), "Mohanad.Q!");
+  assert.notEqual(ownerScope("Mohanad.Q!"), "Mohanad.Q!");
+});
+
+t("v1.4: what is not an owner-scoped invoke topic is not read as one", () => {
+  const R = "acme/agents";
+  assert.equal(invokeTopicOwner(R, "reviewer", `${R}/commands/reviewer/invoke`), null,
+    "the v1.3 form has no owner segment");
+  assert.equal(invokeTopicOwner(R, "reviewer", `${R}/commands/reviewer/invoke/ci/extra`), null,
+    "an owner is one segment; anything deeper is a different topic");
+  assert.equal(invokeTopicOwner(R, "reviewer", `${R}/commands/other/invoke/ci`), null,
+    "another agent's invoke topic is not ours");
+  assert.equal(invokeTopicOwner(R, "reviewer", `${R}/commands/reviewer/cancel`), null);
+});
+
+t("v1.4 config: both forms are served by default, and there is no refusing mode", () => {
+  const plugin = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-"));
+  const base = { broker: { url: "mqtt://x" } };
+  assert.equal(resolveConfig(base, plugin).mesh.ownerInTopic, "accept");
+  assert.equal(resolveConfig({ ...base, mesh: { ownerInTopic: "off" } }, plugin).mesh.ownerInTopic, "off");
+  // "require" was a mode in which the agent refused the v1.3 form. Refusing is
+  // enforcement, enforcement is the broker's, so it does not exist — and an
+  // unknown value falls back to serving both rather than to anything stricter.
+  assert.equal(resolveConfig({ ...base, mesh: { ownerInTopic: "require" } }, plugin).mesh.ownerInTopic, "accept");
+});
+
+t("v1.4: verified is stated by the deployment, never inferred by the agent", () => {
+  // The agent cannot observe that its broker scopes invoke topics. Whoever
+  // applied the rules can, and says so — plexus-server writes it into the
+  // config it generates.
+  const plugin = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-"));
+  const base = { broker: { url: "mqtt://x" } };
+  assert.equal(resolveConfig(base, plugin).mesh.ownerEnforced, false);
+  assert.equal(resolveConfig({ ...base, mesh: { ownerEnforced: true } }, plugin).mesh.ownerEnforced, true);
+  // Not a boolean is not a claim.
+  assert.equal(resolveConfig({ ...base, mesh: { ownerEnforced: "yes" } }, plugin).mesh.ownerEnforced, false);
 });
 
 t("ownerScope sanitises to the documented charset", () => {

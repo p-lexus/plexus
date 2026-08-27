@@ -15,7 +15,7 @@
  */
 
 import type { Logger, Peer } from "../types.js";
-import { peerInvokeTopic, peerCancelTopic, ownerScope } from "./topics.js";
+import { peerInvokeTopic, peerInvokeTopicFor, peerCancelTopic, ownerScope } from "./topics.js";
 
 export interface AskRequest {
   agent: string;
@@ -42,6 +42,12 @@ interface Pending {
 }
 
 export interface AskDeps {
+  /**
+   * What a peer says it does with owner-scoped invoke topics, from its retained
+   * profile: "off", "accept" or "require". Undefined for a peer we have never
+   * seen a profile from.
+   */
+  peerOwnerTopicMode?(agentId: string): string | undefined;
   selfAgentId: string;
   meshRoot: string;
   maxDepth: number;
@@ -130,7 +136,17 @@ export function createAskService(deps: AskDeps): AskService {
         depth: nextDepth,
       };
 
-      deps.publish(peerInvokeTopic(deps.meshRoot, agent), JSON.stringify(payload), { qos: 1 });
+      // v1.4: publish where the broker can check who we say we are, but only to
+      // a peer that has said it serves that form. A peer whose profile we have
+      // not seen is not evidence of anything — the old form is what every
+      // version understands, so an unknown peer gets that.
+      const peerTopic = String(deps.peerOwnerTopicMode?.(agent) ?? "off");
+      const selfOwner = ownerScope(deps.selfAgentId);
+      const invokeTopic = peerTopic === "accept" || peerTopic === "require"
+        ? peerInvokeTopicFor(deps.meshRoot, agent, selfOwner)
+        : peerInvokeTopic(deps.meshRoot, agent);
+
+      deps.publish(invokeTopic, JSON.stringify(payload), { qos: 1 });
       deps.onDelegated({
         jobId, agent, service,
         parentJobId: req.parentJobId,

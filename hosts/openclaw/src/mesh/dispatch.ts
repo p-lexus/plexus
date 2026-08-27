@@ -164,8 +164,52 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       return { ok: false, error: err, jobId };
     }
 
+    // ── Owner in the topic (protocol 1.4) ──
+    // The topic is what a broker ACL can enforce, so it outranks the payload.
+    // Neither is trusted more than the other by default — they simply have to
+    // agree, and a disagreement is refused rather than resolved.
+    const topicOwner = opts.topicOwner;
+    if (topicOwner !== undefined) {
+      if (cfg.mesh.ownerInTopic === "off") {
+        const err = "this agent does not serve owner-scoped invoke topics (mesh.ownerInTopic is off)";
+        logger.info(`rejected job ${jobId} — ${err}`);
+        publishResult(jobId, { type: "error", error: err, service }, ownerScope(topicOwner));
+        jobs.record({ jobId, service, state: "rejected", lastEvent: "owner-in-topic disabled" },
+          { type: "rejected", note: err });
+        return { ok: false, error: err, jobId };
+      }
+      // Already-scoped, or refused. Normalising here would make `Mohanad.Q!`
+      // and `mohanad-q` two spellings of one identity, and a broker ACL matches
+      // only one of them — so the agent would accept what the broker did not.
+      if (ownerScope(topicOwner) !== topicOwner) {
+        const err = `invoke topic owner "${topicOwner}" is not owner-scoped — ` +
+          `use "${ownerScope(topicOwner)}", which is what an ACL will match`;
+        logger.info(`rejected job ${jobId} — ${err}`);
+        publishResult(jobId, { type: "error", error: err, service }, ownerScope(topicOwner));
+        jobs.record({ jobId, service, state: "rejected", lastEvent: "unscoped topic owner" },
+          { type: "rejected", note: err });
+        return { ok: false, error: err, jobId };
+      }
+      const claimed = String(data.requestedBy ?? "").trim();
+      if (claimed && ownerScope(claimed) !== topicOwner) {
+        const err = `requestedBy "${ownerScope(claimed)}" disagrees with the invoke topic's ` +
+          `owner "${topicOwner}"`;
+        logger.info(`rejected job ${jobId} — ${err}`);
+        // To the TOPIC's owner: that is the identity the broker authorised, and
+        // the one whose scope a reply can safely be published to.
+        publishResult(jobId, { type: "error", error: err, service }, topicOwner);
+        jobs.record({ jobId, service, state: "rejected", owner: topicOwner, lastEvent: "owner mismatch" },
+          { type: "rejected", note: err });
+        return { ok: false, error: err, jobId };
+      }
+    }
+    // Deliberately no `else`: an invoke that arrives in the v1.3 form is
+    // served. Refusing it would be this agent enforcing a policy, and on a
+    // broker with rules the old form cannot be published at all — an ACL that
+    // grants commands/+/invoke/<owner> does not grant commands/+/invoke.
+
     // ── Owner resolution (protocol 1.2: requestedBy is REQUIRED) ──
-    let requestedBy = String(data.requestedBy ?? "").trim();
+    let requestedBy = topicOwner ?? String(data.requestedBy ?? "").trim();
     if (!requestedBy && opts.defaultOwner) requestedBy = opts.defaultOwner;
     if (!requestedBy && cfg.mesh.requireOwner) {
       const err = "requestedBy is required (protocol 1.2); job rejected";

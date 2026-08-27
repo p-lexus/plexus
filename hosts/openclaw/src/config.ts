@@ -31,6 +31,8 @@ export interface ResolvedConfig {
     historyFile: string;
     requireOwner: boolean;
     verifyOwner: boolean;
+    ownerInTopic: "off" | "accept";
+    ownerEnforced: boolean;
     maxJobDurationMs: number;
     maxDepth: number;
     askTimeoutMs: number;
@@ -135,6 +137,12 @@ export function resolveConfig(cfg: Partial<PluginConfig>, pluginDir: string): Re
       secretsFile: deploymentFile("mesh.local.json", pluginDir),
       historyFile: mesh.historyFile ?? deploymentFile("jobs.local.json", pluginDir),
       requireOwner: mesh.requireOwner !== false,   // default true
+      // v1.4. Both forms served, the owner taken from the topic when it is
+      // there. There is no mode in which the agent refuses the old form:
+      // refusing is enforcement, and enforcement belongs to the broker.
+      ownerInTopic: mesh.ownerInTopic === "off" ? "off" : "accept",
+      // Stated by whoever applied the broker's rules, because only they know.
+      ownerEnforced: mesh.ownerEnforced === true,
       verifyOwner: mesh.verifyOwner === true,      // default false
       maxJobDurationMs: mesh.maxJobDurationMs ?? DEFAULTS.maxJobDurationMs,
       maxDepth: mesh.maxDepth ?? DEFAULTS.maxDepth,
