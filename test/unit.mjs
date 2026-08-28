@@ -782,13 +782,13 @@ t("cancelling a parent cancels what it delegated, and tells the peer", async () 
 // ── delegation modes ────────────────────────────────────
 const { createDispatcher } = await import(dist("mesh/dispatch.js"));
 
-function dispatchHarness({ delegation = "both", delegates, askResult } = {}) {
+function dispatchHarness({ delegation = "both", delegates, askResult, maxJobDurationMs } = {}) {
   const published = [];
   const asked = [];
   const runs = [];
   const cfg = resolveConfig({
     broker: { url: "mqtt://x:1883" },
-    mesh: { root: "agents", agentId: "conan", delegation },
+    mesh: { root: "agents", agentId: "conan", delegation, ...(maxJobDurationMs ? { maxJobDurationMs } : {}) },
   }, "/p");
   const jobs = createJobStore(() => {});
   const dispatcher = createDispatcher({
@@ -812,6 +812,18 @@ function dispatchHarness({ delegation = "both", delegates, askResult } = {}) {
   return { dispatcher, published, asked, runs, jobs };
 }
 const settle = () => new Promise((r) => setTimeout(r, 30));
+
+/* The watchdog sweeps once a minute, which is not a thing a test can wait for.
+   Take the callback it registers and call it directly. */
+function captureSweep(start) {
+  const real = globalThis.setInterval;
+  let fn = null;
+  globalThis.setInterval = (cb) => { fn = cb; return { unref() {} }; };
+  try { start(); } finally { globalThis.setInterval = real; }
+  if (!fn) throw new Error("the watchdog registered no sweep");
+  return fn;
+}
+
 
 t("declared delegation runs BEFORE the executor, and injects the answer", async () => {
   const h = dispatchHarness({
@@ -865,6 +877,67 @@ t("delegation:declared still gathers dependencies but hides the tool", async () 
   assert.equal(h.asked.length, 1);
   assert.ok(!/DELEGATION:/.test(h.runs[0]), "mesh_ask is not available, so do not advertise it");
 });
+// ── a retained answer is never overwritten ──────────────────
+//
+// The case these are written from cost a real review. rev-041 finished and its
+// verdict sat retained on the result topic. The same jobId was dispatched
+// again; the second executor's publish was refused — correctly, by the guard in
+// payload.ts — which made it look silent; the watchdog re-injected twice and
+// then wrote "execution not confirmed" to the result topic. Results are
+// retained, so the review was gone. Two guards were missing, and both are here.
+
+t("a jobId that already finished is refused, and its retained result is left alone", async () => {
+  const h = dispatchHarness();
+  h.jobs.record({ jobId: "rev-041", service: "code.review", state: "done" }, { type: "review" });
+
+  const out = h.dispatcher.dispatch({ jobId: "rev-041", service: "code.review", requestedBy: "alice", args: {} });
+  await settle();
+
+  assert.equal(out.ok, false);
+  assert.match(out.error, /already finished/);
+  assert.equal(h.runs.length, 0, "a finished job must not start a second executor");
+  const results = h.published.filter((p) => p.topic.endsWith("/rev-041/result"));
+  assert.equal(results.length, 0,
+    "the refusal must not go to the result topic — that would destroy the answer it protects");
+  const events = h.published.filter((p) => p.topic.endsWith("/rev-041/events"));
+  assert.ok(events.some((e) => e.payload.type === "duplicate"), "the refusal is said on the events topic");
+});
+
+t("the watchdog stands down rather than overwrite a result that already exists", async () => {
+  const h = dispatchHarness({ maxJobDurationMs: 1 });
+  h.dispatcher.dispatch({ jobId: "rev-041", service: "code.review", requestedBy: "alice", args: {} });
+  await settle();
+
+  // The executor answered. Its result is retained on the broker; the watchdog
+  // is still supervising because it was never told.
+  h.jobs.record({ jobId: "rev-041", state: "done" }, { type: "review" });
+
+  const sweep = captureSweep(() => h.dispatcher.startWatchdog());
+  const before = h.published.length;
+  sweep();
+
+  const results = h.published.slice(before).filter((p) => p.topic.endsWith("/rev-041/result"));
+  assert.equal(results.length, 0, "a watchdog must never remove an answer it was watching for");
+  assert.ok(
+    h.published.slice(before).some((p) => p.payload.type === "watchdog_stood_down"),
+    "and it says so, so the giving-up is visible rather than silent",
+  );
+});
+
+t("the watchdog still fails a job that genuinely produced nothing", async () => {
+  const h = dispatchHarness({ maxJobDurationMs: 1 });
+  h.dispatcher.dispatch({ jobId: "quiet-1", service: "code.review", requestedBy: "alice", args: {} });
+  await settle();
+
+  const sweep = captureSweep(() => h.dispatcher.startWatchdog());
+  sweep();
+
+  const results = h.published.filter((p) => p.topic.endsWith("/quiet-1/result"));
+  assert.equal(results.length, 1, "silence is still a failure worth publishing");
+  assert.equal(results[0].payload.type, "error");
+  assert.match(results[0].payload.error, /maximum duration/);
+});
+
 t("an optional delegation that fails does not stop the job", async () => {
   const h = dispatchHarness({
     delegates: [{ agent: "dba", service: "schema.review", as: "x" }],

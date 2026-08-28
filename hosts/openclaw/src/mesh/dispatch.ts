@@ -11,6 +11,7 @@ import type {
   Capability, CapabilityDelegate, DispatchOptions, DispatchRequest,
   DispatchResult, Logger, WatchEntry,
 } from "../types.js";
+import { TERMINAL_STATES } from "../types.js";
 import type { ResolvedConfig } from "../config.js";
 import type { Catalog } from "./catalog.js";
 import type { JobStore } from "./jobs.js";
@@ -75,6 +76,20 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       JSON.stringify({ ...result, jobId, owner, ts: new Date().toISOString() }),
       { qos: 1, retain: true },
     );
+
+  /**
+   * Whether this job already published a terminal result.
+   *
+   * Results are RETAINED, so the last publish wins forever: anything written
+   * to a finished job's result topic does not sit beside the answer, it
+   * replaces it. The tool-side guard in payload.ts already refuses an executor
+   * that tries; this is the same fact, exposed to the two callers inside the
+   * bridge that were never asked — the dispatcher, and the watchdog.
+   */
+  const hasTerminalResult = (jobId: string): boolean => {
+    const rec = jobs.find(jobId);
+    return !!rec && TERMINAL_STATES.has(rec.state);
+  };
 
   const markAgentActivity = (jobId: string) => {
     const w = watched.get(jobId);
@@ -260,6 +275,18 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       publishResult(jobId, { type: "duplicate", note: "jobId already active" }, owner);
       jobs.record({ jobId, service, state: "duplicate", requestedBy, owner }, { type: "duplicate" });
       return { ok: false, error: "duplicate jobId", jobId };
+    }
+    // A jobId that already finished is not merely a duplicate: its answer is
+    // retained on the broker, and running it again can only end by overwriting
+    // that answer with a second one. Refused as an EVENT — publishing the
+    // refusal to the result topic would itself destroy what it is protecting.
+    if (hasTerminalResult(jobId)) {
+      const err =
+        `job ${jobId} already finished — its result is retained on the broker. ` +
+        `Use a new jobId, or clear the retained result first`;
+      publishEvent(jobId, { type: "duplicate", note: err }, owner);
+      logger.warn(`refused re-dispatch of ${jobId} (${service}): ${err}`);
+      return { ok: false, error: err, jobId };
     }
 
     // ── Required arguments (declared by the capability, not by us) ──
@@ -509,6 +536,31 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     return true;
   }
 
+  /**
+   * The watchdog's own guard: stop, rather than publish, when the job it is
+   * about to fail has already answered.
+   *
+   * This is the case that cost a real review. A jobId was re-dispatched over a
+   * finished job; the second executor's publish was refused by the guard in
+   * payload.ts — correctly — and that refusal made it look silent. The watchdog
+   * re-injected twice, then wrote "execution not confirmed" to the result
+   * topic, and because results are retained, the review that had been sitting
+   * there was gone. A watchdog exists to notice an answer that never arrived;
+   * it must never be the thing that removes one.
+   */
+  function settledElsewhere(w: WatchEntry, why: string): boolean {
+    if (!hasTerminalResult(w.jobId)) return false;
+    logger.warn(
+      `[watchdog] ${why} for job ${w.jobId}, but it already published a terminal result — ` +
+      `leaving the answer alone and giving up supervision`,
+    );
+    publishEvent(w.jobId, {
+      type: "watchdog_stood_down",
+      note: `${why}, but a terminal result is already retained — not overwriting it`,
+    }, w.owner);
+    return true;
+  }
+
   function startWatchdog(): () => void {
     const timer = setInterval(() => {
       const now = Date.now();
@@ -516,9 +568,10 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
         // Hard wall-clock cap, regardless of liveness.
         if (now - w.dispatchedAt > cfg.mesh.maxJobDurationMs) {
           const mins = Math.round(cfg.mesh.maxJobDurationMs / 60_000);
-          logger.error(`[watchdog] job ${w.jobId} exceeded max duration ${mins}min — failing`);
           watched.delete(w.jobId);
           jobs.active.delete(w.jobId);
+          if (settledElsewhere(w, "exceeded max job duration")) continue;
+          logger.error(`[watchdog] job ${w.jobId} exceeded max duration ${mins}min — failing`);
           publishEvent(w.jobId, { type: "timeout", note: "exceeded max job duration" }, w.owner);
           publishResult(w.jobId, { type: "error", error: `job exceeded maximum duration of ${mins} minutes` }, w.owner);
           jobs.record({ jobId: w.jobId, state: "timeout", lastEvent: "max duration exceeded" },
@@ -534,9 +587,10 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
         if (now - w.lastAgentEventAt < REINJECT_AFTER_MS) continue;
 
         if (w.reinjections >= MAX_REINJECTS) {
-          logger.error(`[watchdog] job ${w.jobId} failed after ${MAX_REINJECTS} re-injections — publishing timeout`);
           watched.delete(w.jobId);
           jobs.active.delete(w.jobId);
+          if (settledElsewhere(w, `no result after ${MAX_REINJECTS} re-injections`)) continue;
+          logger.error(`[watchdog] job ${w.jobId} failed after ${MAX_REINJECTS} re-injections — publishing timeout`);
           publishEvent(w.jobId, { type: "timeout", note: "executor never produced a result" }, w.owner);
           publishResult(w.jobId, { type: "error", error: `execution not confirmed after ${MAX_REINJECTS} re-injections` }, w.owner);
           jobs.record({ jobId: w.jobId, state: "timeout", lastEvent: "watchdog timeout" },
