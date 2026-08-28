@@ -101,11 +101,25 @@ export function deniedFilters(
 /**
  * Stable per-deployment identity. Distinct installs on one host, and the same
  * install on different hosts, all get different ids; restarts do not.
+ *
+ * The id NAMES THE AGENT, because a broker log is where this is read. A page of
+ * `openclaw-mqtt-bridge-64c5c6e20b` tells an operator nothing about which agent,
+ * which deployment, or even which product is talking — one of those was
+ * retrying a dead credential every five seconds for an evening before anyone
+ * could tell it apart from the healthy one beside it.
+ *
+ * `plexus-<agentId>-<hash>` is what plexus-agent already publishes, so the two
+ * implementations now sign the same way.
+ *
+ * Changing this changes the MQTT session: on first start after an upgrade the
+ * broker sees a new client, and anything queued for the old session is
+ * orphaned. That is a one-time cost, paid at the moment an operator is watching
+ * anyway, in exchange for every future log line being readable.
  */
-export function deriveClientId(pluginDir: string, configured?: string): string {
+export function deriveClientId(pluginDir: string, agentId: string, configured?: string): string {
   if (configured) return configured;
   const suffix = createHash("sha1").update(`${os.hostname()}::${pluginDir}`).digest("hex").slice(0, 10);
-  return `openclaw-mqtt-bridge-${suffix}`;
+  return `plexus-${agentId}-${suffix}`;
 }
 
 export function createTransport(
@@ -114,7 +128,7 @@ export function createTransport(
   statusTopic: string,
   logger: Logger,
 ): Transport {
-  const baseClientId = deriveClientId(pluginDir, cfg.broker.clientId);
+  const baseClientId = deriveClientId(pluginDir, cfg.mesh.agentId, cfg.broker.clientId);
   let idSuffix = "";                       // empty unless a collision forces one
   let client: mqtt.MqttClient | null = null;
   let handlers: TransportHandlers | null = null;

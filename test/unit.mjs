@@ -616,14 +616,18 @@ t("${ENV_VAR} indirection resolves broker credentials", () => {
 
 // ── client id: the durability invariant ─────────────────
 t("clientId is stable across calls and independent of the pid", () => {
-  const a = deriveClientId("/plugins/mesh");
-  const b = deriveClientId("/plugins/mesh");
+  const a = deriveClientId("/plugins/mesh", "conan");
+  const b = deriveClientId("/plugins/mesh", "conan");
   assert.equal(a, b, "a changing id defeats clean:false and loses offline jobs");
   assert.ok(!a.includes(String(process.pid)));
 });
 t("clientId differs per install path, and honours an explicit override", () => {
-  assert.notEqual(deriveClientId("/plugins/a"), deriveClientId("/plugins/b"));
-  assert.equal(deriveClientId("/plugins/a", "mine"), "mine");
+  assert.notEqual(deriveClientId("/plugins/a", "conan"), deriveClientId("/plugins/b", "conan"));
+  assert.equal(deriveClientId("/plugins/a", "conan", "mine"), "mine");
+  // The id names the agent, because a broker log is where it is read: two
+  // installs are told apart by the hash, and the product by the prefix.
+  assert.match(deriveClientId("/plugins/a", "conan"), /^plexus-conan-[0-9a-f]{10}$/);
+  assert.notEqual(deriveClientId("/plugins/a", "conan"), deriveClientId("/plugins/a", "dba"));
 });
 
 
