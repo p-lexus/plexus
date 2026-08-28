@@ -4,48 +4,62 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Plexus Console</title>
-<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="%230E7C86" stroke-width="7" stroke-linecap="square"><path d="M12 12 L26 26"/><path d="M38 38 L52 52"/><path d="M52 12 L38 26"/><path d="M26 38 L12 52"/></svg>'>
+<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="%234ECDB4" stroke-width="7" stroke-linecap="square"><path d="M12 12 L26 26"/><path d="M38 38 L52 52"/><path d="M52 12 L38 26"/><path d="M26 38 L12 52"/></svg>'>
 
 <style>
-/* ── Tokens ────────────────────────────────────────────────────────────────
-   Light palette on bare :root. Dark redefines TOKENS ONLY, guarded so an
-   explicit light choice beats a dark OS. Nothing below defines a colour
-   outside this block. Neutrals carry a teal bias so they read as chosen. */
+/* ── Tokens ────────────────────────────────────────────────
+   p-lexus.com's own palette, which is also the box console's. The plugin and
+   the box are two halves of one product, and a panel that looked like neither
+   was the clearest sign they had been built apart.
+
+   Dark on bare :root, because the brand is dark: the site, the console and
+   this are the same product in the same clothes. Light redefines TOKENS ONLY
+   — guarded so an explicit dark choice beats a light OS — and nothing below
+   this block names a colour. */
 :root{
-  --ground:#F4F7F8; --surface:#FFFFFF; --surface-2:#EDF2F3; --sunken:#0D1A1F;
-  --ink:#0F1E24; --ink-2:#3C555E; --muted:#6B858E; --line:#DBE5E8; --line-2:#C7D6DA;
-  --accent:#0E7C86; --accent-ink:#FFFFFF; --accent-soft:#DDF0F1;
-  --ok:#1B7F4C; --ok-soft:#DEF1E6;
-  --run:#B45309; --run-soft:#FBEEDC;
-  --err:#B42318; --err-soft:#FBE4E2;
-  --hold:#5B53A5; --hold-soft:#E7E5F5;
-  --code:#CFE7EA;
-  --shadow:0 1px 2px rgba(15,30,36,.06), 0 8px 24px -12px rgba(15,30,36,.18);
-}
-@media (prefers-color-scheme:dark){
-  :root:not([data-theme="light"]){
-    --ground:#0A1317; --surface:#101E23; --surface-2:#16272D; --sunken:#070F12;
-    --ink:#E4EFF1; --ink-2:#AFC6CC; --muted:#7D979F; --line:#1D3037; --line-2:#274049;
-    --accent:#2FB3BE; --accent-ink:#04191C; --accent-soft:#0E3238;
-    --ok:#4ECB8B; --ok-soft:#0C2A1D;
-    --run:#E0A045; --run-soft:#2E2113;
-    --err:#F0736A; --err-soft:#331616;
-    --hold:#9C93E8; --hold-soft:#1D1B33;
-    --code:#BEDDE1;
-    --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 28px -14px rgba(0,0,0,.7);
-  }
-}
-:root[data-theme="dark"]{
-  --ground:#0A1317; --surface:#101E23; --surface-2:#16272D; --sunken:#070F12;
-  --ink:#E4EFF1; --ink-2:#AFC6CC; --muted:#7D979F; --line:#1D3037; --line-2:#274049;
-  --accent:#2FB3BE; --accent-ink:#04191C; --accent-soft:#0E3238;
-  --ok:#4ECB8B; --ok-soft:#0C2A1D;
-  --run:#E0A045; --run-soft:#2E2113;
-  --err:#F0736A; --err-soft:#331616;
-  --hold:#9C93E8; --hold-soft:#1D1B33;
-  --code:#BEDDE1;
+  color-scheme:dark light;
+  --ground:#0B1110; --surface:#101816; --surface-2:#16211F; --sunken:#0E1514;
+  --ink:#DCE5E2; --ink-2:#A7B8B3; --muted:#8A9C97; --line:#1E2B28; --line-2:#26332F;
+  --accent:#4ECDB4; --accent-ink:#06231D; --accent-soft:#12302B;
+  /* Status is fixed and never themed, and always carries a word beside it:
+     these four are the box console's, so one state has one colour in both. */
+  --ok:#0CA30C; --ok-soft:#0C2416;
+  --run:#FAB219; --run-soft:#2C2413;
+  --err:#D03B3B; --err-soft:#2E1717;
+  --hold:#5598E7; --hold-soft:#122234;
+  --field:#0E1514;
+  --code:#CFE0DC;
   --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 28px -14px rgba(0,0,0,.7);
 }
+@media (prefers-color-scheme:light){
+  :root:not([data-theme="dark"]){
+    --ground:#F2F5F4; --surface:#FFFFFF; --surface-2:#E9EFED; --sunken:#0E1514;
+    --ink:#0F1A18; --ink-2:#3B4A47; --muted:#6B7C78; --line:#DDE5E2; --line-2:#C9D5D1;
+    --accent:#14806C; --accent-ink:#FFFFFF; --accent-soft:#DFF2EE;
+    --ok:#0A7D0A; --ok-soft:#E1F2E1;
+    --run:#8A5B06; --run-soft:#FBEEDC;
+    --err:#B42318; --err-soft:#FBE4E2;
+    --hold:#2C5FA8; --hold-soft:#E4ECF8;
+    --field:#F7FAF9;
+    --code:#CFE0DC;
+    --shadow:0 1px 2px rgba(15,30,36,.06), 0 8px 24px -12px rgba(15,30,36,.18);
+  }
+}
+:root[data-theme="light"]{
+  --ground:#F2F5F4; --surface:#FFFFFF; --surface-2:#E9EFED; --sunken:#0E1514;
+  --ink:#0F1A18; --ink-2:#3B4A47; --muted:#6B7C78; --line:#DDE5E2; --line-2:#C9D5D1;
+  --accent:#14806C; --accent-ink:#FFFFFF; --accent-soft:#DFF2EE;
+  --ok:#0A7D0A; --ok-soft:#E1F2E1;
+  --run:#8A5B06; --run-soft:#FBEEDC;
+  --err:#B42318; --err-soft:#FBE4E2;
+  --hold:#2C5FA8; --hold-soft:#E4ECF8;
+  --field:#F7FAF9;
+  --code:#CFE0DC;
+  --shadow:0 1px 2px rgba(15,30,36,.06), 0 8px 24px -12px rgba(15,30,36,.18);
+}
+
+/* One radius and one control height, the console's: square-ish, like the mark. */
+:root{ --r:6px; --r-sm:4px; --control:32px; }
 
 /* ── Base ── */
 *,*::before,*::after{box-sizing:border-box}
@@ -54,26 +68,26 @@ html{-webkit-text-size-adjust:100%}
 body{
   background:var(--ground); color:var(--ink);
   font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-  font-size:14px; line-height:1.5;
+  font-size:13.5px; line-height:1.5;
   /* No webfont: this panel is served locally and must work offline, so a CDN
      face would risk a silent fallback. The mono stack carries the identity. */
 }
 :root{--mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace}
 code,kbd,.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
 a{color:var(--accent)}
-:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:1px;border-radius:3px}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 
 /* ── Chrome ── */
 header{
   position:sticky; top:0; z-index:20; background:var(--surface);
   border-bottom:1px solid var(--line); display:flex; align-items:center;
-  gap:20px; padding:0 20px; flex-wrap:wrap;
+  gap:20px; padding:0 24px; flex-wrap:wrap;
 }
-.brand{display:flex;align-items:baseline;gap:9px;padding:14px 0;margin-right:2px}
-.brand b{font-size:14px;font-weight:650;letter-spacing:-.15px}
-.brand .mark{color:var(--accent);flex:none;align-self:center}
-.brand span{font-family:var(--mono);font-size:11px;color:var(--muted)}
+.brand{display:flex;align-items:center;gap:9px;padding:12px 0;margin-right:2px}
+.brand .mark{color:var(--accent);flex:none}
+.brand .word{color:var(--ink);width:auto;flex:none}
+.brand span{font-family:var(--mono);font-size:11px;color:var(--muted);padding-left:3px}
 nav{display:flex;gap:1px;flex:1;min-width:200px}
 nav button{
   background:none;border:0;border-bottom:2px solid transparent;color:var(--muted);
@@ -98,33 +112,34 @@ nav button[aria-current="true"]{color:var(--ink);border-bottom-color:var(--accen
 .link.rx .meter i:nth-child(3){animation-delay:.24s}
 @keyframes pulse{0%,100%{opacity:.35}50%{opacity:1}}
 .icon-btn{
-  background:none;border:1px solid var(--line);border-radius:7px;color:var(--muted);
-  cursor:pointer;font:inherit;font-size:12px;line-height:1;padding:7px 9px;
+  display:inline-flex;align-items:center;height:26px;background:none;
+  border:1px solid var(--line);border-radius:var(--r-sm);color:var(--muted);
+  cursor:pointer;font:inherit;font-size:12px;line-height:1;padding:0 9px;
 }
 .icon-btn:hover{color:var(--ink);border-color:var(--line-2)}
 
-main{max-width:1160px;margin:0 auto;padding:22px 20px 64px}
+main{max-width:1500px;margin:0 auto;padding:24px 24px 64px}
 
 /* ── Structure ── */
 .eyebrow{
   font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.09em;
   text-transform:uppercase;color:var(--muted);
 }
-.panel{background:var(--surface);border:1px solid var(--line);border-radius:11px;box-shadow:var(--shadow)}
-.panel-h{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:13px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow)}
+.panel-h{display:flex;justify-content:space-between;align-items:center;gap:12px;min-height:38px;padding:6px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap}
 .panel-b{padding:16px}
 .stack{display:flex;flex-direction:column;gap:16px}
 .rowflex{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
 
 /* Stat tiles: label above, figure dominant, context beneath. */
-.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:1px;background:var(--line);border-radius:11px;overflow:hidden;border:1px solid var(--line)}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:1px;background:var(--line);border-radius:var(--r);overflow:hidden;border:1px solid var(--line)}
 .tile{background:var(--surface);padding:13px 15px 14px;display:flex;flex-direction:column;gap:3px}
 .tile .v{font-family:var(--mono);font-size:21px;font-weight:600;letter-spacing:-.4px;line-height:1.15}
 .tile .c{font-size:11.5px;color:var(--muted)}
 .tile .v.ok{color:var(--ok)} .tile .v.err{color:var(--err)} .tile .v.run{color:var(--run)}
 
 /* ── Jobs ── */
-.job{border:1px solid var(--line);border-radius:10px;background:var(--surface);overflow:hidden}
+.job{border:1px solid var(--line);border-radius:var(--r);background:var(--surface);overflow:hidden}
 .job+.job{margin-top:9px}
 .job-h{display:grid;grid-template-columns:3px 1fr auto;align-items:stretch;gap:0}
 .stripe{background:var(--line-2)}
@@ -140,7 +155,7 @@ main{max-width:1160px;margin:0 auto;padding:22px 20px 64px}
 .job-act{display:flex;align-items:center;gap:7px;padding:11px 12px}
 
 .chip{
-  display:inline-flex;align-items:center;gap:5px;border-radius:99px;padding:2.5px 9px;
+  display:inline-flex;align-items:center;gap:5px;border-radius:var(--r-sm);padding:2.5px 8px;
   font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.03em;
   text-transform:uppercase;white-space:nowrap;
 }
@@ -168,12 +183,12 @@ main{max-width:1160px;margin:0 auto;padding:22px 20px 64px}
 
 pre.payload{
   background:var(--sunken);color:var(--code);font-family:var(--mono);font-size:11.5px;
-  line-height:1.55;padding:12px 13px;border-radius:8px;overflow-x:auto;max-height:340px;
+  line-height:1.55;padding:12px 13px;border-radius:var(--r-sm);overflow-x:auto;max-height:340px;
   overflow-y:auto;white-space:pre;
 }
 .topic{
   display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--line);
-  border-radius:7px;padding:7px 9px;font-family:var(--mono);font-size:11.5px;color:var(--ink-2);
+  border-radius:var(--r-sm);padding:7px 9px;font-family:var(--mono);font-size:11.5px;color:var(--ink-2);
   overflow-x:auto;
 }
 .topic b{color:var(--accent);font-weight:600}
@@ -181,28 +196,31 @@ pre.payload{
 /* ── Forms ── */
 label{display:block;font-size:12px;font-weight:600;color:var(--ink-2);margin-bottom:5px}
 input,select,textarea{
-  width:100%;background:var(--surface);color:var(--ink);border:1px solid var(--line-2);
-  border-radius:8px;padding:8px 10px;font:inherit;font-size:13px;
+  width:100%;height:var(--control);background:var(--field);color:var(--ink);
+  border:1px solid var(--line);border-radius:var(--r-sm);padding:0 10px;
+  font:inherit;font-size:13px;
 }
+input:focus,select:focus,textarea:focus{border-color:var(--accent);outline:none}
 input.mono,textarea{font-family:var(--mono);font-size:12.5px}
-textarea{min-height:132px;resize:vertical;line-height:1.55}
+textarea{height:auto;min-height:132px;padding:8px 10px;resize:vertical;line-height:1.55}
 input::placeholder,textarea::placeholder{color:var(--muted)}
 .field+.field{margin-top:13px}
 button.btn{
-  background:var(--accent);color:var(--accent-ink);border:0;border-radius:8px;
-  padding:9px 15px;font:inherit;font-size:13px;font-weight:600;cursor:pointer;
+  display:inline-flex;align-items:center;justify-content:center;height:var(--control);
+  background:var(--accent);color:var(--accent-ink);border:1px solid var(--accent);
+  border-radius:var(--r-sm);padding:0 14px;font:inherit;font-size:13px;font-weight:600;cursor:pointer;
 }
 button.btn:hover{filter:brightness(1.08)}
 button.btn:disabled{opacity:.45;cursor:not-allowed;filter:none}
-button.btn.quiet{background:var(--surface);color:var(--ink-2);border:1px solid var(--line-2)}
+button.btn.quiet{background:var(--field);color:var(--ink);border-color:var(--line)}
 button.btn.quiet:hover{color:var(--ink);filter:none;border-color:var(--muted)}
-button.btn.danger{background:var(--err-soft);color:var(--err);border:1px solid transparent}
-button.btn.small{padding:5px 10px;font-size:12px}
+button.btn.danger{background:transparent;color:var(--err);border-color:var(--err)}
+button.btn.small{height:26px;padding:0 9px;font-size:12px}
 .filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .filters input{width:auto;flex:1;min-width:150px}
 .filters select{width:auto}
 
-.cap{border:1px solid var(--line);border-radius:10px;padding:14px;background:var(--surface)}
+.cap{border:1px solid var(--line);border-radius:var(--r);padding:14px;background:var(--surface)}
 .cap+.cap{margin-top:9px}
 .cap-n{font-family:var(--mono);font-size:13.5px;font-weight:650;color:var(--accent)}
 .cap-d{font-size:12.5px;color:var(--ink-2);margin:5px 0 9px;max-width:68ch}
@@ -215,11 +233,11 @@ details[open] summary{margin-bottom:8px}
 .note{font-size:12px;color:var(--muted);max-width:70ch}
 .warn-bar{
   display:flex;gap:9px;align-items:flex-start;background:var(--run-soft);color:var(--run);
-  border-radius:9px;padding:11px 13px;font-size:12.5px;
+  border-radius:var(--r);padding:11px 13px;font-size:12.5px;
 }
 #toast{
   position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--ink);
-  color:var(--ground);padding:11px 18px;border-radius:9px;font-size:13px;z-index:60;
+  color:var(--ground);padding:11px 18px;border-radius:var(--r);font-size:13px;z-index:60;
   box-shadow:var(--shadow);opacity:0;pointer-events:none;transition:opacity .16s
 }
 #toast.on{opacity:1}
@@ -231,11 +249,56 @@ details[open] summary{margin-bottom:8px}
 <body>
 <header>
   <div class="brand">
-    <svg class="mark" width="16" height="16" viewBox="0 0 64 64" fill="none" stroke="currentColor"
-         stroke-width="7" stroke-linecap="square" aria-hidden="true">
-      <path d="M12 12 L26 26"/><path d="M38 38 L52 52"/>
-      <path d="M52 12 L38 26"/><path d="M26 38 L12 52"/>
-    </svg><b>Plexus</b><span id="agentTag">—</span></div>
+    <!-- docs/logo/plexus-mark.svg and plexus-wordmark.svg, verbatim: the
+         same files the site and the box console draw, inlined rather than
+         linked so they inherit `color` and so the panel keeps its identity
+         offline — this is served by the gateway, never from a CDN. -->
+    <svg class="mark" width="19" height="19" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none"
+         stroke="currentColor" stroke-width="7" stroke-linecap="square">
+      <path d="M12 12 L26 26"/>
+      <path d="M38 38 L52 52"/>
+      <path d="M52 12 L38 26"/>
+      <path d="M26 38 L12 52"/>
+    </svg>
+    <svg class="word" height="15" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 120" role="img" aria-labelledby="title desc">
+      <title id="title">PLEXUS</title>
+      <desc id="desc">Custom geometric PLEXUS wordmark with a disconnected E and intersecting X.</desc>
+    
+      <!--
+        PLEXUS — Intersection Typo
+        Single-colour production SVG.
+        Change the logo colour by setting CSS `color`.
+      -->
+      <g fill="none"
+         stroke="currentColor"
+         stroke-width="10"
+         stroke-linecap="square"
+         stroke-linejoin="miter">
+    
+        <!-- P -->
+        <path d="M28 94V26H62C77 26 86 34 86 47C86 60 77 68 62 68H28"/>
+    
+        <!-- L -->
+        <path d="M118 26V94H166"/>
+    
+        <!-- E — intentionally disconnected -->
+        <path d="M198 26H248"/>
+        <path d="M198 60H239"/>
+        <path d="M198 94H248"/>
+    
+        <!-- X — crossing paths / protocol intersection -->
+        <path d="M282 26L338 94"/>
+        <path d="M338 26L282 94"/>
+    
+        <!-- U -->
+        <path d="M372 26V70C372 87 381 96 398 96C415 96 424 87 424 70V26"/>
+    
+        <!-- S -->
+        <path d="M508 26H474C460 26 452 34 452 45C452 56 460 61 474 61H492C506 61 514 68 514 79C514 89 506 94 492 94H452"/>
+      </g>
+    </svg>
+    <span id="agentTag">—</span>
+  </div>
   <nav id="nav"></nav>
   <div class="chrome-right">
     <div class="link" id="link"><span class="meter"><i></i><i></i><i></i></span><span id="linkTxt">connecting</span></div>
@@ -1010,7 +1073,7 @@ document.addEventListener('click', async (e) => {
   else if (t.id === 'r-go') dispatch();
   else if (t.id === 'themeBtn') {
     const now = document.documentElement.getAttribute('data-theme')
-      || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
     const next = now === 'dark' ? 'light' : 'dark';
     document.documentElement.setAttribute('data-theme', next);
     try { localStorage.setItem('mesh-theme', next); } catch {}
