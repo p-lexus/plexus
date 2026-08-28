@@ -6,302 +6,111 @@
 <title>Plexus Console</title>
 <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="%234ECDB4" stroke-width="7" stroke-linecap="square"><path d="M12 12 L26 26"/><path d="M38 38 L52 52"/><path d="M52 12 L38 26"/><path d="M26 38 L12 52"/></svg>'>
 
-<style>
-/* ── Tokens ────────────────────────────────────────────────
-   p-lexus.com's own palette, which is also the box console's. The plugin and
-   the box are two halves of one product, and a panel that looked like neither
-   was the clearest sign they had been built apart.
+<!-- The console's design system, verbatim: web/theme.css is a byte-for-byte
+     copy of the box console's own stylesheet. Not a port of it — the same
+     file, so the panel and the console cannot drift into two dialects of the
+     same components. Diff the two to check.
 
-   Dark on bare :root, because the brand is dark: the site, the console and
-   this are the same product in the same clothes. Light redefines TOKENS ONLY
-   — guarded so an explicit dark choice beats a light OS — and nothing below
-   this block names a colour. */
-:root{
-  color-scheme:dark light;
-  --ground:#0B1110; --surface:#101816; --surface-2:#16211F; --sunken:#0E1514;
-  --ink:#DCE5E2; --ink-2:#A7B8B3; --muted:#8A9C97; --line:#1E2B28; --line-2:#26332F;
-  --accent:#4ECDB4; --accent-ink:#06231D; --accent-soft:#12302B;
-  /* Status is fixed and never themed, and always carries a word beside it:
-     these four are the box console's, so one state has one colour in both. */
-  --ok:#0CA30C; --ok-soft:#0C2416;
-  --run:#FAB219; --run-soft:#2C2413;
-  --err:#D03B3B; --err-soft:#2E1717;
-  --hold:#5598E7; --hold-soft:#122234;
-  --field:#0E1514;
-  --code:#CFE0DC;
-  --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 28px -14px rgba(0,0,0,.7);
-}
+     Everything in the inline block below is what this panel has and the
+     console does not: its header, its link meter, its editor. All of it is
+     written on the shared tokens. -->
+<link rel="stylesheet" href="theme.css">
+
+<style>
+/* The panel keeps a light mode, which the console has no need for — it runs on
+   a wall. TOKENS ONLY, on the shared names, so every component rule in
+   theme.css stays exactly as the console wrote it. Guarded so an explicit dark
+   choice beats a light OS. */
 @media (prefers-color-scheme:light){
   :root:not([data-theme="dark"]){
-    --ground:#F2F5F4; --surface:#FFFFFF; --surface-2:#E9EFED; --sunken:#0E1514;
-    --ink:#0F1A18; --ink-2:#3B4A47; --muted:#6B7C78; --line:#DDE5E2; --line-2:#C9D5D1;
-    --accent:#14806C; --accent-ink:#FFFFFF; --accent-soft:#DFF2EE;
-    --ok:#0A7D0A; --ok-soft:#E1F2E1;
-    --run:#8A5B06; --run-soft:#FBEEDC;
-    --err:#B42318; --err-soft:#FBE4E2;
-    --hold:#2C5FA8; --hold-soft:#E4ECF8;
-    --field:#F7FAF9;
-    --code:#CFE0DC;
-    --shadow:0 1px 2px rgba(15,30,36,.06), 0 8px 24px -12px rgba(15,30,36,.18);
+    --ground:#F2F5F4; --surface:#FFFFFF; --sunk:#F7FAF9; --raised:#E9EFED;
+    --ink:#0F1A18; --muted:#3B4A47; --faint:#6B7C78; --wire:#DDE5E2; --wire-2:#C9D5D1;
+    --accent:#14806C; --accent-2:#0F6B59; --signal:#8A5B06;
+    --good:#0A7D0A; --warning:#8A5B06; --critical:#B42318;
   }
 }
 :root[data-theme="light"]{
-  --ground:#F2F5F4; --surface:#FFFFFF; --surface-2:#E9EFED; --sunken:#0E1514;
-  --ink:#0F1A18; --ink-2:#3B4A47; --muted:#6B7C78; --line:#DDE5E2; --line-2:#C9D5D1;
-  --accent:#14806C; --accent-ink:#FFFFFF; --accent-soft:#DFF2EE;
-  --ok:#0A7D0A; --ok-soft:#E1F2E1;
-  --run:#8A5B06; --run-soft:#FBEEDC;
-  --err:#B42318; --err-soft:#FBE4E2;
-  --hold:#2C5FA8; --hold-soft:#E4ECF8;
-  --field:#F7FAF9;
-  --code:#CFE0DC;
-  --shadow:0 1px 2px rgba(15,30,36,.06), 0 8px 24px -12px rgba(15,30,36,.18);
+  --ground:#F2F5F4; --surface:#FFFFFF; --sunk:#F7FAF9; --raised:#E9EFED;
+  --ink:#0F1A18; --muted:#3B4A47; --faint:#6B7C78; --wire:#DDE5E2; --wire-2:#C9D5D1;
+  --accent:#14806C; --accent-2:#0F6B59; --signal:#8A5B06;
+  --good:#0A7D0A; --warning:#8A5B06; --critical:#B42318;
 }
+:root{color-scheme:dark light}
 
-/* One radius and one control height, the console's: square-ish, like the mark. */
-:root{ --r:6px; --r-sm:4px; --control:32px; }
-
-/* ── Base ── */
-*,*::before,*::after{box-sizing:border-box}
-*{margin:0}
-html{-webkit-text-size-adjust:100%}
-body{
-  background:var(--ground); color:var(--ink);
-  font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-  font-size:13.5px; line-height:1.5;
-  /* No webfont: this panel is served locally and must work offline, so a CDN
-     face would risk a silent fallback. The mono stack carries the identity. */
-}
-:root{--mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace}
-code,kbd,.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
-a{color:var(--accent)}
-:focus-visible{outline:2px solid var(--accent);outline-offset:1px;border-radius:3px}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 
-/* ── Chrome ── */
+/* ── This panel's own chrome ─────────────────────────────────────────────── */
+
 header{
   position:sticky; top:0; z-index:20; background:var(--surface);
-  border-bottom:1px solid var(--line); display:flex; align-items:center;
-  gap:20px; padding:0 24px; flex-wrap:wrap;
+  border-bottom:1px solid var(--wire); display:flex; align-items:center;
+  gap:var(--s5); padding:0 var(--s6); flex-wrap:wrap;
 }
 .brand{display:flex;align-items:center;gap:9px;padding:12px 0;margin-right:2px}
 .brand .mark{color:var(--accent);flex:none}
 .brand .word{color:var(--ink);width:auto;flex:none}
-.brand span{font-family:var(--mono);font-size:11px;color:var(--muted);padding-left:3px}
+.brand span{font-family:var(--mono);font-size:11px;color:var(--faint);padding-left:3px}
+
 nav{display:flex;gap:1px;flex:1;min-width:200px}
 nav button{
   background:none;border:0;border-bottom:2px solid transparent;color:var(--muted);
-  font:inherit;font-size:13px;font-weight:550;padding:15px 12px 13px;cursor:pointer;
+  font:inherit;font-size:13px;font-weight:500;padding:15px 12px 13px;cursor:pointer;
 }
 nav button:hover{color:var(--ink)}
 nav button[aria-current="true"]{color:var(--ink);border-bottom-color:var(--accent)}
-.chrome-right{display:flex;align-items:center;gap:14px;padding:8px 0}
+.chrome-right{display:flex;align-items:center;gap:var(--s3);padding:var(--s2) 0}
 
 /* Live link state: a signal meter, not a dot — bars animate only while
    messages are actually arriving, so "connected but idle" reads differently
    from "connected and busy". */
-.link{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-2)}
+.link{display:flex;align-items:center;gap:var(--s2);font-size:12px;color:var(--muted)}
 .meter{display:flex;align-items:flex-end;gap:2px;height:14px}
-.meter i{width:3px;background:var(--line-2);border-radius:1px;height:35%}
+.meter i{width:3px;background:var(--wire-2);border-radius:1px;height:35%}
 .meter i:nth-child(2){height:65%}
 .meter i:nth-child(3){height:100%}
-.link.up .meter i{background:var(--ok)}
-.link.down .meter i{background:var(--err);height:35%}
+.link.up .meter i{background:var(--good)}
+.link.down .meter i{background:var(--critical);height:35%}
 .link.rx .meter i{animation:pulse .9s ease-in-out infinite}
 .link.rx .meter i:nth-child(2){animation-delay:.12s}
 .link.rx .meter i:nth-child(3){animation-delay:.24s}
 @keyframes pulse{0%,100%{opacity:.35}50%{opacity:1}}
-.icon-btn{
-  display:inline-flex;align-items:center;height:26px;background:none;
-  border:1px solid var(--line);border-radius:var(--r-sm);color:var(--muted);
-  cursor:pointer;font:inherit;font-size:12px;line-height:1;padding:0 9px;
-}
-.icon-btn:hover{color:var(--ink);border-color:var(--line-2)}
 
-main{max-width:1500px;margin:0 auto;padding:24px 24px 64px}
+main.page{margin:0 auto}
+.rowflex{display:flex;gap:var(--s2);flex-wrap:wrap;align-items:center}
+.note{font-size:12px;color:var(--faint);margin:0;max-width:70ch}
+.note code{font-family:var(--mono);font-size:11.5px}
 
-/* ── Structure ── */
-.eyebrow{
-  font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.09em;
-  text-transform:uppercase;color:var(--muted);
-}
-.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow)}
-.panel-h{display:flex;justify-content:space-between;align-items:center;gap:12px;min-height:38px;padding:6px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap}
-.panel-b{padding:16px}
-.stack{display:flex;flex-direction:column;gap:16px}
-.rowflex{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+/* The job and service detail: the console's own Jobs.svelte rules, copied as
+   they are written there. */
+.panes{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:var(--s5)}
+.panes h4{margin:0 0 var(--s2);font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;
+          color:var(--faint);font-weight:500}
+.panes pre.code{max-height:220px}
+.timeline{list-style:none;margin:0;padding:0;display:grid;gap:2px;max-height:220px;overflow:auto}
+.timeline li{display:flex;gap:var(--s2);align-items:baseline;font-size:12.5px}
+.timeline .t{color:var(--faint);font-family:var(--mono);font-size:11.5px;flex:none}
+.timeline .n{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+pre.code.wrap{white-space:pre-wrap;overflow-wrap:anywhere}
 
-/* Stat tiles: label above, figure dominant, context beneath. */
-.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:1px;background:var(--line);border-radius:var(--r);overflow:hidden;border:1px solid var(--line)}
-.tile{background:var(--surface);padding:13px 15px 14px;display:flex;flex-direction:column;gap:3px}
-.tile .v{font-family:var(--mono);font-size:21px;font-weight:600;letter-spacing:-.4px;line-height:1.15}
-.tile .c{font-size:11.5px;color:var(--muted)}
-.tile .v.ok{color:var(--ok)} .tile .v.err{color:var(--err)} .tile .v.run{color:var(--run)}
-
-/* ── Jobs ── */
-.job{border:1px solid var(--line);border-radius:var(--r);background:var(--surface);overflow:hidden}
-.job+.job{margin-top:9px}
-.job-h{display:grid;grid-template-columns:3px 1fr auto;align-items:stretch;gap:0}
-.stripe{background:var(--line-2)}
-.job.s-done .stripe{background:var(--ok)}
-.job.s-run  .stripe{background:var(--run)}
-.job.s-err  .stripe{background:var(--err)}
-.job.s-hold .stripe{background:var(--hold)}
-.job-main{padding:11px 14px;min-width:0}
-.job-top{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
-.jid{font-family:var(--mono);font-size:13px;font-weight:600}
-.job-meta{display:flex;gap:7px;flex-wrap:wrap;margin-top:4px;font-size:11.5px;color:var(--muted)}
-.job-meta .sep{color:var(--line-2)}
-.job-act{display:flex;align-items:center;gap:7px;padding:11px 12px}
-
-.chip{
-  display:inline-flex;align-items:center;gap:5px;border-radius:var(--r-sm);padding:2.5px 8px;
-  font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.03em;
-  text-transform:uppercase;white-space:nowrap;
-}
-.chip.done{background:var(--ok-soft);color:var(--ok)}
-.chip.run{background:var(--run-soft);color:var(--run)}
-.chip.err{background:var(--err-soft);color:var(--err)}
-.chip.hold{background:var(--hold-soft);color:var(--hold)}
-.chip.plain{background:var(--surface-2);color:var(--ink-2)}
-.chip.mono{background:var(--surface-2);color:var(--ink-2);text-transform:none;font-family:var(--mono)}
-.chip.accent{background:var(--accent-soft);color:var(--accent)}
-
-/* Timeline — the milestone history, previously discarded by the bridge. */
-.job-body{border-top:1px solid var(--line);padding:14px;display:grid;gap:14px;background:var(--surface-2)}
-.tl{display:flex;flex-direction:column;gap:0;position:relative}
-.tl-i{display:grid;grid-template-columns:11px 1fr;gap:10px;padding:0 0 11px;position:relative}
-.tl-i:last-child{padding-bottom:0}
-.tl-i::before{content:"";position:absolute;left:5px;top:12px;bottom:0;width:1px;background:var(--line-2)}
-.tl-i:last-child::before{display:none}
-.tl-dot{width:9px;height:9px;border-radius:50%;background:var(--line-2);margin-top:4px;z-index:1;border:2px solid var(--surface-2)}
-.tl-i.mark .tl-dot{background:var(--accent)}
-.tl-i.bad .tl-dot{background:var(--err)}
-.tl-i.warn .tl-dot{background:var(--run)}
-.tl-t{font-family:var(--mono);font-size:12px;font-weight:600}
-.tl-n{font-size:12px;color:var(--ink-2);margin-top:1px;overflow-wrap:anywhere}
-.tl-ts{font-family:var(--mono);font-size:10.5px;color:var(--muted);margin-top:2px}
-
-pre.payload{
-  background:var(--sunken);color:var(--code);font-family:var(--mono);font-size:11.5px;
-  line-height:1.55;padding:12px 13px;border-radius:var(--r-sm);overflow-x:auto;max-height:340px;
-  overflow-y:auto;white-space:pre;
-}
+/* Where a job's messages land. The console has no equivalent: it watches every
+   topic, and this panel is one agent looking at its own. */
 .topic{
-  display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--line);
-  border-radius:var(--r-sm);padding:7px 9px;font-family:var(--mono);font-size:11.5px;color:var(--ink-2);
-  overflow-x:auto;
+  display:flex;align-items:center;gap:var(--s2);background:var(--sunk);
+  border:1px solid var(--wire);border-radius:var(--radius);padding:7px 9px;
+  font-family:var(--mono);font-size:11.5px;color:var(--muted);overflow-x:auto;
 }
 .topic b{color:var(--accent);font-weight:600}
+.topic span{flex:1;min-width:0}
 
+.tbl .desc{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+           overflow:hidden;font-size:12.5px}
 
-/* ── Table ─────────────────────────────────────────────────────────────────
-   The box console's table, rule for rule. A job in the panel and a job in the
-   console should not be two different objects to read: same columns, same
-   uppercase heads, same 38px rows, same right-aligned tabular numbers, same
-   expandable detail row underneath. */
-.tbl-wrap{overflow-x:auto}
-.tbl{width:100%;border-collapse:collapse;font-size:13px}
-.tbl th{
-  text-align:left;font-size:10.5px;font-weight:500;text-transform:uppercase;letter-spacing:.08em;
-  color:var(--muted);padding:8px 12px;background:var(--surface-2);
-  border-bottom:1px solid var(--line);white-space:nowrap;
-}
-.tbl td{padding:0 12px;height:38px;border-bottom:1px solid var(--line);vertical-align:middle}
-.tbl tbody tr:last-child td{border-bottom:0}
-.tbl tbody tr:hover td{background:var(--surface-2)}
-.tbl th:first-child,.tbl td:first-child{padding-left:16px}
-.tbl th:last-child,.tbl td:last-child{padding-right:16px}
-.tbl .num,.tbl th.num{text-align:right;font-variant-numeric:tabular-nums}
-.tbl .right,.tbl th.right{text-align:right}
-.tbl .nowrap{white-space:nowrap}
-.tbl .dim{color:var(--ink-2)}
-.tbl .mono{font-family:var(--mono);font-size:12.5px}
-.tbl .desc{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:12.5px}
-.tbl tr.clickable{cursor:pointer}
-.tbl tr.open>td{background:var(--surface-2)}
-.tbl tr.detail>td{background:var(--ground);height:auto;padding:16px}
-.tbl tr.detail:hover>td{background:var(--ground)}
-.tbl .cell-actions{display:flex;gap:8px;justify-content:flex-end}
-.panes{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:20px}
-.panes h4{
-  margin:0 0 8px;font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;
-  color:var(--muted);font-weight:500;
-}
-.dot{width:7px;height:7px;border-radius:50%;background:var(--muted);flex:none;display:inline-block}
-.dot.done{background:var(--ok)}
-.dot.run{background:var(--accent)}
-.dot.err{background:var(--err)}
-.dot.hold{background:var(--hold)}
-.state{font-size:11.5px;color:var(--muted);white-space:nowrap}
-.state.good{color:var(--ok)}
-.state.bad{color:var(--err)}
-.state.warn{color:var(--run)}
-.count{color:var(--muted);font-size:12.5px;font-variant-numeric:tabular-nums}
-pre.code.wrap{white-space:pre-wrap;overflow-wrap:anywhere}
-pre.code{
-  margin:0;background:var(--sunken);color:var(--code);border:1px solid var(--line);
-  border-radius:var(--r-sm);padding:12px;font-family:var(--mono);font-size:11.5px;
-  line-height:1.55;overflow:auto;max-height:240px;white-space:pre;
-}
-/* The console's timeline: time, milestone, note — one line each, so a long
-   history stays scannable. The type carries the colour; nothing is colour alone. */
-.timeline{list-style:none;margin:0;padding:0;display:grid;gap:2px;max-height:240px;overflow:auto}
-.timeline li{display:flex;gap:8px;align-items:baseline;font-size:12.5px}
-.timeline .t{color:var(--muted);font-family:var(--mono);font-size:11.5px;flex:none}
-.timeline .n{color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-
-/* ── Forms ── */
-label{display:block;font-size:12px;font-weight:600;color:var(--ink-2);margin-bottom:5px}
-input,select,textarea{
-  width:100%;height:var(--control);background:var(--field);color:var(--ink);
-  border:1px solid var(--line);border-radius:var(--r-sm);padding:0 10px;
-  font:inherit;font-size:13px;
-}
-input:focus,select:focus,textarea:focus{border-color:var(--accent);outline:none}
-input.mono,textarea{font-family:var(--mono);font-size:12.5px}
-textarea{height:auto;min-height:132px;padding:8px 10px;resize:vertical;line-height:1.55}
-input::placeholder,textarea::placeholder{color:var(--muted)}
-.field+.field{margin-top:13px}
-button.btn{
-  display:inline-flex;align-items:center;justify-content:center;height:var(--control);
-  background:var(--accent);color:var(--accent-ink);border:1px solid var(--accent);
-  border-radius:var(--r-sm);padding:0 14px;font:inherit;font-size:13px;font-weight:600;cursor:pointer;
-}
-button.btn:hover{filter:brightness(1.08)}
-button.btn:disabled{opacity:.45;cursor:not-allowed;filter:none}
-button.btn.quiet{background:var(--field);color:var(--ink);border-color:var(--line)}
-button.btn.quiet:hover{color:var(--ink);filter:none;border-color:var(--muted)}
-button.btn.danger{background:transparent;color:var(--err);border-color:var(--err)}
-button.btn.small{height:26px;padding:0 9px;font-size:12px}
-.filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-.filters input{width:auto;flex:1;min-width:150px}
-.filters select{width:auto}
-
-.cap{border:1px solid var(--line);border-radius:var(--r);padding:14px;background:var(--surface)}
-.cap+.cap{margin-top:9px}
-.cap-n{font-family:var(--mono);font-size:13.5px;font-weight:650;color:var(--accent)}
-.cap-d{font-size:12.5px;color:var(--ink-2);margin:5px 0 9px;max-width:68ch}
-details summary{cursor:pointer;font-size:12px;color:var(--muted);font-weight:550}
-details summary:hover{color:var(--ink-2)}
-details[open] summary{margin-bottom:8px}
-
-.empty{padding:34px 16px;text-align:center;color:var(--muted);font-size:13px}
-.empty b{display:block;color:var(--ink-2);font-size:13.5px;margin-bottom:3px}
-.note{font-size:12px;color:var(--muted);max-width:70ch}
-.warn-bar{
-  display:flex;gap:9px;align-items:flex-start;background:var(--run-soft);color:var(--run);
-  border-radius:var(--r);padding:11px 13px;font-size:12.5px;
-}
 #toast{
   position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--ink);
-  color:var(--ground);padding:11px 18px;border-radius:var(--r);font-size:13px;z-index:60;
-  box-shadow:var(--shadow);opacity:0;pointer-events:none;transition:opacity .16s
+  color:var(--ground);padding:11px 18px;border-radius:var(--radius);font-size:13px;z-index:60;
+  opacity:0;pointer-events:none;transition:opacity .16s;
 }
 #toast.on{opacity:1}
-.kv{display:grid;grid-template-columns:110px 1fr;gap:8px 12px;font-size:12.5px;align-items:baseline}
-.kv dt{color:var(--muted)}
-.kv dd{font-family:var(--mono);overflow-wrap:anywhere}
 </style>
 </head>
 <body>
@@ -360,11 +169,11 @@ details[open] summary{margin-bottom:8px}
   <nav id="nav"></nav>
   <div class="chrome-right">
     <div class="link" id="link"><span class="meter"><i></i><i></i><i></i></span><span id="linkTxt">connecting</span></div>
-    <button class="icon-btn" id="themeBtn" title="Switch theme">Theme</button>
-    <button class="icon-btn" id="signOut" title="Forget the token on this browser" hidden>Sign out</button>
+    <button class="btn sm" id="themeBtn" title="Switch theme">Theme</button>
+    <button class="btn sm" id="signOut" title="Forget the token on this browser" hidden>Sign out</button>
   </div>
 </header>
-<main id="view"></main>
+<main id="view" class="page"></main>
 <div id="toast" role="status" aria-live="polite"></div>
 
 <script>
@@ -433,6 +242,9 @@ function tone(state) {
   return 'hold';                      // cancelled, duplicate
 }
 const isRunning = (j) => RUNNING.has(j.state);
+/* The box console's Jobs.svelte mapping, unchanged: running is the accent,
+   anything not done is critical, done is good. */
+const kind = (state) => (RUNNING.has(state) ? 'run' : state !== 'done' ? 'bad' : 'live');
 
 function copy(text, what) {
   navigator.clipboard?.writeText(text).then(
@@ -506,16 +318,16 @@ function renderSignIn() {
   $('nav').innerHTML = '';
   $('view').innerHTML = `
     <div class="panel" style="max-width:520px;margin:8vh auto 0">
-      <div class="panel-h"><span class="eyebrow">Sign in</span></div>
-      <div class="panel-b stack">
+      <div class="panel-head"><h3>Sign in</h3></div>
+      <div class="panel-body stack">
         <p class="note">${TOKEN ? 'That token was not accepted. It may have been rotated.' :
           'This panel is protected by a token.'} It is the <code>web.auth</code> value in your
           plugin config, under <code>mqtt-bridge → config → web</code>.</p>
         <div class="field"><label for="tok">Panel token</label>
-          <input id="tok" type="password" class="mono" autocomplete="current-password"
+          <input id="tok" type="password" class="input mono" autocomplete="current-password"
                  placeholder="paste the token" autofocus>
-          <p class="note" id="tok-err" style="margin-top:6px;color:var(--err)"></p></div>
-        <div class="rowflex"><button class="btn" id="tok-go">Sign in</button>
+          <p class="note" id="tok-err" style="margin-top:6px;color:var(--critical)"></p></div>
+        <div class="rowflex"><button class="btn primary" id="tok-go">Sign in</button>
           <span class="note">Stored in this browser — you will not need it again on this machine.</span></div>
       </div>
     </div>`;
@@ -592,23 +404,23 @@ function overview() {
 
   return `
   <div class="stack">
-    ${status.connected ? '' : `<div class="warn-bar"><span>⚠</span><div><b>The bridge is not connected to the broker.</b> Jobs published now are queued by the broker and delivered when it reconnects${status.lastError ? ` — last error: ${esc(status.lastError)}` : ''}.</div></div>`}
-    ${recentRc() >= 5 ? `<div class="warn-bar"><span>⚠</span><div><b>${recentRc()} reconnects in the last hour.</b> The link to the broker is unstable${status.lastError ? ` — last error: ${esc(status.lastError)}` : ''}. Jobs still queue and deliver, but dispatch stalls while disconnected.</div></div>` : ''}
-    ${status.session && status.session.durable === false ? `<div class="warn-bar"><span>⚠</span><div><b>Session durability is degraded.</b> A client id collision forced a new session, so jobs published while this agent is offline will not be queued. Set a distinct <code>broker.clientId</code> and restart.</div></div>` : ''}
-    ${requeued.length ? `<div class="warn-bar"><span>⚠</span><div><b>${requeued.length} job${requeued.length > 1 ? 's were' : ' was'} re-dispatched by the watchdog.</b> That means an executor finished without publishing a result. Open the job to see its timeline.</div></div>` : ''}
+    ${status.connected ? '' : `<div class="note-box"><div><b>The bridge is not connected to the broker.</b> Jobs published now are queued by the broker and delivered when it reconnects${status.lastError ? ` — last error: ${esc(status.lastError)}` : ''}.</div></div>`}
+    ${recentRc() >= 5 ? `<div class="note-box"><div><b>${recentRc()} reconnects in the last hour.</b> The link to the broker is unstable${status.lastError ? ` — last error: ${esc(status.lastError)}` : ''}. Jobs still queue and deliver, but dispatch stalls while disconnected.</div></div>` : ''}
+    ${status.session && status.session.durable === false ? `<div class="note-box"><div><b>Session durability is degraded.</b> A client id collision forced a new session, so jobs published while this agent is offline will not be queued. Set a distinct <code>broker.clientId</code> and restart.</div></div>` : ''}
+    ${requeued.length ? `<div class="note-box"><div><b>${requeued.length} job${requeued.length > 1 ? 's were' : ' was'} re-dispatched by the watchdog.</b> That means an executor finished without publishing a result. Open the job to see its timeline.</div></div>` : ''}
 
-    <div class="tiles">
-      <div class="tile"><span class="eyebrow">Running</span><span class="v ${live.length ? 'run' : ''}">${live.length}</span><span class="c">${live.length ? esc(live[0].jobId) : 'idle'}</span></div>
-      <div class="tile"><span class="eyebrow">Completed</span><span class="v ok">${done.length}</span><span class="c">median ${dur(median)}</span></div>
-      <div class="tile"><span class="eyebrow">Failed</span><span class="v ${bad.length ? 'err' : ''}">${bad.length}</span><span class="c">${bad.length ? esc(bad[0].state) + ' most recent' : 'none'}</span></div>
-      <div class="tile"><span class="eyebrow">Uptime</span><span class="v">${dur(status.uptimeMs)}</span><span class="c">${recentRc()} reconnect${recentRc() === 1 ? '' : 's'} this hour</span></div>
-      <div class="tile"><span class="eyebrow">Messages in</span><span class="v">${status.rx}</span><span class="c">${status.tx} published</span></div>
-      <div class="tile"><span class="eyebrow">Services</span><span class="v">${(profile.capabilities || []).length}</span><span class="c">protocol ${esc(status.protocolVersion || '—')}</span></div>
+    <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));margin-bottom:var(--s3)">
+      <div class="stat"><span class="k">Running</span><span class="v">${live.length}</span><span class="s">${live.length ? esc(live[0].jobId) : 'idle'}</span></div>
+      <div class="stat"><span class="k">Completed</span><span class="v ok">${done.length}</span><span class="s">median ${dur(median)}</span></div>
+      <div class="stat"><span class="k">Failed</span><span class="v ${bad.length ? 'bad' : ''}">${bad.length}</span><span class="s">${bad.length ? esc(bad[0].state) + ' most recent' : 'none'}</span></div>
+      <div class="stat"><span class="k">Uptime</span><span class="v">${dur(status.uptimeMs)}</span><span class="s">${recentRc()} reconnect${recentRc() === 1 ? '' : 's'} this hour</span></div>
+      <div class="stat"><span class="k">Messages in</span><span class="v">${status.rx}</span><span class="s">${status.tx} published</span></div>
+      <div class="stat"><span class="k">Services</span><span class="v">${(profile.capabilities || []).length}</span><span class="s">protocol ${esc(status.protocolVersion || '—')}</span></div>
     </div>
 
     <div class="panel">
-      <div class="panel-h"><span class="eyebrow">Live activity</span>
-        <button class="btn quiet small" data-go="jobs">All jobs</button></div>
+      <div class="panel-head"><h3>Live activity</h3>
+        <div class="right"><button class="btn sm" data-go="jobs">All jobs</button></div></div>
       ${h.length ? `
       <div class="tbl-wrap">
         <table class="tbl">
@@ -647,15 +459,13 @@ function jobsView() {
   return `
   <div class="stack">
     <div class="panel">
-      <div class="panel-h">
-        <div class="filters" style="flex:1;gap:8px">
-          <input id="f-text" class="mono" style="flex:0 0 300px" placeholder="Filter by job id, service or owner    /" value="${esc(filter.text)}">
-          <select id="f-state">
-            ${[['all', 'All states'], ['running', 'Running'], ['done', 'Completed'], ['failed', 'Failed'], ['cancelled', 'Cancelled']]
-              .map(([v, l]) => `<option value="${v}"${filter.state === v ? ' selected' : ''}>${l}</option>`).join('')}
-          </select>
-        </div>
-        <span class="count">${h.length} of ${(jobs.history || []).length}</span>
+      <div class="panel-head">
+        <input id="f-text" class="input mono w-md" placeholder="filter by job, service or owner" value="${esc(filter.text)}">
+        <select id="f-state" class="select w-sm">
+          ${[['all', 'All states'], ['running', 'Running'], ['done', 'Completed'], ['failed', 'Failed'], ['cancelled', 'Cancelled']]
+            .map(([v, l]) => `<option value="${v}"${filter.state === v ? ' selected' : ''}>${l}</option>`).join('')}
+        </select>
+        <div class="right"><span class="count">${h.length} of ${(jobs.history || []).length}</span></div>
       </div>
       ${h.length ? `
       <div class="tbl-wrap">
@@ -690,7 +500,7 @@ function jobRow(j) {
 
   return `
   <tr class="clickable${expanded ? ' open' : ''}" data-row-toggle="${esc(j.jobId)}">
-    <td class="mono nowrap"><i class="dot ${t}"></i> ${esc(j.jobId)}</td>
+    <td class="mono nowrap"><i class="dot ${kind(j.state)}"></i> ${esc(j.jobId)}</td>
     <td class="mono dim">${esc(j.service || 'unknown')}</td>
     <td class="dim">${esc(j.owner || j.requestedBy || 'public')}</td>
     <td class="num dim">${dur(elapsed)}</td>
@@ -700,8 +510,8 @@ function jobRow(j) {
     </td>
     <td class="right">
       <span class="cell-actions">
-        ${isRunning(j) ? `<button class="btn danger small" data-cancel="${esc(j.jobId)}">Cancel</button>` : ''}
-        <button class="btn quiet small" data-toggle="${esc(j.jobId)}">${expanded ? 'Close' : 'Open'}</button>
+        ${isRunning(j) ? `<button class="btn sm danger" data-cancel="${esc(j.jobId)}">Cancel</button>` : ''}
+        <button class="btn sm" data-toggle="${esc(j.jobId)}">${expanded ? 'Close' : 'Open'}</button>
       </span>
     </td>
   </tr>
@@ -733,7 +543,7 @@ function jobRow(j) {
 
         <section>
           <h4>Answer</h4>
-          ${verdict ? `<p style="margin:0 0 8px"><span class="chip plain">${esc(verdict)}</span></p>` : ''}
+          ${verdict ? `<p style="margin:0 0 8px"><span class="chip">${esc(verdict)}</span></p>` : ''}
           ${j.result ? `<pre class="code">${esc(JSON.stringify(j.result, null, 2))}</pre>`
             : `<p class="note">Nothing terminal yet.</p>`}
         </section>
@@ -742,9 +552,9 @@ function jobRow(j) {
       <div style="margin-top:16px">
         <h4 style="margin:0 0 8px;font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:500">Topics</h4>
         <div class="topic"><b>events</b><span>${esc(topic)}/events</span>
-          <button class="btn quiet small" style="margin-left:auto" data-copy="${esc(topic)}/events">Copy</button></div>
+          <button class="btn sm" style="margin-left:auto" data-copy="${esc(topic)}/events">Copy</button></div>
         <div class="topic" style="margin-top:6px"><b>result</b><span>${esc(topic)}/result</span>
-          <button class="btn quiet small" style="margin-left:auto" data-copy="${esc(topic)}/result">Copy</button></div>
+          <button class="btn sm" style="margin-left:auto" data-copy="${esc(topic)}/result">Copy</button></div>
       </div>
     </td>
   </tr>` : ''}`;
@@ -766,16 +576,16 @@ function runView() {
   return `
   <div class="stack">
     <div class="panel">
-      <div class="panel-h"><span class="eyebrow">Dispatch a job</span></div>
-      <div class="panel-b">
+      <div class="panel-head"><h3>Dispatch a job</h3></div>
+      <div class="panel-body">
         <div class="field"><label for="r-svc">Service</label>
-          <select id="r-svc">${caps.map((c) => `<option>${esc(c.service)}</option>`).join('')}</select></div>
+          <select id="r-svc" class="select">${caps.map((c) => `<option>${esc(c.service)}</option>`).join('')}</select></div>
         <div class="field"><label for="r-by">Requested by</label>
-          <input id="r-by" class="mono" value="web-ui">
+          <input id="r-by" class="input mono" value="web-ui">
           <p class="note" style="margin-top:5px">Scopes the job. You receive results on
             <code>${esc(status.meshRoot)}/jobs/&lt;requested-by&gt;/#</code>.</p></div>
         <div class="field"><label for="r-args">Arguments</label>
-          <textarea id="r-args" spellcheck="false">{}</textarea></div>
+          <textarea id="r-args" class="textarea" spellcheck="false">{}</textarea></div>
         <div class="rowflex" style="margin-top:14px">
           <button class="btn" id="r-go">Dispatch</button>
           <span class="note" id="r-out"></span>
@@ -837,11 +647,11 @@ function services() {
   <div class="stack">
     ${draft ? editor() : ''}
     <div class="panel">
-      <div class="panel-h">
-        <span class="eyebrow">${caps.length} service${caps.length === 1 ? '' : 's'}</span>
-        <div class="rowflex">
+      <div class="panel-head">
+        <h3>${caps.length} service${caps.length === 1 ? '' : 's'}</h3>
+        <div class="right">
           <span class="note">Published to <code>${esc(status.meshRoot)}/registry/${esc(status.agentId)}/profile</code></span>
-          ${draft ? '' : `<button class="btn small" data-new="1">New service</button>`}
+          ${draft ? '' : `<button class="btn sm" data-new="1">New service</button>`}
         </div>
       </div>
       ${caps.length ? `
@@ -882,11 +692,11 @@ function capRow(c) {
     <td class="dim"><span class="desc">${esc(c.description || '—')}</span></td>
     <td class="right">
       <span class="cell-actions">
-        ${missing.length ? `<span class="chip err" title="Prompt uses {{${esc(missing.join(', '))}}} with no matching argument">${missing.length} undeclared</span>` : ''}
-        ${unbound.length ? `<span class="chip err" title="Unbound: ${esc(unbound.join(', '))}">${unbound.length} unbound</span>` : ''}
-        <button class="btn quiet small" data-use="${esc(c.service)}">Run</button>
-        <button class="btn quiet small" data-edit="${esc(c.service)}">Edit</button>
-        <button class="btn danger small" data-del="${esc(c.service)}">Remove</button>
+        ${missing.length ? `<span class="chip bad" title="Prompt uses {{${esc(missing.join(', '))}}} with no matching argument">${missing.length} undeclared</span>` : ''}
+        ${unbound.length ? `<span class="chip bad" title="Unbound: ${esc(unbound.join(', '))}">${unbound.length} unbound</span>` : ''}
+        <button class="btn sm" data-use="${esc(c.service)}">Run</button>
+        <button class="btn sm" data-edit="${esc(c.service)}">Edit</button>
+        <button class="btn sm danger" data-del="${esc(c.service)}">Remove</button>
       </span>
     </td>
   </tr>
@@ -914,43 +724,43 @@ function editor() {
   const d = draft, issues = lint(d);
   return `
   <div class="panel">
-    <div class="panel-h"><span class="eyebrow">${d.editing ? 'Edit ' + esc(d.editing) : 'New service'}</span>
-      <button class="btn quiet small" data-cancel-edit="1">Cancel</button></div>
-    <div class="panel-b">
+    <div class="panel-head"><h3>${d.editing ? 'Edit ' + esc(d.editing) : 'New service'}</h3>
+      <button class="btn sm" data-cancel-edit="1">Cancel</button></div>
+    <div class="panel-body">
       <div class="rowflex" style="gap:12px;align-items:flex-start">
         <div class="field" style="flex:2;min-width:190px"><label for="e-name">Name</label>
-          <input id="e-name" class="mono" placeholder="db.schema_review" value="${esc(d.service)}"${d.editing ? ' disabled' : ''}>
+          <input id="e-name" class="input mono" placeholder="db.schema_review" value="${esc(d.service)}"${d.editing ? ' disabled' : ''}>
           ${d.editing ? '<p class="note" style="margin-top:5px">Renaming would orphan callers — remove and re-add instead.</p>' : ''}</div>
         <div class="field" style="flex:1;min-width:120px"><label for="e-lat">Typical time</label>
-          <input id="e-lat" placeholder="2-4 min" value="${esc(d.avgLatency)}"></div>
+          <input id="e-lat" class="input" placeholder="2-4 min" value="${esc(d.avgLatency)}"></div>
       </div>
       <div class="field"><label for="e-desc">What it does</label>
-        <input id="e-desc" placeholder="Review a migration for lock risk and index coverage" value="${esc(d.description)}"></div>
+        <input id="e-desc" class="input" placeholder="Review a migration for lock risk and index coverage" value="${esc(d.description)}"></div>
 
       <div class="field"><label>Arguments</label>
         <p class="note" style="margin:-2px 0 8px">Each becomes a <code>{{name}}</code> the prompt can use, and a field in Run a job.</p>
         ${d.fields.map((f, i) => `
           <div class="rowflex" style="gap:7px;margin-bottom:6px">
-            <input class="mono" style="flex:1;min-width:110px" data-f="name" data-i="${i}" placeholder="repo" value="${esc(f.name)}">
-            <select style="width:auto" data-f="type" data-i="${i}">
+            <input class="input mono" style="flex:1;min-width:110px" data-f="name" data-i="${i}" placeholder="repo" value="${esc(f.name)}">
+            <select class="select" style="width:auto" data-f="type" data-i="${i}">
               ${['string', 'number', 'boolean', 'object'].map((t) => `<option${f.type === t ? ' selected' : ''}>${t}</option>`).join('')}
             </select>
             <input style="flex:2;min-width:130px" data-f="note" data-i="${i}" placeholder="owner/name" value="${esc(f.note)}">
             <label style="display:flex;align-items:center;gap:5px;margin:0;font-weight:500;white-space:nowrap">
               <input type="checkbox" style="width:auto" data-f="optional" data-i="${i}"${f.optional ? ' checked' : ''}> optional</label>
-            <button class="btn quiet small" data-rmfield="${i}">Remove</button>
+            <button class="btn sm" data-rmfield="${i}">Remove</button>
           </div>`).join('')}
-        <button class="btn quiet small" data-addfield="1">Add argument</button></div>
+        <button class="btn sm" data-addfield="1">Add argument</button></div>
 
       <div class="field"><label for="e-prompt">Prompt</label>
-        <textarea id="e-prompt" spellcheck="false" placeholder="Review migration {{migration}} in {{repo}}.">${esc(d.prompt)}</textarea>
+        <textarea id="e-prompt" class="textarea" spellcheck="false" placeholder="Review migration {{migration}} in {{repo}}.">${esc(d.prompt)}</textarea>
         <p class="note" style="margin-top:5px"><code>{{name}}</code> comes from the arguments above.
           <code>${'$'}{VAR}</code> comes from <code>mesh.promptVars</code>, resolved on dispatch so deployment
           values never reach the published catalog.
           ${(status.promptVars || []).length ? `Bound here: ${(status.promptVars || []).map((v) => `<code>${'$'}{${esc(v)}}</code>`).join(' ')}` : 'None bound in this deployment.'}</p></div>
 
       ${issues.length ? `<div class="stack" style="gap:6px;margin-top:12px">
-        ${issues.map((i) => `<div class="warn-bar" style="${i.bad ? '' : 'background:var(--surface-2);color:var(--ink-2)'}">
+        ${issues.map((i) => `<div class="note-box" style="${i.bad ? '' : 'background:var(--raised);color:var(--muted)'}">
           <span>${i.bad ? '⚠' : 'ⓘ'}</span><div>${esc(i.msg)}</div></div>`).join('')}</div>` : ''}
 
       <div class="rowflex" style="margin-top:14px">
@@ -995,10 +805,10 @@ function sessionView() {
   const op = status.ownerPolicy || profile.ownerPolicy || {};
   return `
   <div class="stack">
-    ${s.durable === false ? `<div class="warn-bar"><span>⚠</span><div><b>Durability degraded.</b> A client id collision forced a disambiguated session. Jobs published while this agent is offline are no longer queued.</div></div>` : ''}
+    ${s.durable === false ? `<div class="note-box"><div><b>Durability degraded.</b> A client id collision forced a disambiguated session. Jobs published while this agent is offline are no longer queued.</div></div>` : ''}
     <div class="panel">
-      <div class="panel-h"><span class="eyebrow">Broker session</span></div>
-      <div class="panel-b"><dl class="kv">
+      <div class="panel-head"><h3>Broker session</h3></div>
+      <div class="panel-body"><dl class="kv">
         <dt>Client id</dt><dd>${esc(s.clientId || '—')}</dd>
         <dt>Protocol</dt><dd>MQTT ${s.mqttVersion === 5 ? '5' : '3.1.1'} · mesh ${esc(status.protocolVersion || '—')}</dd>
         <dt>Durable session</dt><dd>${s.durable === false ? 'no — jobs lost while offline' : 'yes — offline jobs are queued'}</dd>
@@ -1009,8 +819,8 @@ function sessionView() {
       </dl></div>
     </div>
     <div class="panel">
-      <div class="panel-h"><span class="eyebrow">Owner policy</span></div>
-      <div class="panel-b">
+      <div class="panel-head"><h3>Owner policy</h3></div>
+      <div class="panel-body">
         <dl class="kv">
           <dt>requestedBy</dt><dd>${op.required ? 'required — unowned jobs are rejected' : 'optional — unowned jobs go to “public”'}</dd>
           <dt>Verified</dt><dd>${op.verified ? 'yes — checked against broker identity' : 'no — self-declared, not authenticated'}</dd>
@@ -1019,14 +829,14 @@ function sessionView() {
       </div>
     </div>
     <div class="panel">
-      <div class="panel-h"><span class="eyebrow">Subscribe</span></div>
-      <div class="panel-b stack" style="gap:6px">
+      <div class="panel-head"><h3>Subscribe</h3></div>
+      <div class="panel-body stack" style="gap:6px">
         ${[['your jobs', `${status.meshRoot}/jobs/<your-name>/#`],
            ['results only', `${status.meshRoot}/jobs/<your-name>/+/result`],
            ['dispatch', `${status.meshRoot}/commands/${status.agentId}/invoke`],
            ['catalog', `${status.meshRoot}/registry/${status.agentId}/profile`]]
           .map(([k, t]) => `<div class="topic"><b>${esc(k)}</b><span>${esc(t)}</span>
-            <button class="btn quiet small" style="margin-left:auto" data-copy="${esc(t)}">Copy</button></div>`).join('')}
+            <button class="btn sm" style="margin-left:auto" data-copy="${esc(t)}">Copy</button></div>`).join('')}
       </div>
     </div>
   </div>`;
@@ -1064,16 +874,16 @@ function varsView() {
   if (secrets.authRequired) return `
     <div class="stack">
       <div class="panel">
-        <div class="panel-h"><span class="eyebrow">Deployment variables</span></div>
-        <div class="panel-b stack">
-          <div class="warn-bar"><span>⚠</span><div><b>Managing variables needs a panel token.</b>
+        <div class="panel-head"><h3>Deployment variables</h3></div>
+        <div class="panel-body stack">
+          <div class="note-box"><div><b>Managing variables needs a panel token.</b>
             ${esc(secrets.error || '')}</div></div>
           <p class="note">These values are substituted into capability prompts, so anything that can
             write them can change what your agent does. The panel runs open on loopback, which is fine
             for reading job state but not for holding secrets — so this section stays locked until a
             token exists.</p>
           <div><div class="eyebrow" style="margin-bottom:7px">Add to openclaw.json</div>
-            <pre class="payload">"mqtt-bridge": {
+            <pre class="code">"mqtt-bridge": {
   "config": {
     "web": { "auth": "<a long random string>" }
   }
@@ -1092,27 +902,27 @@ function varsView() {
 
   return `
   <div class="stack">
-    ${unbound.length ? `<div class="warn-bar"><span>⚠</span><div>
+    ${unbound.length ? `<div class="note-box"><div>
       <b>${unbound.length} variable${unbound.length > 1 ? 's are' : ' is'} referenced by a prompt but not set.</b>
       They substitute empty at dispatch: ${unbound.map((v) => `<code>${'$'}{${esc(v)}}</code>`).join(' ')}</div></div>` : ''}
 
     <div class="panel">
-      <div class="panel-h"><span class="eyebrow">${vars.length} variable${vars.length === 1 ? '' : 's'}</span>
+      <div class="panel-head"><h3>${vars.length} variable${vars.length === 1 ? '' : 's'}</h3>
         <span class="note">Stored in <code>${esc(secrets.file || 'mesh.local.json')}</code>, mode 0600, never committed</span></div>
-      <div class="panel-b">
+      <div class="panel-body">
         ${vars.map((v) => `
           <div class="cap">
             <div class="rowflex" style="justify-content:space-between">
               <div class="rowflex" style="gap:9px">
                 <span class="cap-n">${'$'}{${esc(v.name)}}</span>
                 <span class="chip ${v.source === 'config' ? 'accent' : v.source === 'env' ? 'plain' : 'done'}">${esc(v.source)}</span>
-                ${referenced.has(v.name) ? '' : '<span class="chip plain" title="No prompt uses it">unused</span>'}
+                ${referenced.has(v.name) ? '' : '<span class="chip" title="No prompt uses it">unused</span>'}
               </div>
               <div class="rowflex">
                 <span class="mono note">${esc(v.hint || 'set')}</span>
                 ${v.editable
-                  ? `<button class="btn quiet small" data-setvar="${esc(v.name)}">Replace</button>
-                     <button class="btn danger small" data-delvar="${esc(v.name)}">Delete</button>`
+                  ? `<button class="btn sm" data-setvar="${esc(v.name)}">Replace</button>
+                     <button class="btn sm danger" data-delvar="${esc(v.name)}">Delete</button>`
                   : `<span class="note">pinned in openclaw.json</span>`}
               </div>
             </div>
@@ -1121,13 +931,13 @@ function varsView() {
     </div>
 
     <div class="panel">
-      <div class="panel-h"><span class="eyebrow">Set a variable</span></div>
-      <div class="panel-b">
+      <div class="panel-head"><h3>Set a variable</h3></div>
+      <div class="panel-body">
         <div class="rowflex" style="gap:12px;align-items:flex-start">
           <div class="field" style="flex:1;min-width:190px"><label for="s-name">Name</label>
-            <input id="s-name" class="mono" placeholder="SLACK_REVIEW_RECIPIENTS" value="${esc(unbound[0] || '')}"></div>
+            <input id="s-name" class="input mono" placeholder="SLACK_REVIEW_RECIPIENTS" value="${esc(unbound[0] || '')}"></div>
           <div class="field" style="flex:2;min-width:210px"><label for="s-val">Value</label>
-            <input id="s-val" type="password" autocomplete="new-password" placeholder="value is write-only"></div>
+            <input id="s-val" class="input" type="password" autocomplete="new-password" placeholder="value is write-only"></div>
         </div>
         <div class="rowflex" style="margin-top:12px">
           <button class="btn" data-savevar="1">Save variable</button>
