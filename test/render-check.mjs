@@ -24,6 +24,17 @@ const mod = new Function(js + `
 const F = (n) => JSON.parse(fs.readFileSync(new URL(`fixtures/${n}.json`, import.meta.url),'utf8'));
 mod.setState(F('profile'), F('status'), F('jobs'));
 let bad = 0;
+
+/* The stylesheet has to travel with the page.
+   theme.css is the box console's own file and the panel LINKS it rather than
+   inlining it, so a packaging step that copies index.html and forgets the
+   stylesheet ships an unstyled panel that still passes every render test
+   below. Assert the link and the shipped file together. */
+const linked = /<link[^>]+href="theme\.css"/.test(src);
+const shipped = fs.existsSync(new URL('../dist/web/theme.css', import.meta.url));
+if (linked && shipped) console.log('\u2705 theme.css      linked and packaged');
+else { console.log(`\u274c theme.css      ${linked ? '' : 'not linked by index.html '}${shipped ? '' : 'missing from dist/web'}`); bad++; }
+
 for (const [name, fn] of Object.entries(mod.views)) {
   try { const html = fn(); console.log(`\u2705 ${name.padEnd(12)} ${String(html.length).padStart(6)} chars`); }
   catch (e) { console.log(`\u274c ${name.padEnd(12)} ${e.constructor.name}: ${e.message}`); bad++; }
