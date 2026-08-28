@@ -164,6 +164,7 @@ main{max-width:1500px;margin:0 auto;padding:24px 24px 64px}
 .chip.err{background:var(--err-soft);color:var(--err)}
 .chip.hold{background:var(--hold-soft);color:var(--hold)}
 .chip.plain{background:var(--surface-2);color:var(--ink-2)}
+.chip.mono{background:var(--surface-2);color:var(--ink-2);text-transform:none;font-family:var(--mono)}
 .chip.accent{background:var(--accent-soft);color:var(--accent)}
 
 /* Timeline — the milestone history, previously discarded by the bridge. */
@@ -192,6 +193,63 @@ pre.payload{
   overflow-x:auto;
 }
 .topic b{color:var(--accent);font-weight:600}
+
+
+/* ── Table ─────────────────────────────────────────────────────────────────
+   The box console's table, rule for rule. A job in the panel and a job in the
+   console should not be two different objects to read: same columns, same
+   uppercase heads, same 38px rows, same right-aligned tabular numbers, same
+   expandable detail row underneath. */
+.tbl-wrap{overflow-x:auto}
+.tbl{width:100%;border-collapse:collapse;font-size:13px}
+.tbl th{
+  text-align:left;font-size:10.5px;font-weight:500;text-transform:uppercase;letter-spacing:.08em;
+  color:var(--muted);padding:8px 12px;background:var(--surface-2);
+  border-bottom:1px solid var(--line);white-space:nowrap;
+}
+.tbl td{padding:0 12px;height:38px;border-bottom:1px solid var(--line);vertical-align:middle}
+.tbl tbody tr:last-child td{border-bottom:0}
+.tbl tbody tr:hover td{background:var(--surface-2)}
+.tbl th:first-child,.tbl td:first-child{padding-left:16px}
+.tbl th:last-child,.tbl td:last-child{padding-right:16px}
+.tbl .num,.tbl th.num{text-align:right;font-variant-numeric:tabular-nums}
+.tbl .right,.tbl th.right{text-align:right}
+.tbl .nowrap{white-space:nowrap}
+.tbl .dim{color:var(--ink-2)}
+.tbl .mono{font-family:var(--mono);font-size:12.5px}
+.tbl .desc{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:12.5px}
+.tbl tr.clickable{cursor:pointer}
+.tbl tr.open>td{background:var(--surface-2)}
+.tbl tr.detail>td{background:var(--ground);height:auto;padding:16px}
+.tbl tr.detail:hover>td{background:var(--ground)}
+.tbl .cell-actions{display:flex;gap:8px;justify-content:flex-end}
+.panes{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:20px}
+.panes h4{
+  margin:0 0 8px;font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;
+  color:var(--muted);font-weight:500;
+}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--muted);flex:none;display:inline-block}
+.dot.done{background:var(--ok)}
+.dot.run{background:var(--accent)}
+.dot.err{background:var(--err)}
+.dot.hold{background:var(--hold)}
+.state{font-size:11.5px;color:var(--muted);white-space:nowrap}
+.state.good{color:var(--ok)}
+.state.bad{color:var(--err)}
+.state.warn{color:var(--run)}
+.count{color:var(--muted);font-size:12.5px;font-variant-numeric:tabular-nums}
+pre.code.wrap{white-space:pre-wrap;overflow-wrap:anywhere}
+pre.code{
+  margin:0;background:var(--sunken);color:var(--code);border:1px solid var(--line);
+  border-radius:var(--r-sm);padding:12px;font-family:var(--mono);font-size:11.5px;
+  line-height:1.55;overflow:auto;max-height:240px;white-space:pre;
+}
+/* The console's timeline: time, milestone, note — one line each, so a long
+   history stays scannable. The type carries the colour; nothing is colour alone. */
+.timeline{list-style:none;margin:0;padding:0;display:grid;gap:2px;max-height:240px;overflow:auto}
+.timeline li{display:flex;gap:8px;align-items:baseline;font-size:12.5px}
+.timeline .t{color:var(--muted);font-family:var(--mono);font-size:11.5px;flex:none}
+.timeline .n{color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* ── Forms ── */
 label{display:block;font-size:12px;font-weight:600;color:var(--ink-2);margin-bottom:5px}
@@ -241,7 +299,7 @@ details[open] summary{margin-bottom:8px}
   box-shadow:var(--shadow);opacity:0;pointer-events:none;transition:opacity .16s
 }
 #toast.on{opacity:1}
-.kv{display:grid;grid-template-columns:auto 1fr;gap:7px 16px;font-size:12.5px;align-items:baseline}
+.kv{display:grid;grid-template-columns:110px 1fr;gap:8px 12px;font-size:12.5px;align-items:baseline}
 .kv dt{color:var(--muted)}
 .kv dd{font-family:var(--mono);overflow-wrap:anywhere}
 </style>
@@ -551,7 +609,22 @@ function overview() {
     <div class="panel">
       <div class="panel-h"><span class="eyebrow">Live activity</span>
         <button class="btn quiet small" data-go="jobs">All jobs</button></div>
-      <div class="panel-b">${h.length ? h.slice(0, 6).map(jobCard).join('') : emptyJobs()}</div>
+      ${h.length ? `
+      <div class="tbl-wrap">
+        <table class="tbl">
+          <thead>
+            <tr>
+              <th style="width:200px">job</th>
+              <th>capability</th>
+              <th style="width:130px">owner</th>
+              <th class="num" style="width:90px">took</th>
+              <th style="width:150px">state</th>
+              <th class="right" style="width:130px"></th>
+            </tr>
+          </thead>
+          <tbody>${h.slice(0, 6).map(jobRow).join('')}</tbody>
+        </table>
+      </div>` : emptyJobs()}
     </div>
   </div>`;
 }
@@ -575,21 +648,38 @@ function jobsView() {
   <div class="stack">
     <div class="panel">
       <div class="panel-h">
-        <div class="filters" style="flex:1">
-          <input id="f-text" class="mono" placeholder="Filter by job id, service or owner    /" value="${esc(filter.text)}">
+        <div class="filters" style="flex:1;gap:8px">
+          <input id="f-text" class="mono" style="flex:0 0 300px" placeholder="Filter by job id, service or owner    /" value="${esc(filter.text)}">
           <select id="f-state">
             ${[['all', 'All states'], ['running', 'Running'], ['done', 'Completed'], ['failed', 'Failed'], ['cancelled', 'Cancelled']]
               .map(([v, l]) => `<option value="${v}"${filter.state === v ? ' selected' : ''}>${l}</option>`).join('')}
           </select>
         </div>
-        <span class="eyebrow">${h.length} of ${(jobs.history || []).length}</span>
+        <span class="count">${h.length} of ${(jobs.history || []).length}</span>
       </div>
-      <div class="panel-b">${h.length ? h.map(jobCard).join('') : `<div class="empty"><b>Nothing matches</b>Try a different filter.</div>`}</div>
+      ${h.length ? `
+      <div class="tbl-wrap">
+        <table class="tbl">
+          <thead>
+            <tr>
+              <th style="width:200px">job</th>
+              <th>capability</th>
+              <th style="width:130px">owner</th>
+              <th class="num" style="width:90px">took</th>
+              <th style="width:150px">state</th>
+              <th class="right" style="width:130px"></th>
+            </tr>
+          </thead>
+          <tbody>${h.map(jobRow).join('')}</tbody>
+        </table>
+      </div>` : `<div class="empty"><b>Nothing matches</b>Try a different filter.</div>`}
     </div>
   </div>`;
 }
 
-function jobCard(j) {
+/* One job: the row the box console draws, and the same detail underneath it.
+   Two consoles onto one mesh should not disagree about what a job looks like. */
+function jobRow(j) {
   const t = tone(j.state);
   const expanded = open.has(j.jobId);
   const elapsed = j.finishedAt ? j.finishedAt - j.createdAt : Date.now() - (j.createdAt || Date.now());
@@ -599,59 +689,75 @@ function jobCard(j) {
   const verdict = j.result && (j.result.verdict || j.result.type);
 
   return `
-  <div class="job s-${t}">
-    <div class="job-h">
-      <div class="stripe"></div>
-      <div class="job-main">
-        <div class="job-top">
-          <span class="jid">${esc(j.jobId)}</span>
-          <span class="chip ${t}">${esc(j.state)}</span>
-          ${verdict ? `<span class="chip plain">${esc(verdict)}</span>` : ''}
-          ${requeues ? `<span class="chip err" title="Re-dispatched by the watchdog">requeued ×${requeues}</span>` : ''}
-        </div>
-        <div class="job-meta">
-          <span class="mono">${esc(j.service || 'unknown service')}</span><span class="sep">·</span>
-          <span>owner <span class="mono">${esc(j.owner || j.requestedBy || 'public')}</span></span><span class="sep">·</span>
-          <span>${isRunning(j) ? 'running for' : 'took'} <span class="mono">${dur(elapsed)}</span></span><span class="sep">·</span>
-          <span>${esc(ago(j.updatedAt))}</span>
-        </div>
-      </div>
-      <div class="job-act">
+  <tr class="clickable${expanded ? ' open' : ''}" data-row-toggle="${esc(j.jobId)}">
+    <td class="mono nowrap"><i class="dot ${t}"></i> ${esc(j.jobId)}</td>
+    <td class="mono dim">${esc(j.service || 'unknown')}</td>
+    <td class="dim">${esc(j.owner || j.requestedBy || 'public')}</td>
+    <td class="num dim">${dur(elapsed)}</td>
+    <td>
+      <span class="state ${t === 'done' ? 'good' : t === 'err' ? 'bad' : t === 'hold' ? 'warn' : ''}">${esc(j.state)}</span>
+      ${requeues ? `<span class="state warn" title="Re-dispatched by the watchdog"> ↻${requeues}</span>` : ''}
+    </td>
+    <td class="right">
+      <span class="cell-actions">
         ${isRunning(j) ? `<button class="btn danger small" data-cancel="${esc(j.jobId)}">Cancel</button>` : ''}
-        <button class="btn quiet small" data-toggle="${esc(j.jobId)}">${expanded ? 'Hide' : 'Details'}</button>
+        <button class="btn quiet small" data-toggle="${esc(j.jobId)}">${expanded ? 'Close' : 'Open'}</button>
+      </span>
+    </td>
+  </tr>
+  ${expanded ? `
+  <tr class="detail">
+    <td colspan="6">
+      <div class="panes">
+        <section>
+          <h4>Asked</h4>
+          <dl class="kv">
+            <dt>capability</dt><dd class="mono">${esc(j.service || 'unknown')}</dd>
+            <dt>owner</dt><dd class="mono">${esc(j.owner || 'public')}</dd>
+            ${j.requestedBy ? `<dt>claimed by</dt><dd class="mono">${esc(j.requestedBy)}</dd>` : ''}
+            <dt>started</dt><dd>${esc(clock(j.createdAt))}</dd>
+            ${j.depth ? `<dt>depth</dt><dd>${j.depth}${j.rootJobId && j.rootJobId !== j.jobId ? ` of <span class="mono">${esc(j.rootJobId)}</span>` : ''}</dd>` : ''}
+          </dl>
+          <!-- The invoke is not retained, so what was asked is not recoverable
+               here — only what the executor recorded about it. -->
+          <p class="note" style="margin-top:9px">The arguments are not retained: an invoke is not
+            a retained message, so a panel that started after the job did has its answer and not
+            its question.</p>
+        </section>
+
+        <section>
+          <h4>Timeline</h4>
+          ${events.length ? `<ol class="timeline">${events.map(tlItem).join('')}</ol>`
+            : `<p class="note">No milestones recorded. The executor publishes these to the events topic as it works.</p>`}
+        </section>
+
+        <section>
+          <h4>Answer</h4>
+          ${verdict ? `<p style="margin:0 0 8px"><span class="chip plain">${esc(verdict)}</span></p>` : ''}
+          ${j.result ? `<pre class="code">${esc(JSON.stringify(j.result, null, 2))}</pre>`
+            : `<p class="note">Nothing terminal yet.</p>`}
+        </section>
       </div>
-    </div>
-    ${expanded ? `
-    <div class="job-body">
-      <div>
-        <div class="eyebrow" style="margin-bottom:9px">Timeline</div>
-        ${events.length ? `<div class="tl">${events.map(tlItem).join('')}</div>`
-          : `<p class="note">No milestones recorded. The executor publishes these to the events topic as it works.</p>`}
-      </div>
-      <div>
-        <div class="eyebrow" style="margin-bottom:7px">Topics</div>
+
+      <div style="margin-top:16px">
+        <h4 style="margin:0 0 8px;font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:500">Topics</h4>
         <div class="topic"><b>events</b><span>${esc(topic)}/events</span>
           <button class="btn quiet small" style="margin-left:auto" data-copy="${esc(topic)}/events">Copy</button></div>
         <div class="topic" style="margin-top:6px"><b>result</b><span>${esc(topic)}/result</span>
           <button class="btn quiet small" style="margin-left:auto" data-copy="${esc(topic)}/result">Copy</button></div>
       </div>
-      ${j.result ? `<div>
-        <div class="eyebrow" style="margin-bottom:7px">Result</div>
-        <pre class="payload">${esc(JSON.stringify(j.result, null, 2))}</pre></div>` : ''}
-    </div>` : ''}
-  </div>`;
+    </td>
+  </tr>` : ''}`;
 }
 
 function tlItem(e) {
   const bad = /error|timeout|failed/i.test(e.type);
   const warn = /requeu|cancel|duplicate/i.test(e.type);
-  const mark = /result|review|done|ready/i.test(e.type);
-  return `<div class="tl-i ${bad ? 'bad' : warn ? 'warn' : mark ? 'mark' : ''}">
-    <span class="tl-dot"></span>
-    <div><div class="tl-t">${esc(e.type)}</div>
-      ${e.note ? `<div class="tl-n">${esc(e.note)}</div>` : ''}
-      <div class="tl-ts">${esc(clock(e.ts))}</div></div>
-  </div>`;
+  return `<li>
+    <span class="t">${esc(clock(e.ts))}</span>
+    <b class="${bad ? 'state bad' : warn ? 'state warn' : ''}">${esc(e.type)}</b>
+    ${e.note ? `<span class="n" title="${esc(e.note)}">${esc(e.note)}</span>` : ''}
+  </li>`;
 }
 
 function runView() {
@@ -731,38 +837,77 @@ function services() {
   <div class="stack">
     ${draft ? editor() : ''}
     <div class="panel">
-      <div class="panel-h"><span class="eyebrow">${caps.length} service${caps.length === 1 ? '' : 's'}</span>
+      <div class="panel-h">
+        <span class="eyebrow">${caps.length} service${caps.length === 1 ? '' : 's'}</span>
         <div class="rowflex">
           <span class="note">Published to <code>${esc(status.meshRoot)}/registry/${esc(status.agentId)}/profile</code></span>
           ${draft ? '' : `<button class="btn small" data-new="1">New service</button>`}
-        </div></div>
-      <div class="panel-b">
-        ${caps.map((c) => {
-          const missing = placeholders(c.prompt || '').filter((n) => !(c.requestSchema || {})[n]);
-          const unbound = varRefs(c.prompt || '').filter((v) => !(status.promptVars || []).includes(v));
-          return `
-          <div class="cap">
-            <div class="rowflex" style="justify-content:space-between">
-              <span class="cap-n">${esc(c.service)}</span>
-              <div class="rowflex">
-                ${c.avgLatency ? `<span class="chip plain">${esc(c.avgLatency)}</span>` : ''}
-                ${missing.length ? `<span class="chip err" title="Prompt uses {{${esc(missing.join(', '))}}} with no matching argument">${missing.length} undeclared</span>` : ''}
-                ${unbound.length ? `<span class="chip err" title="Unbound: ${esc(unbound.join(', '))}">${unbound.length} unbound var</span>` : ''}
-                <button class="btn quiet small" data-use="${esc(c.service)}">Run</button>
-                <button class="btn quiet small" data-edit="${esc(c.service)}">Edit</button>
-                <button class="btn danger small" data-del="${esc(c.service)}">Remove</button>
-              </div>
-            </div>
-            <p class="cap-d">${esc(c.description || '')}</p>
-            <div class="rowflex" style="gap:6px">
-              ${Object.keys(c.requestSchema || {}).map((k) => `<span class="chip plain">${esc(k)}</span>`).join('') || '<span class="note">no arguments</span>'}
-            </div>
-            <details style="margin-top:9px"><summary>Prompt</summary>
-              <pre class="payload">${esc(c.prompt || '(none)')}</pre></details>
-          </div>`; }).join('') || `<div class="empty"><b>No services yet</b>A capability is a name, a prompt, and the arguments it takes.</div>`}
+        </div>
       </div>
+      ${caps.length ? `
+      <div class="tbl-wrap">
+        <table class="tbl">
+          <thead>
+            <tr>
+              <th style="width:190px">capability</th>
+              <th style="width:230px">arguments</th>
+              <th>what it does</th>
+              <th class="right" style="width:200px"></th>
+            </tr>
+          </thead>
+          <tbody>${caps.map(capRow).join('')}</tbody>
+        </table>
+      </div>` : `<div class="empty"><b>No services yet</b>A capability is a name, a prompt, and the arguments it takes.</div>`}
     </div>
   </div>`;
+}
+
+/* One capability: the row the box console's catalogue draws — name, who or
+   what it takes, what it does — with the prompt underneath when opened. */
+function capRow(c) {
+  const key = 'svc:' + c.service;
+  const expanded = open.has(key);
+  const args = Object.keys(c.requestSchema || {});
+  const missing = placeholders(c.prompt || '').filter((n) => !(c.requestSchema || {})[n]);
+  const unbound = varRefs(c.prompt || '').filter((v) => !(status.promptVars || []).includes(v));
+
+  return `
+  <tr class="clickable${expanded ? ' open' : ''}" data-row-toggle="${esc(key)}">
+    <td class="mono nowrap">${esc(c.service)}</td>
+    <td>
+      <span class="rowflex" style="gap:4px">
+        ${args.map((k) => `<span class="chip mono">${esc(k)}</span>`).join('') || '<span class="note">none</span>'}
+      </span>
+    </td>
+    <td class="dim"><span class="desc">${esc(c.description || '—')}</span></td>
+    <td class="right">
+      <span class="cell-actions">
+        ${missing.length ? `<span class="chip err" title="Prompt uses {{${esc(missing.join(', '))}}} with no matching argument">${missing.length} undeclared</span>` : ''}
+        ${unbound.length ? `<span class="chip err" title="Unbound: ${esc(unbound.join(', '))}">${unbound.length} unbound</span>` : ''}
+        <button class="btn quiet small" data-use="${esc(c.service)}">Run</button>
+        <button class="btn quiet small" data-edit="${esc(c.service)}">Edit</button>
+        <button class="btn danger small" data-del="${esc(c.service)}">Remove</button>
+      </span>
+    </td>
+  </tr>
+  ${expanded ? `
+  <tr class="detail">
+    <td colspan="4">
+      <div class="panes">
+        <section>
+          <h4>Prompt</h4>
+          <pre class="code wrap">${esc(c.prompt || '(none)')}</pre>
+        </section>
+        <section>
+          <h4>Arguments</h4>
+          ${args.length ? `<dl class="kv">${args.map((k) =>
+            `<dt class="mono">${esc(k)}</dt><dd class="note">${esc(String((c.requestSchema || {})[k]))}</dd>`).join('')}</dl>`
+            : `<p class="note">This capability takes no arguments.</p>`}
+          ${c.avgLatency ? `<p class="note" style="margin-top:9px">typically ${esc(c.avgLatency)}</p>` : ''}
+        </section>
+      </div>
+    </td>
+  </tr>` : ''}`;
 }
 
 function editor() {
@@ -1027,9 +1172,10 @@ async function dispatch() {
 }
 
 document.addEventListener('click', async (e) => {
-  const t = e.target.closest('button'); if (!t) return;
+  const t = e.target.closest('button, [data-row-toggle]'); if (!t) return;
   const d = t.dataset;
   if (d.p) { page = d.p; render(); }
+  else if (d.rowToggle) { open.has(d.rowToggle) ? open.delete(d.rowToggle) : open.add(d.rowToggle); render(); }
   else if (d.go) { page = d.go; render(); }
   else if (d.toggle) { open.has(d.toggle) ? open.delete(d.toggle) : open.add(d.toggle); render(); }
   else if (d.copy) copy(d.copy, 'topic');
