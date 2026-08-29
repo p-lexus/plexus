@@ -106,6 +106,13 @@ export function writeFrame(dir, name, page, theme, fixtures) {
   if (!fs.existsSync(panelPath)) {
     throw new Error("dist/web/index.html missing — run `npm run build` first.");
   }
+  // The panel LINKS its stylesheet rather than inlining it, so a frame written
+  // to a temporary directory has to take the file with it. Without this the
+  // capture is a correctly-working panel with no CSS at all — which renders as
+  // an unstyled document and is obvious in the output, but only if somebody
+  // looks at the output.
+  const styles = path.join(path.dirname(panelPath), "theme.css");
+  if (fs.existsSync(styles)) fs.copyFileSync(styles, path.join(dir, "theme.css"));
   const src = fs.readFileSync(panelPath, "utf8");
   // The stub goes BEFORE the panel script so it is in place when the panel boots.
   const html = src
