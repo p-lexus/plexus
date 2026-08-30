@@ -849,6 +849,50 @@ t("a route with no file extension is still the single-page app", async () => {
   }
 });
 
+// ── one event is one event ──────────────────────────────
+//
+// From a real job's timeline. Every dispatch wrote "accepted" and "started"
+// twice: the bridge records an event locally AND publishes it, then hears its
+// own publish come back. And a result is RETAINED, so the broker replays it on
+// every resubscribe — one finished job carried "review" seven times, one per
+// gateway restart, spread across days it did not run on.
+
+const { createJobStore: createStore } = await import(dist("mesh/jobs.js"));
+
+t("the same milestone recorded twice is one milestone", async () => {
+  const jobs = createStore(() => {});
+  const at = Date.now();
+  // What dispatch does: record locally with what it knows...
+  jobs.record({ jobId: "j1", state: "accepted" }, { type: "accepted", note: "code.review", at });
+  // ...then hear its own publish, which carries no note.
+  jobs.record({ jobId: "j1" }, { type: "accepted", at: at + 3 });
+
+  const ev = jobs.find("j1").events;
+  assert.equal(ev.length, 1, `one event, got ${ev.length}`);
+  assert.equal(ev[0].note, "code.review", "and it keeps the copy that says more");
+});
+
+t("a retained result replayed on every resubscribe is recorded once", async () => {
+  const jobs = createStore(() => {});
+  const at = Date.parse("2026-08-30T16:38:32.000Z");
+  for (let restart = 0; restart < 7; restart++) {
+    // The broker replays the same message, ts and all, on each resubscribe.
+    jobs.record({ jobId: "j2", state: "done", result: { type: "review" } }, { type: "review", at });
+  }
+  assert.equal(jobs.find("j2").events.length, 1,
+    "seven resubscribes must not be seven endings");
+});
+
+t("two genuinely separate milestones of one type are both kept", async () => {
+  // The guard must not swallow real repetition: a job re-dispatched twice has
+  // two requeues, and losing one hides how much trouble it was in.
+  const jobs = createStore(() => {});
+  const at = Date.now();
+  jobs.record({ jobId: "j3" }, { type: "requeued", note: "attempt 1", at });
+  jobs.record({ jobId: "j3" }, { type: "requeued", note: "attempt 2", at: at + 60_000 });
+  assert.equal(jobs.find("j3").events.length, 2);
+});
+
 // ── delegation modes ────────────────────────────────────
 const { createDispatcher } = await import(dist("mesh/dispatch.js"));
 
