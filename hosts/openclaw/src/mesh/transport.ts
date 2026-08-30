@@ -38,6 +38,8 @@ export interface TransportStats {
   reconnects: number;
   connectedAt: number;
   lastError: string;
+  /** When that error happened, so a recovered link can stop reporting it. */
+  lastErrorAt: number;
 }
 
 export interface TransportHandlers {
@@ -60,6 +62,8 @@ export interface Transport {
   publish(topic: string, payload: string, opts?: { qos?: 0 | 1 | 2; retain?: boolean }): void;
   /** Reconnects within the last hour — the number that indicates a live problem. */
   recentReconnects(): number;
+  /** Whether the link is healthy NOW, rather than over the last hour. */
+  settled(): boolean;
   /** Counts toward the published total; used by the agent tool. */
   publishCounted(topic: string, payload: string, opts?: { qos?: 0 | 1 | 2; retain?: boolean }): void;
   end(force?: boolean): void;
@@ -134,7 +138,7 @@ export function createTransport(
   let handlers: TransportHandlers | null = null;
   let subscriptions: Record<string, { qos: 0 | 1 | 2 }> = {};
 
-  const stats: TransportStats = { rx: 0, tx: 0, reconnects: 0, connectedAt: 0, lastError: "" };
+  const stats: TransportStats = { rx: 0, tx: 0, reconnects: 0, connectedAt: 0, lastError: "", lastErrorAt: 0 };
   const session: SessionInfo = {
     clientId: baseClientId,
     mqttVersion: cfg.broker.protocolVersion,
@@ -149,6 +153,9 @@ export function createTransport(
   // live uptime reads as alarming long after the trouble has passed — what an
   // operator needs to know is whether it is happening NOW.
   const reconnectTimes: number[] = [];
+  // Long enough that a flapping link cannot look settled between flaps, short
+  // enough that a real recovery stops shouting within one coffee.
+  const SETTLED_AFTER_MS = 10 * 60_000;
 
   function connect(): void {
     client = mqtt.connect(cfg.broker.url, {
@@ -253,7 +260,12 @@ export function createTransport(
       logger.warn("reconnecting…");
       h.onStateChange();
     });
-    client.on("error", (err) => { stats.lastError = err.message; logger.error(`MQTT error: ${err.message}`); h.onStateChange(); });
+    client.on("error", (err) => {
+      stats.lastError = err.message;
+      stats.lastErrorAt = Date.now();
+      logger.error(`MQTT error: ${err.message}`);
+      h.onStateChange();
+    });
     client.on("offline", () => { logger.warn("broker offline"); h.onStateChange(); });
     client.on("close", () => { logger.warn("connection closed"); h.onStateChange(); });
   }
@@ -264,6 +276,25 @@ export function createTransport(
     recentReconnects() {
       const cutoff = Date.now() - 3_600_000;
       return reconnectTimes.filter((t) => t >= cutoff).length;
+    },
+
+    /**
+     * Whether the link has been up long enough to stop worrying about it.
+     *
+     * An alarm that does not clear is decoration. A ten-minute outage retried
+     * every five seconds leaves a hundred-odd attempts on the hour's tally,
+     * and a banner keyed to that tally stays up for the remaining fifty
+     * minutes of perfect connectivity — teaching people to ignore it, which
+     * is the opposite of what a warning is for.
+     *
+     * So the question a warning answers is "is it unstable NOW", and the
+     * answer is: connected, for longer than the settling period, with nothing
+     * having gone wrong since it connected.
+     */
+    settled(): boolean {
+      if (!client?.connected || !stats.connectedAt) return false;
+      if (Date.now() - stats.connectedAt < SETTLED_AFTER_MS) return false;
+      return stats.lastErrorAt <= stats.connectedAt;
     },
     get connected() { return Boolean(client?.connected); },
     client: () => client,
