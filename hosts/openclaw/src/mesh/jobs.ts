@@ -27,7 +27,16 @@ export interface JobStore {
   history(): JobRecord[];
   /** Newest first — the order the panel wants. */
   recent(): JobRecord[];
-  record(rec: Partial<JobRecord> & { jobId: string }, event?: { type: string; note?: string }): JobRecord;
+  record(
+    rec: Partial<JobRecord> & { jobId: string },
+    // `at` is the moment the event happened, which is not the moment it
+    // arrived: the same event reaches this store twice — once when we record
+    // it locally and again when we hear our own publish — and a retained
+    // result arrives again on every resubscribe, forever. Carrying the
+    // event's own timestamp is what makes those the same event rather than
+    // three.
+    event?: { type: string; note?: string; at?: number },
+  ): JobRecord;
   find(jobId: string): JobRecord | undefined;
 }
 
@@ -58,6 +67,12 @@ export function createJobStore(
       const loaded: JobRecord[] = Array.isArray(parsed?.jobs) ? parsed.jobs : [];
       // Trust the file for shape but not for size: an older build, or a hand
       // edit, must not hand this process an unbounded ring.
+      // Restored as written. A repair pass over history was tried here and
+      // removed, because it collapsed a job's real timeline — accepted,
+      // started, requeued, result-ready — down to its ending, and then
+      // persisted that. Preventing new duplicates is worth doing; rewriting
+      // the record of what already happened, on data that cannot be checked
+      // first, is not.
       for (const rec of loaded.slice(-MAX_HISTORY)) {
         if (rec && typeof rec.jobId === "string") jobs.push(rec);
       }
@@ -87,9 +102,13 @@ export function createJobStore(
     pending.unref?.();   // never hold the process open for a history file
   }
 
+  // Two copies of one event, stamped on their way out of the same function.
+  const SAME_EVENT_MS = 1_000;
+
+
   function record(
     rec: Partial<JobRecord> & { jobId: string },
-    event?: { type: string; note?: string },
+    event?: { type: string; note?: string; at?: number },
   ): JobRecord {
     const now = Date.now();
     const existing = jobs.find((j) => j.jobId === rec.jobId);
@@ -106,9 +125,35 @@ export function createJobStore(
 
     merged.createdAt ??= now;
     if (event) {
-      const e: JobEvent = { type: event.type, note: event.note, ts: now };
-      (merged.events ??= []).push(e);
-      if (merged.events.length > MAX_JOB_EVENTS) merged.events.shift();
+      const at = event.at ?? now;
+      const events = (merged.events ??= []);
+
+      // The same event, twice or seven times, is one event.
+      //
+      // Two ways it arrives more than once. The bridge records an event AND
+      // publishes it, then hears its own publish — so every dispatch wrote
+      // "accepted" and "started" twice. And a result is RETAINED, so the
+      // broker replays it on every resubscribe: one finished job had "review"
+      // seven times, one per gateway restart, stretching a job's story across
+      // days it did not run on.
+      //
+      // Matched on type and WHEN IT HAPPENED, not on the note. The two copies
+      // of one dispatch carry different notes — the local record knows the
+      // service, the echo off the wire does not — so matching notes would call
+      // them different events, which is exactly what they were doing.
+      //
+      // A window rather than an exact instant, because the local record and
+      // the publish are stamped microseconds apart on the way out.
+      const twin = events.find(
+        (e) => e.type === event.type && Math.abs(e.ts - at) <= SAME_EVENT_MS);
+      if (twin) {
+        // Keep whichever copy says more. A note is information; losing it to
+        // a duplicate would make deduplication cost something.
+        if (!twin.note && event.note) twin.note = event.note;
+      } else {
+        events.push({ type: event.type, note: event.note, ts: at });
+        if (events.length > MAX_JOB_EVENTS) events.shift();
+      }
     }
     // Stamped once: a late duplicate publish must not restart the clock.
     if (TERMINAL_STATES.has(merged.state)) merged.finishedAt ??= now;

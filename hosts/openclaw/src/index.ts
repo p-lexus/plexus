@@ -393,6 +393,12 @@ export default definePluginEntry({
      * never depends on hearing ourselves come back. Returns whether the topic
      * was job traffic.
      */
+    /** When a message says it happened, or now if it does not say. */
+    function stamped(data: any): number | undefined {
+      const t = Date.parse(String(data?.ts ?? ""));
+      return Number.isNaN(t) ? undefined : t;
+    }
+
     function recordJobTraffic(topic: string, raw: string, data: any): boolean {
       const parsed = parseJobTopic(jobTopicRe, topic);
       if (!parsed) return false;
@@ -407,7 +413,11 @@ export default definePluginEntry({
         const note = data?.note ?? data?.stage ?? data?.error ?? (data ? undefined : raw.slice(0, 120));
         jobs.record(
           { jobId, lastEvent: type, requestedBy: data?.owner, owner },
-          { type, note: note ? String(note).slice(0, 240) : undefined },
+          // When it happened, from the payload — not when it arrived. The
+          // bridge hears its own publishes, so this is the second copy of an
+          // event it already recorded, and only the timestamp tells the store
+          // they are the same one.
+          { type, note: note ? String(note).slice(0, 240) : undefined, at: stamped(data) },
         );
         // Any publish proves it is alive; a publish that CLAIMS the job is
         // finished starts a clock, because an executor that announces the end
@@ -416,7 +426,13 @@ export default definePluginEntry({
       } else {
         jobs.record(
           { jobId, result: data, state: data?.type === "error" ? "error" : "done", requestedBy: data?.owner, owner },
-          { type: String(data?.type ?? "result"), note: data?.error ? String(data.error).slice(0, 240) : undefined },
+          // A result is RETAINED, so the broker replays it on every
+          // resubscribe — once per gateway restart, forever. Carrying its own
+          // timestamp is what stops one finished job collecting seven
+          // identical endings spread across days it did not run on.
+          { type: String(data?.type ?? "result"),
+            note: data?.error ? String(data.error).slice(0, 240) : undefined,
+            at: stamped(data) },
         );
         jobs.active.delete(jobId);
         dispatcher.forget(jobId);              // terminal — stop watching

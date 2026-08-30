@@ -50,7 +50,7 @@ export interface Dispatcher {
   cancel(jobId: string, requestedBy?: string): boolean;
   /** Any executor publish proves the executor is alive; the event says how alive. */
   markAgentActivity(jobId: string, event?: { type?: string; note?: string }): void;
-  publishEvent(jobId: string, event: Record<string, unknown>, owner: string): void;
+  publishEvent(jobId: string, event: Record<string, unknown>, owner: string): number;
   /** Lineage of a known job, for continuing a delegation chain. */
   lineageOf(jobId?: string): { rootJobId?: string; depth: number };
   publishResult(jobId: string, result: Record<string, unknown>, owner: string): void;
@@ -64,12 +64,23 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
   const root = cfg.mesh.root;
   const watched = new Map<string, WatchEntry>();
 
-  const publishEvent = (jobId: string, event: Record<string, unknown>, owner: string) =>
+  /**
+   * Publishes a milestone and answers when it happened.
+   *
+   * The caller records the same event locally, and the bridge also hears its
+   * own publish come back — so the same milestone reaches the job store twice.
+   * Returning the timestamp lets both copies carry it, which is what makes
+   * them one event rather than two identical rows a millisecond apart.
+   */
+  const publishEvent = (jobId: string, event: Record<string, unknown>, owner: string): number => {
+    const at = Date.now();
     publish(
       jobEventsTopic(root, owner, jobId),
-      JSON.stringify({ ...event, jobId, owner, ts: new Date().toISOString() }),
+      JSON.stringify({ ...event, jobId, owner, ts: new Date(at).toISOString() }),
       { qos: 1 },
     );
+    return at;
+  };
 
   /** Terminal result: owner-scoped, retained, QoS 1. */
   const publishResult = (jobId: string, result: Record<string, unknown>, owner: string) =>
@@ -332,12 +343,12 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
 
     jobs.cancelled.delete(jobId);
     jobs.active.add(jobId);
-    publishEvent(jobId, { type: "accepted", service, requestedBy, args }, owner);
+    const at = publishEvent(jobId, { type: "accepted", service, requestedBy, args }, owner);
     jobs.record(
       { jobId, service, state: "accepted", requestedBy, owner,
         parentJobId: data.parentJobId, rootJobId, depth,
         lastEvent: `args: ${JSON.stringify(args).slice(0, 200)}` },
-      { type: "accepted", note: service },
+      { type: "accepted", note: service, at },
     );
 
     const subagentSessionKey = `agent:main:subagent:mesh-${jobId}`;
