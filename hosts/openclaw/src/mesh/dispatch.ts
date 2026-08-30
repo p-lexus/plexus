@@ -22,6 +22,9 @@ import { renderPrompt, unresolvedPlaceholders, missingRequiredArgs } from "./pay
 const WATCHDOG_INTERVAL_MS = 60_000;   // supervisory sweep, not a delivery path
 const REINJECT_AFTER_MS = 5 * 60_000;  // silence required before re-dispatch
 const MAX_REINJECTS = 2;               // then fail loudly rather than retry forever
+const NUDGE_AFTER_MS = 60_000;         // grace between "I am done" and the result
+const MAX_NUDGES = 2;                  // then let the re-dispatch path have it
+const SETTLE_GRACE_MS = 20_000;        // a terminal publish already in flight
 
 export interface DispatcherDeps {
   cfg: ResolvedConfig;
@@ -46,8 +49,8 @@ export interface DispatcherDeps {
 export interface Dispatcher {
   dispatch(data: DispatchRequest, opts?: DispatchOptions): DispatchResult;
   cancel(jobId: string, requestedBy?: string): boolean;
-  /** Any executor publish proves the executor is alive. */
-  markAgentActivity(jobId: string): void;
+  /** Any executor publish proves the executor is alive; the event says how alive. */
+  markAgentActivity(jobId: string, event?: { type?: string; note?: string }): void;
   publishEvent(jobId: string, event: Record<string, unknown>, owner: string): void;
   /** Lineage of a known job, for continuing a delegation chain. */
   lineageOf(jobId?: string): { rootJobId?: string; depth: number };
@@ -91,9 +94,28 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     return !!rec && TERMINAL_STATES.has(rec.state);
   };
 
-  const markAgentActivity = (jobId: string) => {
+  /**
+   * An executor milestone that claims the work is over.
+   *
+   * Deliberately generous: a false positive costs one nudge into a session
+   * that is about to publish anyway, while a false negative costs the wait
+   * that this whole mechanism exists to remove.
+   */
+  const announcesCompletion = (event?: { type?: string; note?: string }): boolean => {
+    if (!event) return false;
+    const said = `${event.type ?? ""} ${event.note ?? ""}`;
+    return /result[-_ ]?ready/i.test(said) || /\b(complete|completed|finished)\b/i.test(said);
+  };
+
+  const markAgentActivity = (jobId: string, event?: { type?: string; note?: string }) => {
     const w = watched.get(jobId);
-    if (w) w.lastAgentEventAt = Date.now();
+    if (!w) return;
+    w.lastAgentEventAt = Date.now();
+    // Only the first claim starts the clock. Re-arming on every later milestone
+    // would let a chatty executor postpone the nudge indefinitely.
+    if (w.completionAnnouncedAt === undefined && announcesCompletion(event)) {
+      w.completionAnnouncedAt = Date.now();
+    }
   };
 
   /** Resolve ${VAR}, warning by NAME when a reference is unbound. */
@@ -154,7 +176,9 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       `(type: started, analyzing, result-ready, …).\n` +
       `RESULT: publish the terminal payload to ${jobResultTopic(root, owner, jobId)} with a "type" field ` +
       `(review | already_reviewed | error | duplicate). The bridge injects jobId/owner/ts and forces retain, ` +
-      `but set "type" yourself.\n` +
+      `but set "type" yourself. This is the LAST thing you do, and you do it even if you already told ` +
+      `someone the answer: a Slack message, an email or a PR comment is a courtesy, not delivery. ` +
+      `The requester is waiting on that topic and can see nothing else.\n` +
       `SCOPE: owner is "${owner}" — publish only to the owner-scoped topics above.`
     );
   }
@@ -386,7 +410,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     const watch: WatchEntry = {
       jobId, service, owner, messageText,
       dispatchedAt: Date.now(), lastAgentEventAt: Date.now(),
-      reinjections: 0, runSettled: false, subagentSessionKey,
+      reinjections: 0, nudges: 0, runSettled: false, subagentSessionKey,
     };
 
     try {
@@ -579,12 +603,53 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
           continue;
         }
 
+        // ── The executor said it was done and then published nothing ──
+        //
+        // This is not silence and it is not a crash, so neither gate below
+        // catches it: the run is still open, and the milestone that announced
+        // completion counts as activity. It is the commonest way a job goes
+        // wrong — the executor delivers to a human, on Slack or a PR comment,
+        // and treats that as the job. The requester is left watching a topic
+        // nothing will ever arrive on.
+        //
+        // Ask the SAME session to publish what it already produced. That is
+        // not a re-run: no work is repeated, and payload.ts still refuses an
+        // overwrite if the result did land while we were asking.
+        if (w.completionAnnouncedAt !== undefined
+            && !hasTerminalResult(w.jobId)
+            && now - w.completionAnnouncedAt >= NUDGE_AFTER_MS
+            && w.nudges < MAX_NUDGES) {
+          w.nudges++;
+          w.completionAnnouncedAt = now;   // next chase is a grace period later
+          logger.warn(`[watchdog] job ${w.jobId} announced completion but published no result — asking it to (${w.nudges}/${MAX_NUDGES})`);
+          publishEvent(w.jobId, {
+            type: "result_pending",
+            note: `completion announced with no result published — asking the executor to publish (${w.nudges}/${MAX_NUDGES})`,
+          }, w.owner);
+          const sub = runtime.subagent;
+          if (typeof sub?.run === "function") {
+            void Promise.resolve(sub.run({
+              sessionKey: w.subagentSessionKey,
+              message:
+                `⏳ Job ${w.jobId}: you reported this finished, but nothing has been published to ` +
+                `${jobResultTopic(cfg.mesh.root, w.owner, w.jobId)} and the requester is still waiting there. ` +
+                `Publish the terminal payload now, with a "type" field. Do NOT redo the work — publish what ` +
+                `you already produced. Telling someone on Slack does not deliver the job.`,
+            })).catch((e: any) => logger.error(`[watchdog] nudge for ${w.jobId} failed: ${e.message}`));
+          }
+          continue;
+        }
+
         if (w.runId && !w.runSettled) continue;   // run in flight → alive by definition
 
         // Settlement alone is NOT grounds to re-dispatch: a terminal publish
-        // may still be in flight. Require genuine silence too, so a
-        // misbehaving prompt cannot cause duplicate execution on its own.
-        if (now - w.lastAgentEventAt < REINJECT_AFTER_MS) continue;
+        // may still be in flight. Require silence too, so a misbehaving prompt
+        // cannot cause duplicate execution on its own — but once the run has
+        // actually ended, the only thing left to wait for is that in-flight
+        // publish. Five more minutes of it buys nothing and cost a pipeline a
+        // 13-minute timeout on a job that had finished in 51 seconds.
+        const quietFor = now - w.lastAgentEventAt;
+        if (quietFor < (w.runSettled ? SETTLE_GRACE_MS : REINJECT_AFTER_MS)) continue;
 
         if (w.reinjections >= MAX_REINJECTS) {
           watched.delete(w.jobId);
@@ -604,6 +669,7 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
         w.lastAgentEventAt = now;
         w.runSettled = false;
         w.runId = undefined;
+        w.completionAnnouncedAt = undefined;   // a fresh run makes its own claims
         logger.warn(`[watchdog] job ${w.jobId} (service ${w.service}) — ${why} — re-injecting (${w.reinjections}/${MAX_REINJECTS})`);
         publishEvent(w.jobId, {
           type: "requeued",

@@ -203,6 +203,16 @@ export interface WatchEntry {
   runId?: string;
   /** True once waitForRun resolved (ok/error/timeout). */
   runSettled: boolean;
+  /**
+   * When the executor SAID it had finished, if it has.
+   *
+   * An executor that announces completion and then publishes nothing is the
+   * failure this exists for: the work is done and sitting in a session nobody
+   * is reading. Announcing is a promise, and a promise can be chased.
+   */
+  completionAnnouncedAt?: number;
+  /** How many times it has been asked to publish the result it announced. */
+  nudges: number;
   subagentSessionKey: string;
 }
 
