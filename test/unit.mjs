@@ -852,7 +852,7 @@ t("a route with no file extension is still the single-page app", async () => {
 // ── delegation modes ────────────────────────────────────
 const { createDispatcher } = await import(dist("mesh/dispatch.js"));
 
-function dispatchHarness({ delegation = "both", delegates, askResult, maxJobDurationMs } = {}) {
+function dispatchHarness({ delegation = "both", delegates, askResult, maxJobDurationMs, settles = false } = {}) {
   const published = [];
   const asked = [];
   const runs = [];
@@ -868,7 +868,9 @@ function dispatchHarness({ delegation = "both", delegates, askResult, maxJobDura
     runtime: {
       subagent: {
         run: async ({ message }) => { runs.push(message); return { runId: "r1" }; },
-        waitForRun: async () => new Promise(() => {}),   // never settles during the test
+        // Settling immediately is the real runtime's behaviour for a job whose
+        // first turn ends while the work continues — the case that broke.
+        waitForRun: async () => (settles ? { status: "ok" } : new Promise(() => {})),
       },
       system: { enqueueSystemEvent: () => {}, runHeartbeatOnce: async () => ({ status: "ran" }) },
     },
@@ -1038,6 +1040,37 @@ t("an executor that announces completion and publishes nothing is chased, not re
   const events = h.published.filter((p) => p.topic.endsWith("/ci-1/events"));
   assert.ok(events.some((e) => e.payload.type === "result_pending"),
     "and the waiting requester is told why it is still waiting");
+});
+
+t("a run that reports settled is not enough to re-dispatch", async () => {
+  // The regression this is written from. Cutting the required silence once a
+  // run reported settled re-dispatched ci-33314256625-2 thirty-nine seconds
+  // after its executor started — and it published a result two seconds later.
+  // A sibling job was re-dispatched twice inside two minutes, exhausted both
+  // retries, and had "execution not confirmed" published over it while its
+  // executor was still visibly working.
+  //
+  // Settlement means one turn ended. It has arrived seventeen minutes late and
+  // nineteen seconds early. Silence is the only signal that means what it says.
+  const h = dispatchHarness({ settles: true });
+  h.dispatcher.dispatch({ jobId: "busy-1", service: "code.review", requestedBy: "ci", args: {} });
+  await settle();
+  const before = h.runs.length;
+
+  h.dispatcher.markAgentActivity("busy-1", { type: "started" });
+  const sweep = captureSweep(() => h.dispatcher.startWatchdog());
+
+  clockForward(60_000, sweep);        // a minute of quiet, run settled
+  await settle();
+  assert.equal(h.runs.length, before, "a settled run that has just been active is still working");
+
+  clockForward(4 * 60_000, sweep);    // still inside the silence window
+  await settle();
+  assert.equal(h.runs.length, before, "four minutes is not the silence the gate asks for");
+
+  clockForward(6 * 60_000, sweep);    // past it
+  await settle();
+  assert.equal(h.runs.length, before + 1, "genuine silence is still grounds to re-dispatch");
 });
 
 t("an executor still working is left alone", async () => {
