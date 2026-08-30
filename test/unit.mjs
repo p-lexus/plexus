@@ -551,7 +551,7 @@ t("the local variable file is written 0600", () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 t("masking reveals only a tail", () => {
-  assert.equal(maskValue("U0EXAMPLE42"), "••••HC6B");
+  assert.equal(maskValue("U0EXAMPLE42"), "••••LE42");
   assert.equal(maskValue("short"), "••••");
   assert.equal(maskValue(""), "");
 });
@@ -596,7 +596,7 @@ t("config defaults are applied, and booleans default the documented way", () => 
 t("explicit config overrides defaults", () => {
   const c = resolveConfig({
     broker: { url: "mqtt://h:1883", keepalive: 15, protocolVersion: 5 },
-    mesh: { root: "acme/agents", agentId: "conan", requireOwner: false },
+    mesh: { root: "acme/agents", agentId: "reviewer", requireOwner: false },
     web: { enabled: false, port: 9000, auth: "  tok  " },
   }, "/p");
   assert.equal(c.mesh.root, "acme/agents");
