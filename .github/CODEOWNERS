@@ -1,6 +1,10 @@
-# Every change needs an owner's approval before it can be merged.
+# Merging into main is reserved. Anyone may open a pull request and anyone with
+# write access may push a branch; only an owner's approval lets it land.
 #
 # This file is what the branch ruleset points at: "require review from Code
-# Owners" means nothing without it. Anyone may open a pull request and anyone
-# with write access may push a branch — merging into main is what is reserved.
-*       @MoGhali @HassanMahmoud22
+# Owners" means nothing without it.
+#
+# GitHub does not let anyone approve their own pull request, so the sole owner
+# here is also the ruleset's one bypass actor — otherwise every change he wrote
+# would need a second owner who does not exist.
+*       @MoGhali
