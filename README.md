@@ -187,12 +187,14 @@ argument for choosing it.
 Someone — a human, CI, or another agent — publishes a job:
 
 ```bash
-mosquitto_pub -t 'agents/commands/reviewer/invoke' -m '{
+mosquitto_pub -t 'agents/commands/reviewer/invoke/alice' -m '{
   "service": "code.review",
-  "requestedBy": "alice",
   "args": { "repo": "acme/web-app", "pr": 42 }
 }'
 ```
+
+The owner — `alice` — is the last topic segment, not a payload field. That is the whole of what
+changed in v1.4, and it is what lets a broker rule decide who may ask as whom.
 
 The agent picks it up, runs it in an isolated session, and streams back:
 
@@ -763,16 +765,22 @@ touches them.
 ```bash
 mosquitto_sub -h localhost -t 'agents/jobs/alice/#' &       # listen first
 
-mosquitto_pub -h localhost -t 'agents/commands/my-agent/invoke' -m '{
+mosquitto_pub -h localhost -t 'agents/commands/my-agent/invoke/alice' -m '{
   "service": "code.review",
-  "requestedBy": "alice",
   "args": { "repo": "acme/web-app", "pr": 42 }
 }'
 ```
 
-`requestedBy` is **required**, and is what scopes the job to you. Omit it and the job is rejected
-with a published error rather than silently routed to `public` — where your own subscription
-would never have seen it.
+The owner is what scopes the job to you, and since **v1.4** it belongs in the topic. Omit it
+entirely — no topic segment and no `requestedBy` — and the job is rejected with a published error
+rather than silently routed to `public`, where your own subscription would never have seen it.
+
+The v1.3 form, `commands/my-agent/invoke` with `"requestedBy": "alice"` in the payload, is still
+served: which topics a client may publish to is the broker's decision, not the agent's. But on a
+broker with rules written, it cannot be published at all — an ACL granting
+`commands/+/invoke/alice` does not grant `commands/+/invoke`. If both are present and they
+disagree, the invoke is **refused** rather than reconciled: the topic is what the broker
+authorised, and any other string is a different identity.
 
 | Subscribe to | You get |
 |---|---|
