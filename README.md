@@ -12,7 +12,7 @@
 
 <p align="center">
   <a href="LICENSE"><img alt="License: Apache 2.0" src="https://img.shields.io/badge/license-Apache%202.0-3fb9a5"></a>
-  <a href="PROTOCOL.md"><img alt="Protocol v1.3" src="https://img.shields.io/badge/protocol-v1.3-3fb9a5"></a>
+  <a href="PROTOCOL.md"><img alt="Protocol v1.4" src="https://img.shields.io/badge/protocol-v1.4-3fb9a5"></a>
   <img alt="Node 18+" src="https://img.shields.io/badge/node-%E2%89%A5%2018-3fb9a5">
   <img alt="One dependency" src="https://img.shields.io/badge/dependencies-1-3fb9a5">
   <img alt="macOS | Linux | Windows" src="https://img.shields.io/badge/macOS%20%7C%20Linux%20%7C%20Windows-3fb9a5">
@@ -959,22 +959,26 @@ aclFor({ root: "agents", role: "requester", id: "ci", ownerInTopic: true });
 // subscribe: agents/jobs/ci/#, agents/registry/+/profile, agents/registry/+/status
 ```
 
-`mesh.ownerInTopic` says what an agent does with the two forms — `off`, `accept` (default: both,
-topic preferred, disagreement refused) or `require` (the v1.3 form is refused). The profile
-advertises it as `ownerPolicy.topic`, so clients read what a deployment enforces instead of
-inferring it.
+`mesh.ownerInTopic` says what an agent does with the two forms — `off`, or `accept` (the default:
+both are served, the topic wins, and a payload that disagrees with the topic is refused rather than
+reconciled). The profile advertises it as `ownerPolicy.topic`, so clients read what a deployment
+serves instead of inferring it.
+
+There is deliberately no mode in which the agent refuses the v1.3 form. **Which topics a client may
+publish to is the broker's decision, not the agent's** — an agent refusing it would be enforcing a
+policy whose configuration it cannot see, and would refuse a client its broker had every intention
+of allowing.
 
 `mesh.verifyOwner: true` is the older path to the same end: it verifies `requestedBy` against a
 `client_username` that an EMQX rule injects into the payload, and fails closed. It still works, and
 it needs a rule engine — which is why the owner moved into the topic instead, where every broker can
 enforce it.
 
-**`ownerPolicy.verified` is claimed carefully.** Refusing the v1.3 form stops a careless client, not
-a dishonest one: on a broker with no ACLs anyone may still publish `invoke/somebody-else`. So an
-agent reports `verified: true` only in `require` mode **and** with evidence that the broker enforces
-per-identity rules — the evidence being that the broker refused it the mesh-wide job filter. That is
-inference rather than proof, and the limit is worth knowing: a broker could scope job topics without
-scoping invokes.
+**`ownerPolicy.verified` is stated, never inferred.** It is `mesh.ownerEnforced`, set by whoever
+wrote the broker's rules. An agent cannot see those rules: it can see which topics it is itself
+allowed to publish to, and being allowed says nothing about whether anybody else is refused. So an
+agent that worked out `verified` for itself would be guessing, and a guess published as a fact is
+worse than the fact being absent.
 
 **The console.** Bound to `127.0.0.1`. `web.auth` protects the API; the page shell is served
 unauthenticated so it can present a sign-in screen instead of a raw 401. Managing variables
@@ -1015,10 +1019,13 @@ Every option is schema-documented in [`openclaw.plugin.json`](openclaw.plugin.js
 
 ### Client id and durability
 
-The client id is derived from hostname + install path so it is **stable across restarts**. That
-is what makes `clean: false` mean anything: with a changing id, every restart is a new session,
-the broker's queued messages stay orphaned with the dead one, and any job published while you
-were down is lost silently.
+The client id is `plexus-<agentId>-<hash>`, where the hash is derived from the hostname and the
+install path — so it **says which agent it belongs to** and is **stable across restarts**. The
+stability is what makes `clean: false` mean anything: with a changing id, every restart is a new
+session, the broker's queued messages stay orphaned with the dead one, and any job published while
+you were down is lost silently. The name is what makes a broker's log and its client list legible:
+a connection called `plexus-reviewer-4c1f9a` needs no lookup, and one called after whichever host
+plugin happens to be running needs several.
 
 A stable id has one cost — two instances sharing it fight over the session. The bridge detects
 that (5+ connects in 60s), takes a distinct id to break the loop, and states plainly that
