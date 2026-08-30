@@ -813,6 +813,16 @@ function dispatchHarness({ delegation = "both", delegates, askResult, maxJobDura
 }
 const settle = () => new Promise((r) => setTimeout(r, 30));
 
+/* The watchdog measures grace periods in minutes, which a test cannot wait out
+   either. Move Date.now() instead of the calendar. */
+const NUDGE_GRACE = 61_000;
+const REAL_NOW = Date.now;
+function clockForward(ms, fn) {
+  const from = REAL_NOW();
+  Date.now = () => from + ms;
+  try { return fn(); } finally { Date.now = REAL_NOW; }
+}
+
 /* The watchdog sweeps once a minute, which is not a thing a test can wait for.
    Take the callback it registers and call it directly. */
 function captureSweep(start) {
@@ -922,6 +932,73 @@ t("the watchdog stands down rather than overwrite a result that already exists",
     h.published.slice(before).some((p) => p.payload.type === "watchdog_stood_down"),
     "and it says so, so the giving-up is visible rather than silent",
   );
+});
+
+// ── announced, then never delivered ─────────────────────
+//
+// ci-33308869864-1 finished its review 51 seconds in, published a
+// "review-complete" milestone, sent two Slack DMs to the reviewers, and ended
+// its turn. It never published the result. The bridge could not tell: the run
+// was still open, and the milestone counted as activity, so both watchdog
+// gates said "alive". CI waited 13 minutes, timed out, and reported a failure
+// on a PR that had been approved. The answer landed 18.5 minutes in, only
+// because a re-dispatch happened to find it still in the session.
+
+t("an executor that announces completion and publishes nothing is chased, not re-run", async () => {
+  const h = dispatchHarness();
+  h.dispatcher.dispatch({ jobId: "ci-1", service: "code.review", requestedBy: "ci", args: {} });
+  await settle();
+  const runsAfterDispatch = h.runs.length;
+
+  // The milestone that says the work is over, and then nothing.
+  h.dispatcher.markAgentActivity("ci-1", { type: "analyzing", note: "review-complete" });
+
+  const sweep = captureSweep(() => h.dispatcher.startWatchdog());
+  sweep();
+  assert.equal(h.runs.length, runsAfterDispatch,
+    "too early to chase — the result may simply be in flight");
+
+  // A grace period later, with still no result on the topic.
+  clockForward(NUDGE_GRACE, sweep);
+  await settle();
+
+  assert.equal(h.runs.length, runsAfterDispatch + 1, "the same session is asked to publish");
+  assert.match(h.runs.at(-1), /Publish the terminal payload now/);
+  assert.match(h.runs.at(-1), /Do NOT redo the work/, "chasing must not become a second execution");
+  const events = h.published.filter((p) => p.topic.endsWith("/ci-1/events"));
+  assert.ok(events.some((e) => e.payload.type === "result_pending"),
+    "and the waiting requester is told why it is still waiting");
+});
+
+t("an executor still working is left alone", async () => {
+  const h = dispatchHarness();
+  h.dispatcher.dispatch({ jobId: "ci-2", service: "code.review", requestedBy: "ci", args: {} });
+  await settle();
+  const before = h.runs.length;
+
+  h.dispatcher.markAgentActivity("ci-2", { type: "analyzing", note: "reading the diff" });
+  const sweep = captureSweep(() => h.dispatcher.startWatchdog());
+  clockForward(NUDGE_GRACE, sweep);
+  await settle();
+
+  assert.equal(h.runs.length, before,
+    "a milestone that claims nothing must not be read as a claim");
+});
+
+t("a chase stops once the result arrives", async () => {
+  const h = dispatchHarness();
+  h.dispatcher.dispatch({ jobId: "ci-3", service: "code.review", requestedBy: "ci", args: {} });
+  await settle();
+  const before = h.runs.length;
+
+  h.dispatcher.markAgentActivity("ci-3", { type: "result-ready" });
+  h.jobs.record({ jobId: "ci-3", state: "done" }, { type: "review" });
+
+  const sweep = captureSweep(() => h.dispatcher.startWatchdog());
+  clockForward(NUDGE_GRACE, sweep);
+  await settle();
+
+  assert.equal(h.runs.length, before, "nothing to chase — the answer is on the topic");
 });
 
 t("the watchdog still fails a job that genuinely produced nothing", async () => {

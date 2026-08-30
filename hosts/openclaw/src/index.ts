@@ -404,7 +404,10 @@ export default definePluginEntry({
           { jobId, lastEvent: type, requestedBy: data?.owner, owner },
           { type, note: note ? String(note).slice(0, 240) : undefined },
         );
-        dispatcher.markAgentActivity(jobId);   // any publish proves it is alive
+        // Any publish proves it is alive; a publish that CLAIMS the job is
+        // finished starts a clock, because an executor that announces the end
+        // and publishes no result is the failure the watchdog cannot see.
+        dispatcher.markAgentActivity(jobId, { type, note: note ? String(note) : undefined });
       } else {
         jobs.record(
           { jobId, result: data, state: data?.type === "error" ? "error" : "done", requestedBy: data?.owner, owner },
