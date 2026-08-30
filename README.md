@@ -26,6 +26,7 @@
   <a href="packages/notify">Plugins</a> ·
   <a href="hosts/hermes">Hermes</a> ·
   <a href="docs/INSTALL.md">Install (macOS · Linux · Windows)</a> ·
+  <a href="docs/CI.md">Ask from CI</a> ·
   <a href="#run-it">Run it</a>
 </p>
 
@@ -134,6 +135,7 @@ The protocol is the product. Everything else is one way of speaking it:
 | **[`hosts/openclaw/`](hosts/openclaw)** | Host plugin for **OpenClaw** — puts a gateway's agent on the mesh | OpenClaw |
 | **[`hosts/hermes/`](hosts/hermes)** | Host plugin for **Hermes Agent** — Python, drop-in | `paho-mqtt` |
 | **[docs/HOSTS.md](docs/HOSTS.md)** | How to write a host plugin for another platform | — |
+| **[docs/CI.md](docs/CI.md)** | Asking the mesh from a pipeline, on any broker | an MQTT client |
 
 **None of these is required.** Each host plugin is *one* participant, not the runtime, and the
 [40-line example](examples/minimal-agent.mjs) uses no library at all. If you can open an MQTT
@@ -187,12 +189,14 @@ argument for choosing it.
 Someone — a human, CI, or another agent — publishes a job:
 
 ```bash
-mosquitto_pub -t 'agents/commands/reviewer/invoke' -m '{
+mosquitto_pub -t 'agents/commands/reviewer/invoke/alice' -m '{
   "service": "code.review",
-  "requestedBy": "alice",
   "args": { "repo": "acme/web-app", "pr": 42 }
 }'
 ```
+
+The owner — `alice` — is the last topic segment, not a payload field. That is the whole of what
+changed in v1.4, and it is what lets a broker rule decide who may ask as whom.
 
 The agent picks it up, runs it in an isolated session, and streams back:
 
@@ -763,16 +767,22 @@ touches them.
 ```bash
 mosquitto_sub -h localhost -t 'agents/jobs/alice/#' &       # listen first
 
-mosquitto_pub -h localhost -t 'agents/commands/my-agent/invoke' -m '{
+mosquitto_pub -h localhost -t 'agents/commands/my-agent/invoke/alice' -m '{
   "service": "code.review",
-  "requestedBy": "alice",
   "args": { "repo": "acme/web-app", "pr": 42 }
 }'
 ```
 
-`requestedBy` is **required**, and is what scopes the job to you. Omit it and the job is rejected
-with a published error rather than silently routed to `public` — where your own subscription
-would never have seen it.
+The owner is what scopes the job to you, and since **v1.4** it belongs in the topic. Omit it
+entirely — no topic segment and no `requestedBy` — and the job is rejected with a published error
+rather than silently routed to `public`, where your own subscription would never have seen it.
+
+The v1.3 form, `commands/my-agent/invoke` with `"requestedBy": "alice"` in the payload, is still
+served: which topics a client may publish to is the broker's decision, not the agent's. But on a
+broker with rules written, it cannot be published at all — an ACL granting
+`commands/+/invoke/alice` does not grant `commands/+/invoke`. If both are present and they
+disagree, the invoke is **refused** rather than reconciled: the topic is what the broker
+authorised, and any other string is a different identity.
 
 | Subscribe to | You get |
 |---|---|
