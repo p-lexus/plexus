@@ -281,6 +281,11 @@ export default definePluginEntry({
       reconnects: transport.stats.reconnects,
       reconnectsLastHour: transport.recentReconnects(),
       lastError: transport.stats.lastError,
+      lastErrorAt: transport.stats.lastErrorAt || undefined,
+      // Whether the link is healthy NOW, rather than whether anything went
+      // wrong in the last hour. The panel warns on this, so a recovered link
+      // stops warning instead of carrying its worst hour around.
+      settled: transport.settled(),
       activeJobs: [...jobs.active],
       agentId: conf.mesh.agentId,
       meshRoot: conf.mesh.root,
