@@ -24,7 +24,6 @@ const REINJECT_AFTER_MS = 5 * 60_000;  // silence required before re-dispatch
 const MAX_REINJECTS = 2;               // then fail loudly rather than retry forever
 const NUDGE_AFTER_MS = 60_000;         // grace between "I am done" and the result
 const MAX_NUDGES = 2;                  // then let the re-dispatch path have it
-const SETTLE_GRACE_MS = 20_000;        // a terminal publish already in flight
 
 export interface DispatcherDeps {
   cfg: ResolvedConfig;
@@ -642,14 +641,19 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
 
         if (w.runId && !w.runSettled) continue;   // run in flight → alive by definition
 
-        // Settlement alone is NOT grounds to re-dispatch: a terminal publish
-        // may still be in flight. Require silence too, so a misbehaving prompt
-        // cannot cause duplicate execution on its own — but once the run has
-        // actually ended, the only thing left to wait for is that in-flight
-        // publish. Five more minutes of it buys nothing and cost a pipeline a
-        // 13-minute timeout on a job that had finished in 51 seconds.
-        const quietFor = now - w.lastAgentEventAt;
-        if (quietFor < (w.runSettled ? SETTLE_GRACE_MS : REINJECT_AFTER_MS)) continue;
+        // Settlement is NOT evidence that the executor is finished, in either
+        // direction. It has arrived seventeen minutes after the last thing the
+        // executor did, and it has arrived nineteen seconds into a job that
+        // went on to publish a result eighty seconds later. A run ending is
+        // one turn ending, not the work ending.
+        //
+        // So silence, and only silence, decides. It is the one signal that
+        // means what it says: nothing has come from this executor for long
+        // enough that something is actually wrong. Anything shorter re-runs
+        // jobs that were working, and re-running twice inside two minutes
+        // exhausts the retries and publishes "execution not confirmed" over a
+        // job that was about to answer.
+        if (now - w.lastAgentEventAt < REINJECT_AFTER_MS) continue;
 
         if (w.reinjections >= MAX_REINJECTS) {
           watched.delete(w.jobId);
