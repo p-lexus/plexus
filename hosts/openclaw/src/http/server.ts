@@ -67,8 +67,17 @@ export function createHttpHandler(deps: HttpDeps) {
   return async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
     const url = new URL(req.url ?? "/", "http://local");
     let p = url.pathname;
-    // On the standalone port accept both /api/* and the gateway-style path.
-    if (!p.startsWith(base) && p.startsWith("/api/")) p = base + p;
+    // The panel is served twice: mounted under basePath inside the gateway, and
+    // bare at the root on the standalone port. Only /api/* was normalised, so a
+    // bare asset request kept its root path and then had base.length characters
+    // sliced off it below — leaving "/", which the SPA fallback answers with
+    // index.html. A stylesheet that arrives as text/html is discarded by the
+    // browser, which is an unstyled panel and no error anywhere to say why.
+    //
+    // It stayed hidden while the panel was a single self-contained file with no
+    // asset to request. Splitting the shared theme out of the inline <style> is
+    // what asked the question for the first time.
+    if (base && !p.startsWith(base)) p = base + p;
 
     const isApi = p.startsWith(`${base}/api/`);
     if (isApi && !auth.authorized(req, url)) {

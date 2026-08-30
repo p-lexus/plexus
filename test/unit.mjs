@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { Readable } from "node:stream";
 
 const dist = (p) => new URL(`../dist/${p}`, import.meta.url).href;
 
@@ -778,6 +779,75 @@ t("cancelling a parent cancels what it delegated, and tells the peer", async () 
   assert.equal(svc.pendingCount, 0);
 });
 
+
+// ── the panel's own assets ──────────────────────────────
+//
+// The panel is served twice: mounted under basePath inside the gateway, and
+// bare at the root on the standalone port. Only /api/* was normalised between
+// the two, so a bare "/theme.css" kept its root path and then had
+// base.length characters sliced off it — leaving "/", which the SPA fallback
+// answers with index.html. The browser is handed HTML where a stylesheet
+// should be, drops it, and renders the console unstyled. Nothing logs an
+// error, because a 200 was served.
+//
+// It hid for as long as the panel was one self-contained file with no asset
+// to fetch. Splitting the shared theme out of the inline <style> asked the
+// question for the first time.
+
+const { createHttpHandler } = await import(dist("http/server.js"));
+
+function panelHarness() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-panel-"));
+  fs.writeFileSync(path.join(dir, "index.html"), "<html>panel</html>");
+  fs.writeFileSync(path.join(dir, "theme.css"), ":root{--ink:#dce5e2}");
+  const cfg = resolveConfig({ broker: { url: "mqtt://x:1883" }, web: { dir } }, "/p");
+  cfg.web.dir = dir;
+  const handle = createHttpHandler({
+    cfg, logger: quietLogger,
+    auth: { configured: false, authorized: () => true, sameOrigin: () => true },
+    sse: { add() {}, remove() {}, broadcast() {} },
+    jobs: createJobStore(() => {}), vars: { value: () => "" },
+    dispatcher: {}, registry: {},
+    snapshot: () => ({}), profileWithBroker: () => ({}), peers: () => [],
+  });
+  return { handle, base: cfg.web.basePath };
+}
+
+async function fetchPath(handle, url) {
+  const req = Object.assign(Readable.from([]), { url, method: "GET", headers: {} });
+  let head = {}, code = 0; const chunks = [];
+  const res = {
+    writeHead(c, h) { code = c; head = h ?? {}; return res; },
+    end(d) { if (d) chunks.push(d); },
+    setHeader() {},
+  };
+  await handle(req, res);
+  return { code, type: head["Content-Type"], body: Buffer.concat(chunks.map(Buffer.from)).toString() };
+}
+
+t("the panel's stylesheet is served as CSS on the standalone port", async () => {
+  const h = panelHarness();
+  const r = await fetchPath(h.handle, "/theme.css");
+  assert.equal(r.code, 200);
+  assert.equal(r.type, "text/css",
+    "a stylesheet answered with index.html is a 200 the browser silently discards");
+  assert.match(r.body, /--ink/);
+});
+
+t("and on the mounted path, which was the one that already worked", async () => {
+  const h = panelHarness();
+  const r = await fetchPath(h.handle, `${h.base}/theme.css`);
+  assert.equal(r.type, "text/css");
+});
+
+t("a route with no file extension is still the single-page app", async () => {
+  const h = panelHarness();
+  for (const u of ["/", "/jobs", "/4sale-agents/jobs"]) {
+    const r = await fetchPath(h.handle, u);
+    assert.match(r.type, /text\/html/, `${u} must fall through to the app`);
+    assert.match(r.body, /panel/);
+  }
+});
 
 // ── delegation modes ────────────────────────────────────
 const { createDispatcher } = await import(dist("mesh/dispatch.js"));
