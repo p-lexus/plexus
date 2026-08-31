@@ -132,6 +132,36 @@ t("v1.4: the invoke topic builders put the owner where an ACL can see it", () =>
   assert.equal(topics.invoke("acme/agents", "reviewer"), "acme/agents/commands/reviewer/invoke");
 });
 
+t("v1.5: a verdict can only be filed under the identity that gives it", () => {
+  const ci = aclFor({ root: R, role: "requester", id: "ci" });
+  assert.ok(permits(ci.publish, `${R}/commands/reviewer/feedback/ci`), "judging work it asked for");
+  assert.ok(permits(ci.publish, `${R}/commands/dba/feedback/ci`), "any agent it asked");
+  assert.ok(!permits(ci.publish, `${R}/commands/reviewer/feedback/mohanad`),
+    "a verdict in somebody else's name is the forgery these rules exist to stop");
+});
+
+t("v1.5: feedback is enforceable even where invokes are not", () => {
+  // ownerInTopic off means requestedBy is a payload field no ACL can police.
+  // Feedback was specified after that lesson and has only the one form, so the
+  // narrower rule applies either way.
+  const loose = aclFor({ root: R, role: "requester", id: "ci" });
+  assert.ok(permits(loose.publish, `${R}/commands/reviewer/invoke`), "the old invoke is unpoliced");
+  assert.ok(!permits(loose.publish, `${R}/commands/reviewer/feedback/mohanad`),
+    "and the verdict still is not");
+});
+
+t("v1.5: an agent judges its peers as itself, and hears verdicts on its own work", () => {
+  const rev = aclFor({ root: R, role: "agent", id: "reviewer" });
+  assert.ok(permits(rev.publish, `${R}/commands/dba/feedback/reviewer`),
+    "an agent that delegates is a requester, and owes a verdict");
+  assert.ok(!permits(rev.publish, `${R}/commands/dba/feedback/ci`),
+    "but not one in a person's name");
+  // Its own commands subtree already carries these — no new subscribe rule.
+  assert.ok(permits(rev.subscribe, `${R}/commands/reviewer/feedback/ci`));
+  assert.ok(!permits(rev.subscribe, `${R}/commands/dba/feedback/ci`),
+    "one agent must not read another's reviews");
+});
+
 t("an id that would widen a filter is refused, not sanitised", () => {
   for (const bad of ["ci/+", "#", "+", "a/b", "", "-lead"]) {
     assert.throws(() => aclFor({ root: R, role: "requester", id: bad }), TypeError,
