@@ -964,14 +964,19 @@ The rules are generated from the topic map rather than written by hand:
 import { aclFor } from "plexus-agent/acl";
 aclFor({ root: "agents", role: "requester", id: "ci", ownerInTopic: true });
 // publish:   agents/commands/+/invoke/ci, agents/commands/+/cancel,
-//            agents/commands/+/feedback/ci
+//            agents/feedback/ci/+/+
 // subscribe: agents/jobs/ci/#, agents/registry/+/profile, agents/registry/+/status
 ```
 
-The feedback rule is not conditional on `ownerInTopic`. A verdict (v1.5) has only ever had the
-one form — it was specified after this lesson — so there is no unscoped shape to keep working,
-and `ci` cannot file one under `mohanad` even on a deployment whose invokes are still the v1.3
-form.
+The feedback rule grants the **filing** leg and not the delivering one. `ci` may say what it
+thought of `reviewer`'s work, and cannot make `reviewer` hear it: `commands/+/feedback/+` belongs
+to the console, which is the mesh's recorder. That asymmetry is what makes a verdict worth
+something — the agent receiving it has one already checked against the mesh's own record of who
+asked for what, which no agent can do for itself.
+
+It is not conditional on `ownerInTopic` either. A verdict (v1.5) has only ever had the one form —
+it was specified after this lesson — so `ci` cannot file one under `mohanad` even on a deployment
+whose invokes are still the v1.3 form.
 
 `mesh.ownerInTopic` says what an agent does with the two forms — `off`, or `accept` (the default:
 both are served, the topic wins, and a payload that disagrees with the topic is refused rather than

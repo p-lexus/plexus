@@ -127,10 +127,31 @@ t("v1.4: the invoke topic builders put the owner where an ACL can see it", () =>
 
 t("v1.5: a verdict can only be filed under the identity that gives it", () => {
   const ci = aclFor({ root: R, role: "requester", id: "ci" });
-  assert.ok(permits(ci.publish, `${R}/commands/reviewer/feedback/ci`), "judging work it asked for");
-  assert.ok(permits(ci.publish, `${R}/commands/dba/feedback/ci`), "any agent it asked");
-  assert.ok(!permits(ci.publish, `${R}/commands/reviewer/feedback/mohanad`),
+  assert.ok(permits(ci.publish, `${R}/feedback/ci/reviewer/j1`), "judging work it asked for");
+  assert.ok(permits(ci.publish, `${R}/feedback/ci/dba/j9`), "any agent it asked");
+  assert.ok(!permits(ci.publish, `${R}/feedback/mohanad/reviewer/j1`),
     "a verdict in somebody else's name is the forgery these rules exist to stop");
+});
+
+t("v1.5: nobody but the recorder can make an agent hear a verdict", () => {
+  // The enforcement, in one assertion. A requester may FILE a verdict and may
+  // not DELIVER one — the leg that reaches an agent's command topic belongs to
+  // the console, which is the mesh's recorder. Granting it to requesters would
+  // hand back exactly the thing the two-leg design removes.
+  const ci = aclFor({ root: R, role: "requester", id: "ci" });
+  const rev = aclFor({ root: R, role: "agent", id: "reviewer" });
+  const box = aclFor({ root: R, role: "console", id: "console" });
+
+  assert.ok(!permits(ci.publish, `${R}/commands/reviewer/feedback/ci`),
+    "a requester cannot put a verdict on an agent's command topic");
+  assert.ok(!permits(rev.publish, `${R}/commands/dba/feedback/reviewer`),
+    "and neither can an agent, however honest");
+  assert.ok(permits(box.publish, `${R}/commands/reviewer/feedback/ci`), "the recorder relays it");
+
+  // And nobody but the recorder reads the filings.
+  assert.ok(permits(box.subscribe, `${R}/feedback/ci/reviewer/j1`));
+  assert.ok(!permits(ci.subscribe, `${R}/feedback/mohanad/reviewer/j1`));
+  assert.ok(!permits(rev.subscribe, `${R}/feedback/ci/reviewer/j1`));
 });
 
 t("v1.5: feedback is enforceable even where invokes are not", () => {
@@ -139,17 +160,17 @@ t("v1.5: feedback is enforceable even where invokes are not", () => {
   // narrower rule applies either way.
   const loose = aclFor({ root: R, role: "requester", id: "ci" });
   assert.ok(permits(loose.publish, `${R}/commands/reviewer/invoke`), "the old invoke is unpoliced");
-  assert.ok(!permits(loose.publish, `${R}/commands/reviewer/feedback/mohanad`),
+  assert.ok(!permits(loose.publish, `${R}/feedback/mohanad/reviewer/j1`),
     "and the verdict still is not");
 });
 
-t("v1.5: an agent judges its peers as itself, and hears verdicts on its own work", () => {
+t("v1.5: an agent files as itself, and hears verdicts on its own work", () => {
   const rev = aclFor({ root: R, role: "agent", id: "reviewer" });
-  assert.ok(permits(rev.publish, `${R}/commands/dba/feedback/reviewer`),
+  assert.ok(permits(rev.publish, `${R}/feedback/reviewer/dba/ask-1`),
     "an agent that delegates is a requester, and owes a verdict");
-  assert.ok(!permits(rev.publish, `${R}/commands/dba/feedback/ci`),
+  assert.ok(!permits(rev.publish, `${R}/feedback/ci/dba/ask-1`),
     "but not one in a person's name");
-  // Its own commands subtree already carries these — no new subscribe rule.
+  // Its own commands subtree already carries the relayed leg — no new rule.
   assert.ok(permits(rev.subscribe, `${R}/commands/reviewer/feedback/ci`));
   assert.ok(!permits(rev.subscribe, `${R}/commands/dba/feedback/ci`),
     "one agent must not read another's reviews");
