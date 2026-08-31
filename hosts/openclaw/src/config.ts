@@ -33,7 +33,6 @@ export interface ResolvedConfig {
     verifyOwner: boolean;
     ownerInTopic: "off" | "accept";
     ownerEnforced: boolean;
-    feedback: "off" | "accept";
     maxJobDurationMs: number;
     maxDepth: number;
     askTimeoutMs: number;
@@ -144,10 +143,6 @@ export function resolveConfig(cfg: Partial<PluginConfig>, pluginDir: string): Re
       ownerInTopic: mesh.ownerInTopic === "off" ? "off" : "accept",
       // Stated by whoever applied the broker's rules, because only they know.
       ownerEnforced: mesh.ownerEnforced === true,
-      // v1.5, and OFF unless somebody says otherwise. A verdict is only worth
-      // recording where the broker vouches for who is speaking, and on a broker
-      // with no rules anyone can file one in anybody's name.
-      feedback: mesh.feedback === "accept" ? "accept" : "off",
       verifyOwner: mesh.verifyOwner === true,      // default false
       maxJobDurationMs: mesh.maxJobDurationMs ?? DEFAULTS.maxJobDurationMs,
       maxDepth: mesh.maxDepth ?? DEFAULTS.maxDepth,

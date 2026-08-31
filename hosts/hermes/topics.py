@@ -89,6 +89,21 @@ def feedback_filter(root: str, agent_id: str) -> str:
     return f"{root}/commands/{agent_id}/feedback/+"
 
 
+def feedback_file(root: str, owner: str, agent_id: str, job_id: str) -> str:
+    """Where a requester FILES a verdict (v1.5) — to the recorder, not the agent.
+
+    Publishing here is not delivery. Nothing reaches the agent until a recorder
+    relays it, and on a mesh without one this is a message nobody collects. A
+    verdict nobody authenticated is worth less than no verdict, because it is a
+    stranger's opinion filed under the requester's name.
+    """
+    return f"{root}/feedback/{owner}/{agent_id}/{job_id}"
+
+
+def feedback_file_filter(root: str) -> str:
+    return f"{root}/feedback/+/+/+"
+
+
 def feedback_topic_owner(root: str, agent_id: str, topic: str) -> str | None:
     """The owner a feedback topic carries, or None if this is not one.
 
