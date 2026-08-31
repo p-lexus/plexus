@@ -15,7 +15,8 @@ const dist = (p) => new URL(`../dist/${p}`, import.meta.url).href;
 
 const { ownerScope, buildTopics, jobTopicPattern, parseJobTopic, escapeRe,
   peerInvokeTopicFor, invokeFilter, invokeTopicOwner,
-  feedbackTopic, feedbackFilter, feedbackTopicOwner } = await import(dist("mesh/topics.js"));
+  feedbackTopic, feedbackFilter, feedbackTopicOwner,
+  feedbackFileTopic, feedbackFileFilter, parseFeedbackFileTopic } = await import(dist("mesh/topics.js"));
 const { readFeedback, verdictFor, MAX_REASON } = await import(dist("mesh/feedback.js"));
 const { normalizeJobPublish, renderPrompt, unresolvedPlaceholders, publishRefusal, missingRequiredArgs } = await import(dist("mesh/payload.js"));
 const { createJobStore, MAX_HISTORY } = await import(dist("mesh/jobs.js"));
@@ -1270,44 +1271,37 @@ t("one verdict per requester: the newest replaces, an older redelivery does not"
   assert.equal(s.find("j1").feedback.length, 2);
 });
 
-t("verdicts are off unless somebody says the broker enforces who is speaking", () => {
-  // Not a licence check. On a broker with no rules any connected client can
-  // file a verdict in anybody's name, and the agent cannot tell — so the
-  // default must be to serve nobody rather than to trust everybody.
-  const here = os.tmpdir();
-  const bare = resolveConfig({ broker: { url: "mqtt://x" } }, here);
-  assert.equal(bare.mesh.feedback, "off");
-
-  const provisioned = resolveConfig({ broker: { url: "mqtt://x" }, mesh: { feedback: "accept" } }, here);
-  assert.equal(provisioned.mesh.feedback, "accept");
-
-  // Anything that is not the word "accept" is off, including a truthy value
-  // somebody hoped would work.
-  for (const v of [true, "yes", "on", "", null]) {
-    assert.equal(
-      resolveConfig({ broker: { url: "mqtt://x" }, mesh: { feedback: v } }, here).mesh.feedback,
-      "off", `mesh.feedback ${JSON.stringify(v)} must not enable it`);
-  }
-});
-
-t("an agent that takes no part in feedback sends none either", () => {
-  // Gating only what it ACCEPTS would leave it publishing opinions into a mesh
-  // where its own carry no weight — and collecting the refusals.
-  assert.equal(verdictFor("off", ROOT, "dba", "conan", "ask-1", "good"), null);
-  assert.equal(verdictFor(undefined, ROOT, "dba", "conan", "ask-1", "good"), null);
-
-  const out = verdictFor("accept", ROOT, "dba", "conan", "ask-1", "bad", "  wrong table  ");
-  assert.equal(out.topic, `${ROOT}/commands/dba/feedback/conan`,
-    "sent under this agent's own scope, which is the only segment a rule grants it");
+t("a verdict is filed with the recorder, never handed to the peer", () => {
+  // The whole enforcement. There is no configuration that makes an agent
+  // deliver a verdict to another agent — it can only file one, and on a mesh
+  // with no recorder that is a message nobody collects. A feature absent
+  // because a participant is absent cannot be switched on by editing a config.
+  const out = verdictFor(ROOT, "dba", "conan", "ask-1", "bad", "  wrong table  ");
+  assert.equal(out.topic, `${ROOT}/feedback/conan/dba/ask-1`);
+  assert.ok(!out.topic.includes("/commands/"),
+    "nothing this agent publishes reaches a peer's command path");
   assert.equal(out.payload.verdict, "bad");
   assert.equal(out.payload.reason, "wrong table");
 
-  // Nothing outside the vocabulary, and nothing without a job, leaves at all.
-  assert.equal(verdictFor("accept", ROOT, "dba", "conan", "ask-1", "excellent"), null);
-  assert.equal(verdictFor("accept", ROOT, "dba", "conan", "", "good"), null);
+  // Nothing that can only be thrown away is put on the wire.
+  assert.equal(verdictFor(ROOT, "dba", "conan", "ask-1", "excellent"), null);
+  assert.equal(verdictFor(ROOT, "dba", "conan", "", "good"), null);
+  assert.equal(verdictFor(ROOT, "", "conan", "j1", "good"), null);
   assert.equal(
-    verdictFor("accept", ROOT, "dba", "conan", "j", "bad", "x".repeat(MAX_REASON + 50)).payload.reason.length,
+    verdictFor(ROOT, "dba", "conan", "j", "bad", "x".repeat(MAX_REASON + 50)).payload.reason.length,
     MAX_REASON);
+});
+
+t("a filed verdict names the owner, the agent and the job, so a rule can bound it", () => {
+  assert.equal(feedbackFileTopic(ROOT, "ci", "reviewer", "j1"), `${ROOT}/feedback/ci/reviewer/j1`);
+  assert.equal(feedbackFileFilter(ROOT), `${ROOT}/feedback/+/+/+`);
+  assert.deepEqual(parseFeedbackFileTopic(ROOT, `${ROOT}/feedback/ci/reviewer/j1`),
+    { owner: "ci", agentId: "reviewer", jobId: "j1" });
+  // Anything of another shape is refused rather than guessed at.
+  for (const bad of [`${ROOT}/feedback/ci/reviewer`, `${ROOT}/feedback/ci/reviewer/j1/x`,
+    `${ROOT}/feedback//reviewer/j1`, `${ROOT}/commands/reviewer/feedback/ci`]) {
+    assert.equal(parseFeedbackFileTopic(ROOT, bad), null, bad);
+  }
 });
 
 t("a verdict never creates a job, moves its state, or restarts its clock", () => {

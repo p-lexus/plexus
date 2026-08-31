@@ -72,14 +72,20 @@ export function aclFor({ root, role, id, ownerInTopic = false } = {}) {
     ? `${root}/commands/+/invoke/${id}`
     : `${root}/commands/+/invoke`;
 
-  // A verdict on work somebody did for you (v1.5). Not gated on ownerInTopic,
-  // because feedback has only ever had the one form: it was specified after the
-  // v1.4 lesson, so there is no unscoped legacy shape to keep working. A
-  // deployment that still publishes invokes the old way can therefore have
-  // unforgeable verdicts on forgeable requests, which is not a contradiction —
-  // it is one rule reaching further than the other, and the narrower one is
-  // still worth having.
-  const feedback = `${root}/commands/+/feedback/${id}`;
+  // Filing a verdict on work somebody did for you (v1.5).
+  //
+  // The FILING leg only. Nobody but the console — the mesh's recorder — may
+  // publish on `commands/+/feedback/+`, the leg that actually reaches an agent.
+  // That asymmetry is the enforcement: a requester can say what it thought, and
+  // cannot make an agent hear it. A rule granting the second leg to requesters
+  // would hand back exactly the thing this design removes.
+  //
+  // Not gated on ownerInTopic, because feedback has only ever had the one form:
+  // it was specified after the v1.4 lesson, so there is no unscoped legacy
+  // shape to keep working. A deployment still publishing invokes the old way
+  // therefore has unforgeable verdicts on forgeable requests — one rule
+  // reaching further than the other, and the narrower one is worth having.
+  const feedback = `${root}/feedback/${id}/+/+`;
 
   if (role === "agent") {
     return {
@@ -95,9 +101,10 @@ export function aclFor({ root, role, id, ownerInTopic = false } = {}) {
         // Delegation: an agent asks its peers, as itself.
         invoke,
         `${root}/commands/+/cancel`,
-        // And judges what they gave back. An agent that delegates is a
-        // requester, and owes the same verdict a person does — as itself, so
-        // it cannot file one under another identity's name.
+        // And files a verdict on what they gave back. An agent that delegates
+        // is a requester and owes the same verdict a person does — as itself,
+        // so it cannot file one under another identity's name, and to the
+        // recorder, so it cannot deliver one at all.
         feedback,
       ],
       subscribe: [

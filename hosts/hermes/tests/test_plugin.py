@@ -175,8 +175,9 @@ def _():
     agent, sent = _judged(served=None)
     agent.feedback("dba", "ask-1", "good", "clear answer")
     topic, body = sent[0]
-    assert topic == "acme/agents/commands/dba/feedback/reviewer", \
-        "the owner segment is this agent's own scope, which is what an ACL grants"
+    assert topic == "acme/agents/feedback/reviewer/dba/ask-1", \
+        "filed with the recorder, under this agent's own scope — never handed to the peer"
+    assert "/commands/" not in topic, "there is no path from here to a peer's command topic"
     assert body["verdict"] == "good" and body["reason"] == "clear answer"
     try:
         agent.feedback("dba", "ask-1", "excellent")

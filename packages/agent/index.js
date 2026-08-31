@@ -101,6 +101,19 @@ export const topics = {
    */
   feedback: (root, id, owner) => `${root}/commands/${id}/feedback/${owner}`,
   feedbackFilter: (root, id) => `${root}/commands/${id}/feedback/+`,
+  /**
+   * v1.5: where a requester FILES a verdict — addressed to the mesh's recorder,
+   * never to the agent it judges.
+   *
+   * Publishing here is not delivery. Nothing reaches the agent until a recorder
+   * relays it, and on a mesh without one this is a message nobody collects.
+   * That is the design: a verdict nobody authenticated is worth less than no
+   * verdict, because it is a stranger's opinion filed under the requester's
+   * name — and an absent participant is a stronger guarantee than any flag a
+   * client could hold, since a flag is a line its own operator can edit.
+   */
+  feedbackFile: (root, owner, id, jobId) => `${root}/feedback/${owner}/${id}/${jobId}`,
+  feedbackFileFilter: (root) => `${root}/feedback/+/+/+`,
   cancel: (root, id) => `${root}/commands/${id}/cancel`,
   events: (root, owner, jobId) => `${root}/jobs/${owner}/${jobId}/events`,
   result: (root, owner, jobId) => `${root}/jobs/${owner}/${jobId}/result`,
@@ -602,18 +615,22 @@ export async function connect(options = {}) {
     },
 
     /**
-     * Say what a peer's work was worth (v1.5).
+     * File a verdict on a peer's work (v1.5).
      *
-     * As this agent, always: the owner segment is `ownerScope(agentId)`, so a
-     * broker rule granting `commands/+/feedback/<me>` permits this and nothing
-     * filed under anyone else's name. An agent that delegates is a requester,
-     * and owes the same verdict a person does.
+     * It goes to the mesh's recorder, not to the peer. There is no path from
+     * here to another agent's command topic and no option that creates one:
+     * whether a filing becomes delivery is decided by the recorder, and on a
+     * mesh with no recorder nothing collects it.
+     *
+     * As this agent, always: the owner segment is `ownerScope(agentId)`, which
+     * is the segment a broker rule grants. A verdict filed under any other name
+     * is refused silently, because a refused publish is still ACKed at QoS 1.
      */
     feedback(peerId, jobId, verdict, reason) {
       if (!VERDICTS.includes(verdict)) {
         throw new TypeError(`verdict must be one of ${VERDICTS.join(", ")} — got ${JSON.stringify(verdict)}`);
       }
-      pub(topics.feedback(root, peerId, selfScope), {
+      pub(topics.feedbackFile(root, selfScope, peerId, jobId), {
         jobId, verdict,
         ...(reason ? { reason: String(reason).slice(0, MAX_FEEDBACK_REASON) } : {}),
         ts: nowIso(),

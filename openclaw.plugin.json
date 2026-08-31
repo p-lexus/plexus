@@ -97,15 +97,6 @@
             "default": "accept",
             "description": "Protocol 1.4: whether to serve commands/<agentId>/invoke/<owner>, where the owner is in the topic so a broker ACL can enforce who a requester claims to be. \"accept\" serves both forms and takes the owner from the topic when it is there; \"off\" serves the 1.3 form only. There is deliberately no mode that refuses the old form: refusing is enforcement, and enforcement belongs to the broker."
           },
-          "feedback": {
-            "type": "string",
-            "enum": [
-              "off",
-              "accept"
-            ],
-            "default": "off",
-            "description": "Protocol 1.5: whether to serve commands/<agentId>/feedback/<owner>, where a requester says what the work was worth. Off unless somebody states otherwise, and not as a licence check: a verdict is only worth recording where the broker vouches for who is speaking. On a broker with no rules any connected client can file one in anybody's name, and this agent cannot tell — so accepting them would let anyone on the broker decide what the mesh believes about work they had nothing to do with. `plexus-server add-agent` writes \"accept\" here because at that moment it knows exactly which rules it granted. Set it by hand only if you applied the equivalent rules by hand."
-          },
           "ownerEnforced": {
             "type": "boolean",
             "default": false,
