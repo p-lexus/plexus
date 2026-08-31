@@ -12,7 +12,7 @@
 
 <p align="center">
   <a href="LICENSE"><img alt="License: Apache 2.0" src="https://img.shields.io/badge/license-Apache%202.0-3fb9a5"></a>
-  <a href="PROTOCOL.md"><img alt="Protocol v1.4" src="https://img.shields.io/badge/protocol-v1.4-3fb9a5"></a>
+  <a href="PROTOCOL.md"><img alt="Protocol v1.5" src="https://img.shields.io/badge/protocol-v1.5-3fb9a5"></a>
   <img alt="Node 18+" src="https://img.shields.io/badge/node-%E2%89%A5%2018-3fb9a5">
   <img alt="One dependency" src="https://img.shields.io/badge/dependencies-1-3fb9a5">
   <img alt="macOS | Linux | Windows" src="https://img.shields.io/badge/macOS%20%7C%20Linux%20%7C%20Windows-3fb9a5">

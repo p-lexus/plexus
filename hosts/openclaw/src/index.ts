@@ -32,9 +32,10 @@ import { createLogger } from "./logger.js";
 import {
   buildTopics, jobTopicPattern, parseJobTopic, ownerScope,
   registryPattern, parseRegistryTopic, registryProfileFilter, registryStatusFilter,
-  invokeFilter, invokeTopicOwner,
+  invokeFilter, invokeTopicOwner, feedbackFilter, feedbackTopicOwner,
 } from "./mesh/topics.js";
 import { normalizeJobPublish, publishRefusal } from "./mesh/payload.js";
+import { readFeedback } from "./mesh/feedback.js";
 import { createCatalog } from "./mesh/catalog.js";
 import { createVarStore } from "./mesh/vars.js";
 import { createJobStore } from "./mesh/jobs.js";
@@ -322,6 +323,10 @@ export default definePluginEntry({
       required: conf.mesh.requireOwner,
       topic: conf.mesh.ownerInTopic,
       verified: conf.mesh.verifyOwner || conf.mesh.ownerEnforced,
+      // v1.5, advertised for the same reason the rest of this is: a requester
+      // reads whether verdicts are served instead of publishing one into
+      // silence and concluding the mesh agreed with it.
+      feedback: conf.mesh.feedback,
     });
 
     const registry = createRegistry({
@@ -485,6 +490,50 @@ export default definePluginEntry({
         return;
       }
 
+      // v1.5: what the work was worth, from whoever asked for it. Same shape as
+      // the invoke topic, so the owner is the one the broker matched and the
+      // router hands it on untouched — the decision is the protocol's.
+      const judge = feedbackTopicOwner(conf.mesh.root, conf.mesh.agentId, topic);
+      if (judge !== null) {
+        // Not subscribed when off — but a wide ACL, or a broker that grants
+        // more than it was asked to, can still deliver one. Refused rather than
+        // ignored, so the sender learns why nothing came of it.
+        if (conf.mesh.feedback !== "accept") {
+          logger.info(
+            `[feedback] ignored from ${judge}: this agent does not accept verdicts. ` +
+            `A verdict is only worth recording where the broker vouches for who is speaking, ` +
+            `and nothing here says it does — set mesh.feedback to "accept" if the rules are applied`);
+          return;
+        }
+        const jobId = String(data?.jobId ?? "").trim();
+        const decision = readFeedback(judge, data, jobId ? jobs.find(jobId) : undefined, Date.now());
+
+        if (!decision.feedback) {
+          logger.info(`[feedback] refused from ${judge}: ${decision.reason}`);
+          // Told to the sender, in the scope it published from — a verdict
+          // that silently vanishes is worse than none, because the requester
+          // believes the mesh knows something it does not.
+          if (jobId) {
+            dispatcher.publishEvent(
+              jobId, { type: "feedback_refused", note: decision.reason }, ownerScope(judge));
+          }
+          return;
+        }
+
+        const { verdict, reason } = decision.feedback;
+        jobs.recordFeedback(jobId, decision.feedback);
+        // On the job's own timeline as well as in the record, so it reaches
+        // anyone watching the mesh — the box included — without a new
+        // subscription anywhere.
+        dispatcher.publishEvent(
+          jobId,
+          { type: "feedback", verdict, ...(reason ? { note: reason } : {}) },
+          ownerScope(judge),
+        );
+        logger.info(`[feedback] ${judge} judged job ${jobId} ${verdict}${reason ? `: ${reason}` : ""}`);
+        return;
+      }
+
       if (topic === topics.config) {
         transport.publish(`${topics.config}/reply`, JSON.stringify(registry.runConfigAction(data)), { qos: 1 });
         return;
@@ -544,6 +593,14 @@ export default definePluginEntry({
       ...(conf.mesh.ownerInTopic === "off"
         ? {}
         : { [invokeFilter(conf.mesh.root, conf.mesh.agentId)]: { qos: 1 as const } }),
+      // v1.5, and only where a box has granted the rules that make a verdict
+      // unforgeable. Not subscribed at all when off: an agent that listened
+      // anyway would be collecting opinions from anyone who can reach the
+      // broker. Separate from the other command topics for the same reason the
+      // invoke filter is — a broker refusing this should be reported as itself.
+      ...(conf.mesh.feedback === "accept"
+        ? { [feedbackFilter(conf.mesh.root, conf.mesh.agentId)]: { qos: 1 as const } }
+        : {}),
       [topics.query]: { qos: 1 },
       [topics.cancel]: { qos: 1 },
       [topics.config]: { qos: 1 },

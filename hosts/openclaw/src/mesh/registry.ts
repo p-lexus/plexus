@@ -23,7 +23,7 @@ export interface RegistryDeps {
    * publish time rather than fixed at construction: whether the broker refuses
    * an over-broad subscription is not known until it has refused one.
    */
-  ownerPolicy(): { required: boolean; topic: string; verified: boolean };
+  ownerPolicy(): { required: boolean; topic: string; verified: boolean; feedback: string };
   catalog: Catalog;
   logger: Logger;
   connected(): boolean;

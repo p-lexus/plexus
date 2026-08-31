@@ -15,7 +15,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { JobEvent, JobRecord } from "../types.js";
+import type { Feedback, JobEvent, JobRecord } from "../types.js";
 import { TERMINAL_STATES } from "../types.js";
 
 export const MAX_HISTORY = 100;
@@ -37,6 +37,15 @@ export interface JobStore {
     // three.
     event?: { type: string; note?: string; at?: number },
   ): JobRecord;
+  /**
+   * Attach a verdict to a job already here, or return undefined if it is not.
+   *
+   * Deliberately not part of `record`: a verdict is somebody's opinion of a
+   * finished job and must not create one, nor move its state, nor restart any
+   * clock. It arrives long after the work and changes nothing about what
+   * happened.
+   */
+  recordFeedback(jobId: string, feedback: Feedback): JobRecord | undefined;
   find(jobId: string): JobRecord | undefined;
 }
 
@@ -163,6 +172,33 @@ export function createJobStore(
     return merged;
   }
 
+  function recordFeedback(jobId: string, feedback: Feedback): JobRecord | undefined {
+    const job = jobs.find((j) => j.jobId === jobId);
+    if (!job) return undefined;
+
+    const list = (job.feedback ??= []);
+    const i = list.findIndex((f) => f.by === feedback.by);
+    if (i < 0) {
+      list.push(feedback);
+    } else if (list[i].ts <= feedback.ts) {
+      // One verdict per requester: the newest replaces the earlier one rather
+      // than stacking beside it. Somebody who clicks 👎 and then 👍 has one
+      // opinion, not two, and an agent retrying a delegation would otherwise
+      // leave a verdict per attempt.
+      list[i] = feedback;
+    } else {
+      // Older than what we hold. QoS 1 redelivers, and a queued verdict can
+      // arrive after the sender has already changed its mind — taking it would
+      // silently undo the correction.
+      return job;
+    }
+
+    job.updatedAt = Date.now();
+    persist();
+    onChange(job);
+    return job;
+  }
+
   return {
     active,
     cancelled,
@@ -170,5 +206,6 @@ export function createJobStore(
     recent: () => jobs.slice().reverse(),
     find: (jobId) => jobs.find((j) => j.jobId === jobId),
     record,
+    recordFeedback,
   };
 }

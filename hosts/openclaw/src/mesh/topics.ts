@@ -124,3 +124,37 @@ export function invokeTopicOwner(root: string, agentId: string, topic: string): 
 
 export const peerCancelTopic = (root: string, agentId: string): string =>
   `${root}/commands/${agentId}/cancel`;
+
+/**
+ * Where an agent hears what its work was worth (v1.5).
+ *
+ * Deliberately the command path and not the job path. `jobs/<owner>/<jobId>/`
+ * is where the verdict belongs by subject matter, and it is unreachable: under
+ * enforced ACLs an agent subscribes only to `jobs/<its own scope>/#`, so a
+ * verdict left in the requester's scope is one the agent can never read. The
+ * alternative — letting requesters publish into the agent's own job scope —
+ * hands them a topic adjacent to the one results are retained on.
+ *
+ * So it takes the shape the mesh already enforces: owner in the topic, exactly
+ * as `invoke` does, matched by the same broker rule and forgeable by nobody.
+ */
+export const feedbackTopic = (root: string, agentId: string, owner: string): string =>
+  `${root}/commands/${agentId}/feedback/${owner}`;
+
+/** Every verdict addressed to this agent, whoever it is from. */
+export const feedbackFilter = (root: string, agentId: string): string =>
+  `${root}/commands/${agentId}/feedback/+`;
+
+/**
+ * The owner a feedback topic carries, or null if this is not one.
+ *
+ * Returns the segment as it arrived, for the same reason `invokeTopicOwner`
+ * does: this is the string the broker authorised, and normalising it here
+ * would accept a topic no broker rule would have matched.
+ */
+export function feedbackTopicOwner(root: string, agentId: string, topic: string): string | null {
+  const prefix = `${root}/commands/${agentId}/feedback/`;
+  if (!topic.startsWith(prefix)) return null;
+  const rest = topic.slice(prefix.length);
+  return rest && !rest.includes("/") ? rest : null;
+}

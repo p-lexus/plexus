@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 
-PROTOCOL_VERSION = "1.4"
+PROTOCOL_VERSION = "1.5"
 
 _OWNER_STRIP = re.compile(r"[^a-z0-9_-]+")
 _OWNER_EDGES = re.compile(r"^-+|-+$")
@@ -72,6 +72,34 @@ def invoke_topic_owner(root: str, agent_id: str, topic: str) -> str | None:
 
 def cancel(root: str, agent_id: str) -> str:
     return f"{root}/commands/{agent_id}/cancel"
+
+
+def feedback(root: str, agent_id: str, owner: str) -> str:
+    """Where an agent hears what its work was worth (v1.5).
+
+    The command path and not the job path: an agent under enforced ACLs
+    subscribes only to its own job scope, so a verdict left in the requester's
+    scope is one the agent it is about could never read. Owner in the topic,
+    exactly as ``invoke_as``, and for the same reason.
+    """
+    return f"{root}/commands/{agent_id}/feedback/{owner}"
+
+
+def feedback_filter(root: str, agent_id: str) -> str:
+    return f"{root}/commands/{agent_id}/feedback/+"
+
+
+def feedback_topic_owner(root: str, agent_id: str, topic: str) -> str | None:
+    """The owner a feedback topic carries, or None if this is not one.
+
+    Returned exactly as it arrived, for the same reason ``invoke_topic_owner``
+    does: it is the string the broker authorised.
+    """
+    prefix = f"{root}/commands/{agent_id}/feedback/"
+    if not topic.startswith(prefix):
+        return None
+    rest = topic[len(prefix):]
+    return rest if rest and "/" not in rest else None
 
 
 def events(root: str, owner: str, job_id: str) -> str:
