@@ -14,7 +14,9 @@ import { Readable } from "node:stream";
 const dist = (p) => new URL(`../dist/${p}`, import.meta.url).href;
 
 const { ownerScope, buildTopics, jobTopicPattern, parseJobTopic, escapeRe,
-  peerInvokeTopicFor, invokeFilter, invokeTopicOwner } = await import(dist("mesh/topics.js"));
+  peerInvokeTopicFor, invokeFilter, invokeTopicOwner,
+  feedbackTopic, feedbackFilter, feedbackTopicOwner } = await import(dist("mesh/topics.js"));
+const { readFeedback, MAX_REASON } = await import(dist("mesh/feedback.js"));
 const { normalizeJobPublish, renderPrompt, unresolvedPlaceholders, publishRefusal, missingRequiredArgs } = await import(dist("mesh/payload.js"));
 const { createJobStore, MAX_HISTORY } = await import(dist("mesh/jobs.js"));
 const { createVarStore, maskValue } = await import(dist("mesh/vars.js"));
@@ -1185,6 +1187,100 @@ t("a required delegation that fails fails the job before the executor runs", asy
   const terminal = h.published.filter((m) => m.topic.endsWith("/result"));
   assert.ok(terminal.length, "a terminal result must still be published so nobody waits forever");
   assert.match(terminal.at(-1).payload.error, /required delegation/);
+});
+
+// ── feedback (v1.5) ─────────────────────────────────────
+
+const ROOT = "acme/agents";
+const served = (over = {}) => ({
+  jobId: "j1", state: "done", owner: "ci", requestedBy: "ci", updatedAt: 0, ...over,
+});
+
+t("a feedback topic carries its owner, and nothing else is one", () => {
+  assert.equal(feedbackTopic(ROOT, "conan", "ci"), `${ROOT}/commands/conan/feedback/ci`);
+  assert.equal(feedbackFilter(ROOT, "conan"), `${ROOT}/commands/conan/feedback/+`);
+  assert.equal(feedbackTopicOwner(ROOT, "conan", `${ROOT}/commands/conan/feedback/ci`), "ci");
+  // An invoke is not a verdict, and a verdict for another agent is not ours.
+  assert.equal(feedbackTopicOwner(ROOT, "conan", `${ROOT}/commands/conan/invoke/ci`), null);
+  assert.equal(feedbackTopicOwner(ROOT, "conan", `${ROOT}/commands/dba/feedback/ci`), null);
+  // Unscoped and over-deep are both refused rather than guessed at.
+  assert.equal(feedbackTopicOwner(ROOT, "conan", `${ROOT}/commands/conan/feedback`), null);
+  assert.equal(feedbackTopicOwner(ROOT, "conan", `${ROOT}/commands/conan/feedback/ci/extra`), null);
+});
+
+t("a verdict on somebody else's job is refused, not reattributed", () => {
+  const d = readFeedback("mallory", { jobId: "j1", verdict: "bad" }, served(), 1000);
+  assert.equal(d.feedback, null);
+  assert.match(d.reason, /requested by ci/);
+  assert.match(d.reason, /refused rather than reattributed/);
+});
+
+t("the topic's owner is who the verdict is from, whatever the payload claims", () => {
+  const d = readFeedback("ci", { jobId: "j1", verdict: "good", by: "someone-else" }, served(), 1000);
+  assert.equal(d.reason, null);
+  assert.equal(d.feedback.by, "ci");
+});
+
+t("only the three verdicts are verdicts", () => {
+  for (const v of ["good", "bad", "unusable", "GOOD", " bad "]) {
+    assert.equal(readFeedback("ci", { jobId: "j1", verdict: v }, served(), 1).reason, null, v);
+  }
+  const d = readFeedback("ci", { jobId: "j1", verdict: 4 }, served(), 1);
+  assert.equal(d.feedback, null);
+  assert.match(d.reason, /unknown verdict 4/);
+});
+
+t("a verdict on a job that scrolled out of history says so, rather than refusing the owner", () => {
+  const d = readFeedback("ci", { jobId: "gone", verdict: "bad" }, undefined, 1);
+  assert.equal(d.feedback, null);
+  assert.match(d.reason, /fallen off the end/);
+  assert.doesNotMatch(d.reason, /reattributed/);
+});
+
+t("a verdict must name its job", () => {
+  assert.match(readFeedback("ci", { verdict: "good" }, served(), 1).reason, /must name the job/);
+});
+
+t("the reason is capped and the sender's own clock is kept", () => {
+  const d = readFeedback(
+    "ci",
+    { jobId: "j1", verdict: "bad", reason: "x".repeat(MAX_REASON + 200), ts: "2026-08-31T10:00:00.000Z" },
+    served(), 999);
+  assert.equal(d.feedback.reason.length, MAX_REASON);
+  assert.equal(d.feedback.ts, Date.parse("2026-08-31T10:00:00.000Z"));
+  // No usable clock in the payload falls back to now, rather than to 1970.
+  assert.equal(readFeedback("ci", { jobId: "j1", verdict: "bad" }, served(), 999).feedback.ts, 999);
+});
+
+t("one verdict per requester: the newest replaces, an older redelivery does not", () => {
+  const s = createJobStore(() => {});
+  s.record({ jobId: "j1", state: "done", owner: "ci", requestedBy: "ci" });
+
+  s.recordFeedback("j1", { verdict: "bad", by: "ci", ts: 100 });
+  s.recordFeedback("j1", { verdict: "good", by: "ci", ts: 200 });
+  assert.equal(s.find("j1").feedback.length, 1, "one requester holds one opinion");
+  assert.equal(s.find("j1").feedback[0].verdict, "good");
+
+  // QoS 1 redelivers: a stale copy must not undo the correction.
+  s.recordFeedback("j1", { verdict: "bad", by: "ci", ts: 100 });
+  assert.equal(s.find("j1").feedback[0].verdict, "good");
+
+  // A different requester is a different opinion.
+  s.recordFeedback("j1", { verdict: "unusable", by: "dba", ts: 300 });
+  assert.equal(s.find("j1").feedback.length, 2);
+});
+
+t("a verdict never creates a job, moves its state, or restarts its clock", () => {
+  const s = createJobStore(() => {});
+  assert.equal(s.recordFeedback("nope", { verdict: "bad", by: "ci", ts: 1 }), undefined);
+  assert.equal(s.find("nope"), undefined, "a verdict for an unknown job invents nothing");
+
+  const rec = s.record({ jobId: "j2", state: "done", owner: "ci" }, { type: "result", at: 50 });
+  const finishedAt = rec.finishedAt;
+  s.recordFeedback("j2", { verdict: "bad", by: "ci", ts: 900 });
+  assert.equal(s.find("j2").state, "done", "an opinion is not an outcome");
+  assert.equal(s.find("j2").finishedAt, finishedAt);
+  assert.equal(s.find("j2").events.length, 1, "a verdict is not a milestone on the timeline");
 });
 
 // Ask timeouts are unref'd so a pending delegation never keeps the gateway

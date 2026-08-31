@@ -5,7 +5,7 @@
  * dragging the MQTT client or the plugin SDK along with them.
  */
 
-export const PROTOCOL_VERSION = "1.4";
+export const PROTOCOL_VERSION = "1.5";
 
 // ── Configuration ──────────────────────────────────────
 
@@ -157,6 +157,30 @@ export type JobState =
   | "accepted" | "started" | "done" | "error"
   | "duplicate" | "timeout" | "cancelled" | "rejected";
 
+/**
+ * What the work was worth, in the requester's judgement.
+ *
+ * Three values and not a score, because a number invites averaging and the
+ * average of a scale nobody calibrated says nothing. "unusable" is kept apart
+ * from "bad" because they ask for different things: bad work can be improved,
+ * and an unusable answer means the capability did not do its job at all.
+ */
+export type Verdict = "good" | "bad" | "unusable";
+
+/** One verdict on one job (v1.5). */
+export interface Feedback {
+  verdict: Verdict;
+  /** Free text from whoever judged. Capped on the way in. */
+  reason?: string;
+  /**
+   * Who judged, as the topic carried it — a person or another agent, and the
+   * protocol does not distinguish them. That is the point: an agent that
+   * delegates is a requester, and it owes the same verdict a person does.
+   */
+  by: string;
+  ts: number;
+}
+
 export interface JobRecord {
   jobId: string;
   service?: string;
@@ -171,6 +195,13 @@ export interface JobRecord {
    * all.
    */
   events?: JobEvent[];
+  /**
+   * Verdicts on this job, at most one per requester — a second from the same
+   * requester replaces the first rather than stacking beside it. People change
+   * their minds, and an agent that retries a delegation would otherwise leave
+   * one verdict per attempt.
+   */
+  feedback?: Feedback[];
   /** The job that asked for this one; absent on a request that entered the mesh. */
   parentJobId?: string;
   /** The original request every job in a delegation chain shares. */

@@ -32,9 +32,10 @@ import { createLogger } from "./logger.js";
 import {
   buildTopics, jobTopicPattern, parseJobTopic, ownerScope,
   registryPattern, parseRegistryTopic, registryProfileFilter, registryStatusFilter,
-  invokeFilter, invokeTopicOwner,
+  invokeFilter, invokeTopicOwner, feedbackFilter, feedbackTopicOwner,
 } from "./mesh/topics.js";
 import { normalizeJobPublish, publishRefusal } from "./mesh/payload.js";
+import { readFeedback } from "./mesh/feedback.js";
 import { createCatalog } from "./mesh/catalog.js";
 import { createVarStore } from "./mesh/vars.js";
 import { createJobStore } from "./mesh/jobs.js";
@@ -485,6 +486,40 @@ export default definePluginEntry({
         return;
       }
 
+      // v1.5: what the work was worth, from whoever asked for it. Same shape as
+      // the invoke topic, so the owner is the one the broker matched and the
+      // router hands it on untouched — the decision is the protocol's.
+      const judge = feedbackTopicOwner(conf.mesh.root, conf.mesh.agentId, topic);
+      if (judge !== null) {
+        const jobId = String(data?.jobId ?? "").trim();
+        const decision = readFeedback(judge, data, jobId ? jobs.find(jobId) : undefined, Date.now());
+
+        if (!decision.feedback) {
+          logger.info(`[feedback] refused from ${judge}: ${decision.reason}`);
+          // Told to the sender, in the scope it published from — a verdict
+          // that silently vanishes is worse than none, because the requester
+          // believes the mesh knows something it does not.
+          if (jobId) {
+            dispatcher.publishEvent(
+              jobId, { type: "feedback_refused", note: decision.reason }, ownerScope(judge));
+          }
+          return;
+        }
+
+        const { verdict, reason } = decision.feedback;
+        jobs.recordFeedback(jobId, decision.feedback);
+        // On the job's own timeline as well as in the record, so it reaches
+        // anyone watching the mesh — the box included — without a new
+        // subscription anywhere.
+        dispatcher.publishEvent(
+          jobId,
+          { type: "feedback", verdict, ...(reason ? { note: reason } : {}) },
+          ownerScope(judge),
+        );
+        logger.info(`[feedback] ${judge} judged job ${jobId} ${verdict}${reason ? `: ${reason}` : ""}`);
+        return;
+      }
+
       if (topic === topics.config) {
         transport.publish(`${topics.config}/reply`, JSON.stringify(registry.runConfigAction(data)), { qos: 1 });
         return;
@@ -544,6 +579,10 @@ export default definePluginEntry({
       ...(conf.mesh.ownerInTopic === "off"
         ? {}
         : { [invokeFilter(conf.mesh.root, conf.mesh.agentId)]: { qos: 1 as const } }),
+      // v1.5. Separate for the same reason the invoke filter is: a broker that
+      // refuses verdicts should be reported as refusing verdicts, rather than
+      // taking every command topic down with it.
+      [feedbackFilter(conf.mesh.root, conf.mesh.agentId)]: { qos: 1 },
       [topics.query]: { qos: 1 },
       [topics.cancel]: { qos: 1 },
       [topics.config]: { qos: 1 },
