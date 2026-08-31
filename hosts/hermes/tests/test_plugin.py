@@ -31,7 +31,9 @@ from hermes import config as config_module  # noqa: E402
 from hermes import topics  # noqa: E402
 from hermes.executor import parse_output  # noqa: E402
 from hermes.prompts import missing_arguments, render_prompt  # noqa: E402
-from hermes.protocol import DEFER, MeshAgent, derive_client_id  # noqa: E402
+from hermes.protocol import (  # noqa: E402
+    DEFER, REMEMBERED_JOBS, MeshAgent, derive_client_id,
+)
 
 PASS, FAIL = 0, 0
 _QUEUE = []
@@ -88,6 +90,100 @@ def _():
     ts = (root / "hosts" / "openclaw" / "src" / "types.ts").read_text()
     assert f'PROTOCOL_VERSION = "{topics.PROTOCOL_VERSION}"' in js, "JS disagrees"
     assert f'PROTOCOL_VERSION = "{topics.PROTOCOL_VERSION}"' in ts, "TypeScript disagrees"
+
+
+@t("v1.5: a feedback topic carries its owner, and nothing else is one")
+def _():
+    R = "acme/agents"
+    assert topics.feedback(R, "conan", "ci") == f"{R}/commands/conan/feedback/ci"
+    assert topics.feedback_filter(R, "conan") == f"{R}/commands/conan/feedback/+"
+    assert topics.feedback_topic_owner(R, "conan", f"{R}/commands/conan/feedback/ci") == "ci"
+    # An invoke is not a verdict, and another agent's verdict is not ours.
+    assert topics.feedback_topic_owner(R, "conan", f"{R}/commands/conan/invoke/ci") is None
+    assert topics.feedback_topic_owner(R, "conan", f"{R}/commands/dba/feedback/ci") is None
+    # Unscoped and over-deep are refused rather than guessed at.
+    assert topics.feedback_topic_owner(R, "conan", f"{R}/commands/conan/feedback") is None
+    assert topics.feedback_topic_owner(R, "conan", f"{R}/commands/conan/feedback/ci/x") is None
+
+
+def _judged(*, served=("j1", "ci")):
+    """A mesh agent that publishes into a list instead of onto a broker."""
+    agent = MeshAgent("mqtt://localhost:1883", "reviewer", root="acme/agents")
+    sent = []
+    agent._publish = lambda topic, payload, retain=False: sent.append((topic, payload))
+    if served:
+        agent._remember(*served)
+    return agent, sent
+
+
+@t("v1.5: a verdict on somebody else's job is refused, not reattributed")
+def _():
+    agent, sent = _judged()
+    agent._on_feedback("mallory", json.dumps({"jobId": "j1", "verdict": "bad"}))
+    assert len(sent) == 1, "the refusal must be published, not swallowed"
+    topic, body = sent[0]
+    assert topic == "acme/agents/jobs/mallory/j1/events", "told in the scope it published from"
+    assert body["type"] == "feedback_refused"
+    assert "requested by ci" in body["error"]
+    assert "refused rather than reattributed" in body["error"]
+
+
+@t("v1.5: an accepted verdict lands on the timeline and reaches the listener")
+def _():
+    agent, sent = _judged()
+    heard = []
+    agent.on_feedback(heard.append)
+    agent._on_feedback("ci", json.dumps({"jobId": "j1", "verdict": "bad", "reason": "wrong file"}))
+    assert [b["type"] for _, b in sent] == ["feedback"]
+    assert sent[0][1]["verdict"] == "bad"
+    assert sent[0][1]["note"] == "wrong file"
+    assert heard == [{"jobId": "j1", "verdict": "bad", "by": "ci", "ts": heard[0]["ts"], "reason": "wrong file"}]
+
+
+@t("v1.5: an unknown job is a different answer from an unauthorised one")
+def _():
+    agent, sent = _judged(served=None)
+    agent._on_feedback("ci", json.dumps({"jobId": "gone", "verdict": "bad"}))
+    error = sent[0][1]["error"]
+    assert "fallen off the end" in error
+    assert "reattributed" not in error, "a blameless miss must not read as a rejection"
+
+
+@t("v1.5: only the three verdicts are verdicts")
+def _():
+    for good in ("good", "bad", "unusable", "GOOD", " bad "):
+        agent, sent = _judged()
+        agent._on_feedback("ci", json.dumps({"jobId": "j1", "verdict": good}))
+        assert sent[0][1]["type"] == "feedback", good
+    agent, sent = _judged()
+    agent._on_feedback("ci", json.dumps({"jobId": "j1", "verdict": 4}))
+    assert "unknown verdict 4" in sent[0][1]["error"]
+
+
+@t("v1.5: the record of who asked is bounded, and drops the oldest first")
+def _():
+    agent, _ = _judged(served=None)
+    for i in range(REMEMBERED_JOBS + 5):
+        agent._remember(f"j{i}", "ci")
+    assert len(agent._served) == REMEMBERED_JOBS
+    assert "j0" not in agent._served, "the oldest goes"
+    assert f"j{REMEMBERED_JOBS + 4}" in agent._served
+
+
+@t("v1.5: a verdict is sent as this agent and nobody else")
+def _():
+    agent, sent = _judged(served=None)
+    agent.feedback("dba", "ask-1", "good", "clear answer")
+    topic, body = sent[0]
+    assert topic == "acme/agents/commands/dba/feedback/reviewer", \
+        "the owner segment is this agent's own scope, which is what an ACL grants"
+    assert body["verdict"] == "good" and body["reason"] == "clear answer"
+    try:
+        agent.feedback("dba", "ask-1", "excellent")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("a verdict outside the vocabulary must be refused before it is sent")
 
 
 @t("the job pattern refuses the unscoped form")

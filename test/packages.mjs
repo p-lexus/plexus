@@ -61,7 +61,14 @@ t("clientId is stable across calls and distinct per agent and mesh", () => {
 });
 
 t("protocol version is the one the bridge speaks", () => {
-  assert.equal(PROTOCOL_VERSION, "1.4");
+  assert.equal(PROTOCOL_VERSION, "1.5");
+});
+
+t("v1.5: the feedback topic builders put the judge where an ACL can see it", () => {
+  assert.equal(topics.feedback("acme/agents", "reviewer", "ci"),
+    "acme/agents/commands/reviewer/feedback/ci");
+  assert.equal(topics.feedbackFilter("acme/agents", "reviewer"),
+    "acme/agents/commands/reviewer/feedback/+");
 });
 
 // ── plexus-agent: broker rules ──────────────────────────

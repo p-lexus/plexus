@@ -1270,6 +1270,26 @@ t("one verdict per requester: the newest replaces, an older redelivery does not"
   assert.equal(s.find("j1").feedback.length, 2);
 });
 
+t("verdicts are off unless somebody says the broker enforces who is speaking", () => {
+  // Not a licence check. On a broker with no rules any connected client can
+  // file a verdict in anybody's name, and the agent cannot tell — so the
+  // default must be to serve nobody rather than to trust everybody.
+  const here = os.tmpdir();
+  const bare = resolveConfig({ broker: { url: "mqtt://x" } }, here);
+  assert.equal(bare.mesh.feedback, "off");
+
+  const provisioned = resolveConfig({ broker: { url: "mqtt://x" }, mesh: { feedback: "accept" } }, here);
+  assert.equal(provisioned.mesh.feedback, "accept");
+
+  // Anything that is not the word "accept" is off, including a truthy value
+  // somebody hoped would work.
+  for (const v of [true, "yes", "on", "", null]) {
+    assert.equal(
+      resolveConfig({ broker: { url: "mqtt://x" }, mesh: { feedback: v } }, here).mesh.feedback,
+      "off", `mesh.feedback ${JSON.stringify(v)} must not enable it`);
+  }
+});
+
 t("a verdict never creates a job, moves its state, or restarts its clock", () => {
   const s = createJobStore(() => {});
   assert.equal(s.recordFeedback("nope", { verdict: "bad", by: "ci", ts: 1 }), undefined);

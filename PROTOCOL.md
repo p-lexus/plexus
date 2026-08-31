@@ -45,9 +45,10 @@ another client on the same broker, and each has a test:
 9. An invoke carrying its owner in the topic is served, and one whose payload `requestedBy`
    disagrees with that owner is **refused before any work starts**. What the implementation does
    with the two forms is published in `ownerPolicy.topic`.
-10. A verdict published to `<root>/commands/<agentId>/feedback/<owner>` for a job that owner did
-    not request is **refused, not reattributed**, and the refusal is published where the sender
-    can read it.
+10. An implementation that serves verdicts refuses one published to
+    `<root>/commands/<agentId>/feedback/<owner>` for a job that owner did not request — **refused,
+    not reattributed** — and publishes the refusal where the sender can read it. Whether it serves
+    them at all is published in `ownerPolicy.feedback`.
 
 ## Why MQTT
 
@@ -624,6 +625,18 @@ enforces: **the owner is in the topic**, matched by the same kind of broker rule
 re-counted each time. Durable sessions (`clean: false`) already hold it for an agent that is
 offline, which is what they are for.
 
+**Served only where the broker vouches for who is speaking.** This is the one part of the protocol
+an implementation should refuse by default, and it is not a licence check. On a broker with no
+rules — an anonymous development broker, a shared one — any connected client can publish a verdict
+in anybody's name, and the agent has no way to tell. Accepting those lets anyone who can reach the
+broker decide what the mesh believes about work they had nothing to do with, and everything built
+on that record inherits the lie. The rules that make a verdict unforgeable are
+`commands/+/feedback/<id>`, granted per identity; an agent cannot discover whether they were
+applied, because a topic *it* may publish to reveals nothing about who else may. So it is stated in
+configuration by whoever applied them, exactly as `ownerEnforced` is, and advertised as
+`ownerPolicy.feedback` (`off` | `accept`) so a requester reads it rather than publishing into
+silence and concluding the mesh agreed.
+
 **A requester is a requester.** The protocol does not distinguish a person from an agent here. An
 agent that delegates is a requester and owes the same verdict a person does — and because the
 sender's identity comes from the topic, both are equally accountable for it.
@@ -745,6 +758,9 @@ One addition, and it is the first message in the protocol that travels *back* al
   a second opinion.
 - **Nothing distinguishes a person from an agent.** A delegating agent is a requester and owes the
   same verdict, which is what makes the loop close on a mesh where most requesters are not people.
+- **Off unless the broker enforces identity**, advertised as `ownerPolicy.feedback`. The one
+  message in the protocol that is refused by default, because an unenforced verdict is worse than
+  no verdict: it is a stranger's opinion recorded as the requester's.
 
 Nothing about v1.4 changes. An agent that never receives a verdict behaves exactly as it did, and a
 requester that never sends one is not in violation of anything.

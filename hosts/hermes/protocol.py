@@ -25,6 +25,7 @@ import secrets
 import socket
 import threading
 import time
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -38,6 +39,16 @@ log = logging.getLogger("plexus")
 
 #: Terminal result types. An unrecognised type is also terminal — treat it so.
 TERMINAL = {"result", "error", "cancelled", "duplicate", "rejected", "timeout"}
+
+#: The verdicts a requester may return (v1.5).
+VERDICTS = ("good", "bad", "unusable")
+
+#: Long enough for a paragraph of why, short enough not to be a payload.
+MAX_FEEDBACK_REASON = 500
+
+#: How many finished jobs an agent remembers the owner of, so a verdict arriving
+#: long after the work can be attributed — or refused — rather than guessed at.
+REMEMBERED_JOBS = 200
 
 
 class _Defer:
@@ -144,6 +155,12 @@ class MeshAgent:
         self._peers: dict[str, dict[str, Any]] = {}
         self._pending: dict[str, Ask] = {}
         self._active: dict[str, dict[str, Any]] = {}
+        # Who asked for each job this agent served, kept after the job settles.
+        # A verdict arrives long after the work, by which time ``_active`` has
+        # forgotten the job — and without knowing who asked, the one rule that
+        # matters cannot be applied. Bounded and insertion-ordered.
+        self._served: "OrderedDict[str, str]" = OrderedDict()
+        self._feedback_listeners: list[Callable[[dict[str, Any]], None]] = []
         self._lock = threading.RLock()
         self._ready = threading.Event()
         self._pool = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="plexus-job")
@@ -271,6 +288,9 @@ class MeshAgent:
         subscriptions = [
             (topics.invoke(self.root, self.agent_id), 1),
             (topics.cancel(self.root, self.agent_id), 1),
+            # v1.5. Separate, so a broker that refuses verdicts is reported as
+            # refusing verdicts rather than taking every command topic with it.
+            (topics.feedback_filter(self.root, self.agent_id), 1),
             (f"{self.root}/registry/+/profile", 1),
             (f"{self.root}/registry/+/status", 1),
             (f"{self.root}/jobs/{self._self_scope}/#", 1),
@@ -310,8 +330,119 @@ class MeshAgent:
             # handler here would stop keepalives and get the session dropped.
             return self._pool.submit(self._on_invoke, raw) and None
 
+        judge = topics.feedback_topic_owner(self.root, self.agent_id, msg.topic)
+        if judge is not None:
+            return self._on_feedback(judge, raw)
+
         if msg.topic == topics.cancel(self.root, self.agent_id):
             return self._on_cancel(raw)
+
+    def _remember(self, job_id: str, owner: str) -> None:
+        """Record who asked, dropping the oldest once the record is full."""
+        self._served[job_id] = owner
+        self._served.move_to_end(job_id)
+        while len(self._served) > REMEMBERED_JOBS:
+            self._served.popitem(last=False)
+
+    def _on_feedback(self, judge: str, raw: str) -> None:
+        """A verdict on work this agent did (v1.5).
+
+        The owner in the topic is the one the broker matched, so it is who this
+        is from; the payload's opinion of that is not consulted. A verdict for a
+        job that owner did not request is refused rather than reattributed — the
+        same rule v1.4 applies to invokes, because the mesh does not quietly
+        decide which of two identities somebody meant.
+        """
+        try:
+            msg = json.loads(raw)
+        except ValueError:
+            log.info("feedback: unparseable payload")
+            return
+
+        job_id = str(msg.get("jobId") or "").strip()
+        claimed = owner_scope(judge)
+
+        def refuse(error: str) -> None:
+            # Published where the sender can read it, in the scope it published
+            # from. A verdict that vanishes silently is worse than none: the
+            # requester goes on believing the mesh knows something it does not.
+            log.info("feedback refused from %s: %s", judge, error)
+            if job_id:
+                self._publish(
+                    topics.events(self.root, claimed, job_id),
+                    {"jobId": job_id, "type": "feedback_refused", "error": error, "ts": _now()},
+                )
+
+        if not job_id:
+            return refuse("a verdict must name the job it is about")
+
+        verdict = str(msg.get("verdict") or "").strip().lower()
+        if verdict not in VERDICTS:
+            return refuse(
+                f"unknown verdict {json.dumps(msg.get('verdict'))} — "
+                f"expected one of {', '.join(VERDICTS)}"
+            )
+
+        with self._lock:
+            owner = self._served.get(job_id)
+        # Unknown is not the same as unauthorised, and the difference is worth
+        # saying: the record is bounded, so a verdict on a job that scrolled off
+        # the end is blameless rather than a rejection.
+        if owner is None:
+            return refuse(
+                f"no job {job_id} here — it was never served by this agent, or it has "
+                f"already fallen off the end of this agent's history"
+            )
+        if claimed != owner:
+            return refuse(
+                f"job {job_id} was requested by {owner}, and this verdict arrived as "
+                f"{claimed} — refused rather than reattributed"
+            )
+
+        reason = str(msg.get("reason") or "").strip()[:MAX_FEEDBACK_REASON]
+        entry = {"jobId": job_id, "verdict": verdict, "by": judge, "ts": msg.get("ts") or _now()}
+        if reason:
+            entry["reason"] = reason
+
+        # On the job's own timeline too, so anything watching the mesh records
+        # it without subscribing to anything new.
+        body: dict[str, Any] = {
+            "jobId": job_id, "owner": owner, "type": "feedback", "verdict": verdict, "ts": _now(),
+        }
+        if reason:
+            body["note"] = reason
+        self._publish(topics.events(self.root, owner, job_id), body)
+        log.info("feedback: %s judged job %s %s", judge, job_id, verdict)
+
+        for listener in list(self._feedback_listeners):
+            try:
+                listener(entry)
+            except Exception as err:  # noqa: BLE001
+                log.warning("feedback listener threw: %s", err)
+
+    def feedback(self, peer_id: str, job_id: str, verdict: str, reason: str | None = None) -> None:
+        """Say what a peer's work was worth (v1.5).
+
+        As this agent, always: the owner segment is this agent's own scope, so a
+        broker rule granting ``commands/+/feedback/<me>`` permits this and
+        nothing filed under anyone else's name. An agent that delegates is a
+        requester, and owes the same verdict a person does.
+        """
+        if verdict not in VERDICTS:
+            raise ValueError(f"verdict must be one of {', '.join(VERDICTS)} — got {verdict!r}")
+        body: dict[str, Any] = {"jobId": job_id, "verdict": verdict, "ts": _now()}
+        if reason:
+            body["reason"] = str(reason)[:MAX_FEEDBACK_REASON]
+        self._publish(topics.feedback(self.root, peer_id, self._self_scope), body)
+
+    def on_feedback(self, fn: Callable[[dict[str, Any]], None]) -> Callable[[], None]:
+        """Be told when somebody judges this agent's work.
+
+        Only verdicts that survived the owner check reach here, so a listener
+        never has to wonder whether the sender was entitled to the opinion.
+        """
+        self._feedback_listeners.append(fn)
+        return lambda: self._feedback_listeners.remove(fn)
 
     def _on_registry(self, peer_id: str, kind: str, raw: str) -> None:
         if peer_id == self.agent_id:
@@ -404,6 +535,7 @@ class MeshAgent:
         }
         with self._lock:
             self._active[job_id] = entry
+            self._remember(job_id, owner)
 
         def emit(payload: dict[str, Any]) -> None:
             if entry["settled"]:

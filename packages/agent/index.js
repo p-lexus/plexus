@@ -32,7 +32,16 @@ import os from "node:os";
 import { createHash, randomBytes } from "node:crypto";
 
 /** The protocol revision this client implements. */
-export const PROTOCOL_VERSION = "1.4";
+export const PROTOCOL_VERSION = "1.5";
+
+/** The verdicts a requester may return (v1.5). */
+export const VERDICTS = /** @type {const} */ (["good", "bad", "unusable"]);
+
+/** Long enough for a paragraph of why, short enough not to be a payload. */
+export const MAX_FEEDBACK_REASON = 500;
+
+/** How many finished jobs an agent remembers the owner of, so verdicts can be attributed. */
+const REMEMBERED_JOBS = 200;
 
 const DEFAULTS = {
   root: "agents",
@@ -82,6 +91,16 @@ export const topics = {
    */
   invokeAs: (root, id, owner) => `${root}/commands/${id}/invoke/${owner}`,
   invokeFilter: (root, id) => `${root}/commands/${id}/invoke/+`,
+  /**
+   * v1.5: where an agent hears what its work was worth.
+   *
+   * The command path and not the job path, because an agent under enforced
+   * ACLs subscribes only to its own job scope — a verdict left in the
+   * requester's scope is one the agent it is about could never read. Owner in
+   * the topic, exactly as `invokeAs`, and for the same reason.
+   */
+  feedback: (root, id, owner) => `${root}/commands/${id}/feedback/${owner}`,
+  feedbackFilter: (root, id) => `${root}/commands/${id}/feedback/+`,
   cancel: (root, id) => `${root}/commands/${id}/cancel`,
   events: (root, owner, jobId) => `${root}/jobs/${owner}/${jobId}/events`,
   result: (root, owner, jobId) => `${root}/jobs/${owner}/${jobId}/result`,
@@ -145,7 +164,20 @@ export async function connect(options = {}) {
   const watchers = new Set();
   const commandObservers = new Set();
   const peerWaiters = new Set();
+  const feedbackListeners = new Set();
   const selfScope = ownerScope(agentId);
+  // Who asked for each job this agent served, kept after the job settles.
+  //
+  // A verdict arrives long after the work, by which time `active` has forgotten
+  // the job — and without knowing who asked, the one rule that matters cannot
+  // be applied. Bounded and insertion-ordered: the oldest is dropped, and a
+  // verdict on a job that has fallen off the end is told exactly that rather
+  // than being refused as an impostor.
+  const served = new Map();            // jobId -> owner scope
+  const remember = (jobId, owner) => {
+    served.set(jobId, owner);
+    if (served.size > REMEMBERED_JOBS) served.delete(served.keys().next().value);
+  };
 
   const jobRe = topics.jobPattern(root);
   const regRe = topics.registryPattern(root);
@@ -153,6 +185,8 @@ export async function connect(options = {}) {
   // The v1.4 form. Captured separately so the owner segment reaches onInvoke as
   // it arrived — it is the string the broker authorised.
   const cmdOwnerRe = new RegExp(`^${escapeRe(root)}/commands/([^/]+)/invoke/([^/]+)$`);
+  // v1.5. Same shape, and the owner segment reaches the handler as it arrived.
+  const feedbackRe = new RegExp(`^${escapeRe(root)}/commands/([^/]+)/feedback/([^/]+)$`);
 
   const client = mqtt.connect(cfg.broker, {
     clientId: cfg.clientId ?? deriveClientId(agentId, root),
@@ -245,8 +279,70 @@ export async function connect(options = {}) {
       return onInvoke(raw, decodeURIComponent(cmdOwner[2]));
     }
 
+    const verdict = feedbackRe.exec(topic);
+    if (verdict) {
+      if (decodeURIComponent(verdict[1]) !== agentId) return;
+      return onFeedback(decodeURIComponent(verdict[2]), raw);
+    }
+
     if (topic === topics.cancel(root, agentId)) return onCancel(raw);
   });
+
+  /**
+   * A verdict on work this agent did (v1.5).
+   *
+   * The owner in the topic is the one the broker matched, so it is who this is
+   * from; the payload's opinion of that is not consulted. A verdict for a job
+   * that owner did not request is refused rather than reattributed — the same
+   * rule v1.4 applies to invokes, because the mesh does not quietly decide
+   * which of two identities somebody meant.
+   */
+  function onFeedback(judge, raw) {
+    let msg;
+    try { msg = JSON.parse(raw); } catch { return log("feedback: unparseable payload"); }
+
+    const jobId = String(msg?.jobId ?? "").trim();
+    const claimed = ownerScope(judge);
+    // Refusals are published where the sender can read them: in the scope it
+    // published from. A verdict that vanishes silently is worse than none,
+    // because the requester goes on believing the mesh knows something it does
+    // not.
+    const refuse = (error) => {
+      log(`feedback refused from ${judge}: ${error}`);
+      if (jobId) pub(topics.events(root, claimed, jobId), { jobId, type: "feedback_refused", error, ts: nowIso() });
+    };
+
+    if (!jobId) return refuse("a verdict must name the job it is about");
+
+    const verdict = String(msg?.verdict ?? "").trim().toLowerCase();
+    if (!VERDICTS.includes(verdict)) {
+      return refuse(`unknown verdict ${JSON.stringify(msg?.verdict ?? null)} — expected one of ${VERDICTS.join(", ")}`);
+    }
+
+    const owner = served.get(jobId);
+    // Unknown is not the same as unauthorised, and the difference is worth
+    // saying: the record is bounded, so a verdict on a job that scrolled off
+    // the end is blameless rather than a rejection.
+    if (owner === undefined) {
+      return refuse(`no job ${jobId} here — it was never served by this agent, or it has already ` +
+        `fallen off the end of this agent's history`);
+    }
+    if (claimed !== owner) {
+      return refuse(`job ${jobId} was requested by ${owner}, and this verdict arrived as ${claimed} — ` +
+        `refused rather than reattributed`);
+    }
+
+    const reason = String(msg?.reason ?? "").trim().slice(0, MAX_FEEDBACK_REASON);
+    const entry = { jobId, verdict, by: judge, ...(reason ? { reason } : {}), ts: msg?.ts ?? nowIso() };
+
+    // On the job's own timeline too, so anything watching the mesh records it
+    // without subscribing to anything new.
+    pub(topics.events(root, owner, jobId), { jobId, owner, type: "feedback", verdict, ...(reason ? { note: reason } : {}), ts: nowIso() });
+    log(`feedback: ${judge} judged job ${jobId} ${verdict}${reason ? `: ${reason}` : ""}`);
+    for (const l of feedbackListeners) {
+      try { l(entry); } catch (err) { log(`feedback listener threw: ${err.message}`); }
+    }
+  }
 
   function onRegistry(peerId, kind, raw) {
     if (peerId === agentId) return;
@@ -332,6 +428,7 @@ export async function connect(options = {}) {
     const controller = new AbortController();
     const entry = { controller, children: [], owner, settled: false, service: msg.service };
     active.set(jobId, entry);
+    remember(jobId, owner);
 
     const emit = (payload) => {
       if (entry.settled) return;                       // suppress late output after cancel
@@ -473,6 +570,10 @@ export async function connect(options = {}) {
           ? {}
           : { [topics.invokeFilter(root, agentId)]: { qos: 1 } }),
         [topics.cancel(root, agentId)]: { qos: 1 },
+        // v1.5. Separate for the same reason: a broker that refuses verdicts
+        // should be reported as refusing verdicts rather than taking every
+        // command topic down with it.
+        [topics.feedbackFilter(root, agentId)]: { qos: 1 },
         [`${root}/registry/+/profile`]: { qos: 1 },
         [`${root}/registry/+/status`]: { qos: 1 },
         [`${root}/jobs/${selfScope}/#`]: { qos: 1 },
@@ -498,6 +599,37 @@ export async function connect(options = {}) {
       }
       advertise();
       return agent;
+    },
+
+    /**
+     * Say what a peer's work was worth (v1.5).
+     *
+     * As this agent, always: the owner segment is `ownerScope(agentId)`, so a
+     * broker rule granting `commands/+/feedback/<me>` permits this and nothing
+     * filed under anyone else's name. An agent that delegates is a requester,
+     * and owes the same verdict a person does.
+     */
+    feedback(peerId, jobId, verdict, reason) {
+      if (!VERDICTS.includes(verdict)) {
+        throw new TypeError(`verdict must be one of ${VERDICTS.join(", ")} — got ${JSON.stringify(verdict)}`);
+      }
+      pub(topics.feedback(root, peerId, selfScope), {
+        jobId, verdict,
+        ...(reason ? { reason: String(reason).slice(0, MAX_FEEDBACK_REASON) } : {}),
+        ts: nowIso(),
+      });
+      return agent;
+    },
+
+    /**
+     * Be told when somebody judges this agent's work.
+     *
+     * Only verdicts that survived the owner check reach here — a listener never
+     * has to wonder whether the sender was entitled to the opinion.
+     */
+    onFeedback(fn) {
+      feedbackListeners.add(fn);
+      return () => feedbackListeners.delete(fn);
     },
 
     /** Ask a specific peer and wait for its terminal result. */
@@ -627,4 +759,4 @@ export async function connect(options = {}) {
   return agent;
 }
 
-export default { connect, ownerScope, topics, deriveClientId, PROTOCOL_VERSION };
+export default { connect, ownerScope, topics, deriveClientId, PROTOCOL_VERSION, VERDICTS };

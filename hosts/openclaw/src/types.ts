@@ -60,6 +60,28 @@ export interface MeshConfig {
    * generates, because at that moment it knows exactly what it applied.
    */
   ownerEnforced?: boolean;
+  /**
+   * v1.5: whether to serve `commands/<agentId>/feedback/<owner>`.
+   *
+   * **Off by default, and deliberately not a licence check.** A verdict is only
+   * worth recording if the broker vouches for who is speaking. On a broker with
+   * no rules — the `docker run eclipse-mosquitto` in the README, a shared
+   * development broker, anything anonymous — any connected client can publish a
+   * verdict in anybody's name, and this agent has no way to tell. Accepting
+   * those would let anyone on the broker decide what the mesh believes about
+   * work they had nothing to do with, and every later use of that record
+   * inherits the lie.
+   *
+   * The rules that make a verdict unforgeable are `commands/+/feedback/<id>`,
+   * applied per identity. The agent cannot find out whether they were applied —
+   * it can observe a refused subscription, but not that a topic it CAN publish
+   * to is closed to everyone else. So this is stated by whoever applied them:
+   * `plexus-server add-agent` writes "accept" into the config it generates,
+   * because at that moment it knows exactly what it granted.
+   *
+   * Set it by hand only if you have applied the equivalent rules by hand.
+   */
+  feedback?: "off" | "accept";
   /** Hard wall-clock cap per job before the mesh declares it failed. Default 30 min. */
   maxJobDurationMs?: number;
   /**
