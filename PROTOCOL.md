@@ -45,10 +45,11 @@ another client on the same broker, and each has a test:
 9. An invoke carrying its owner in the topic is served, and one whose payload `requestedBy`
    disagrees with that owner is **refused before any work starts**. What the implementation does
    with the two forms is published in `ownerPolicy.topic`.
-10. An implementation that serves verdicts refuses one published to
-    `<root>/commands/<agentId>/feedback/<owner>` for a job that owner did not request — **refused,
-    not reattributed** — and publishes the refusal where the sender can read it. Whether it serves
-    them at all is published in `ownerPolicy.feedback`.
+10. A verdict is **filed with a recorder**, never sent to the agent it judges: an implementation
+    publishes one to `<root>/feedback/<owner>/<agentId>/<jobId>` and has no path to another agent's
+    command topic. One relayed to `<root>/commands/<agentId>/feedback/<owner>` for a job that owner
+    did not request is **refused, not reattributed**, and the refusal is published where the sender
+    can read it.
 
 ## Why MQTT
 
@@ -224,7 +225,7 @@ actually enforces, so you never have to infer enforcement from the version numbe
 | `agents/commands/<agentId>/query` | you → agent | `{}` lists services; `{ jobId }` checks state. Reply on `.../query/reply` |
 | `agents/commands/<agentId>/cancel` | you → agent | `{ jobId, requestedBy }`. Reply as a terminal `cancelled` result |
 | `agents/commands/<agentId>/config` | you → agent | service CRUD. Reply on `.../config/reply` |
-| `agents/commands/<agentId>/feedback/<owner>` | you → agent | **v1.5.** `{ jobId, verdict, reason? }` — what the work was worth. QoS 1, **not retained** |
+| `agents/commands/<agentId>/feedback/<owner>` | **recorder** → agent | **v1.5.** A relayed verdict. Publish granted to the recorder alone |
 
 ## Capabilities are data, not code
 
@@ -605,8 +606,18 @@ Until v1.5 a job ended and nothing came back. The requester used the result or b
 agent never learned which — so a bad answer was indistinguishable from a good one on the wire, and
 a capability repeated the same mistake for as long as anyone kept asking.
 
+A verdict is not a message between two peers. It is an assertion about the past that outlives the
+exchange, and it is only worth as much as the thing that vouched for it. So it travels in two legs,
+through a **recorder**: a participant that can see the whole mesh.
+
 ```
-agents/commands/<agentId>/feedback/<owner>    { jobId, verdict, reason? }   QoS 1, NOT retained
+requester ──▶  agents/feedback/<owner>/<agentId>/<jobId>        filed    QoS 1, not retained
+                                    │
+                                 recorder  ── checks it against the mesh's own record of the job
+                                    │
+               agents/commands/<agentId>/feedback/<owner>       relayed  QoS 1, not retained
+                                    ▼
+                                  agent
 ```
 
 `verdict` is one of **`good`**, **`bad`**, **`unusable`**. Three values and not a score: a number
@@ -614,52 +625,49 @@ invites averaging, and the average of a scale nobody calibrated says nothing. `u
 apart from `bad` because they ask for different things — bad work can be improved, an unusable
 answer means the capability did not do its job at all.
 
-**It rides the command path, not the job path.** `jobs/<owner>/<jobId>/feedback` is where a verdict
-belongs by subject matter, and it is unreachable: under enforced ACLs an agent subscribes only to
-`jobs/<its own scope>/#`, so a verdict left in the requester's scope is one the agent can never
-read. The alternative — letting requesters publish into the agent's own job scope — would hand them
-a topic adjacent to the one results are retained on. So a verdict takes the shape the mesh already
-enforces: **the owner is in the topic**, matched by the same kind of broker rule as `invoke`.
+**Why a recorder and not a direct message.** An agent knows the jobs it served and nothing else. It
+cannot tell whether a verdict is consistent with the rest of the mesh, whether the same requester
+has filed a contradicting one elsewhere, or whether the job it names was ever really requested by
+the owner claiming it. A participant that sees every job can answer all three. Filing a verdict at
+the agent would put the check in the one place least able to make it.
 
-**Not retained.** A verdict is an event. Retained, it would replay on every resubscribe and be
-re-counted each time. Durable sessions (`clean: false`) already hold it for an agent that is
-offline, which is what they are for.
+**Publishing is not delivery.** Nothing reaches an agent until a recorder relays it. On a mesh with
+no recorder, `agents/feedback/…` is a topic nobody collects, and the loop does not close. That is
+the design rather than a shortcoming, and it is why no implementation offers a switch: a feature
+that is absent because a participant is absent cannot be turned on by editing a config, and a
+config is a line the operator of the agent can always edit. The guarantee is structural.
 
-**Served only where the broker vouches for who is speaking.** This is the one part of the protocol
-an implementation should refuse by default, and it is not a licence check. On a broker with no
-rules — an anonymous development broker, a shared one — any connected client can publish a verdict
-in anybody's name, and the agent has no way to tell. Accepting those lets anyone who can reach the
-broker decide what the mesh believes about work they had nothing to do with, and everything built
-on that record inherits the lie. The rules that make a verdict unforgeable are
-`commands/+/feedback/<id>`, granted per identity; an agent cannot discover whether they were
-applied, because a topic *it* may publish to reveals nothing about who else may. So it is stated in
-configuration by whoever applied them, exactly as `ownerEnforced` is, and advertised as
-`ownerPolicy.feedback` (`off` | `accept`) so a requester reads it rather than publishing into
-silence and concluding the mesh agreed.
+**Both legs carry the owner in the topic**, so a broker rule bounds who may file a verdict and
+under whose name — `feedback/ci/+/+` is a rule any MQTT broker can apply. Publish on the second leg
+is granted to the recorder alone; an agent that receives one there has something already checked
+against the mesh's record, which is what makes it worth acting on.
 
-**The switch governs both directions.** An implementation that does not accept verdicts must not
-send them either. Gating only what it accepts would leave it publishing opinions into a mesh where
-its own carry no weight: a peer with rules refuses them as unattributable, a peer without rules
-files them beside anybody else's forgery, and either way its job timelines fill with refusals it
-can do nothing about. An agent that cannot be trusted to speak should not speak.
+**The second leg is the command path and not the job path.** `jobs/<owner>/<jobId>/` is where a
+verdict belongs by subject matter, and it is unreachable: under enforced ACLs an agent subscribes
+only to `jobs/<its own scope>/#`.
 
-**A requester is a requester.** The protocol does not distinguish a person from an agent here. An
-agent that delegates is a requester and owes the same verdict a person does — and because the
-sender's identity comes from the topic, both are equally accountable for it.
+**Neither leg is retained.** A verdict is an event; retained, it would replay on every resubscribe
+and be counted again each time. Durable sessions (`clean: false`) already hold it for a participant
+that is offline, which is what they are for.
 
-**Refused, not reattributed.** The owner in the topic is the one the broker matched, so it is
-authoritative; the payload's opinion of who is speaking is not consulted. A verdict for a job that
-owner did not request is refused, and the refusal is published as a `feedback_refused` event on
-`jobs/<claimed owner>/<jobId>/events` — where the sender can read it. A verdict that silently
-vanishes is worse than none, because the requester goes on believing the mesh knows something it
-does not.
+**A requester is a requester.** The protocol does not distinguish a person from an agent. An agent
+that delegates owes the same verdict a person does, files it the same way, and is bounded by the
+same rule — as itself, never under another identity's name.
+
+**Refused, not reattributed.** The owner in the topic is the one the broker matched; a payload's
+opinion of who is speaking is not consulted. A verdict for a job that owner did not request is
+refused, and the refusal is published as a `feedback_refused` event on
+`jobs/<claimed owner>/<jobId>/events`, where the sender can read it. A verdict that vanishes
+silently is worse than none, because the requester goes on believing the mesh knows something it
+does not. An unknown job is refused with a **different** message: records are bounded, and a
+verdict on a job that has aged out is blameless rather than a rejection.
 
 **One verdict per requester per job.** A later verdict from the same requester replaces the earlier
-one rather than stacking beside it: somebody who clicks 👎 and then 👍 has one opinion, and an
-agent retrying a delegation would otherwise leave a verdict per attempt. A redelivered copy older
-than the one already held is ignored, so QoS 1 cannot undo a correction.
+one rather than stacking beside it — somebody who clicks 👎 and then 👍 has one opinion, and an
+agent retrying a delegation would otherwise leave one per attempt. A redelivered copy older than
+the one already held is ignored, so QoS 1 cannot undo a correction.
 
-An accepted verdict is also published as a `feedback` event on the job's own timeline, so anything
+A relayed verdict is also published as a `feedback` event on the job's own timeline, so anything
 watching the mesh records it without subscribing to anything new.
 
 ## Cancellation
@@ -713,8 +721,17 @@ agents/commands/conan/query/reply    ← if you use query
 
 Do NOT subscribe `agents/jobs/#` — that's the pre-1.1 firehose of everyone's jobs.
 
+To file a verdict on work an agent did for you:
+
+```
+agents/feedback/mohanad/conan/<jobId>   ← as yourself; the recorder collects it
+```
+
 As the agent (conan) itself: the `commands/conan/*` topics — including
-`commands/conan/feedback/+` — plus `agents/jobs/#` (full history for the web panel).
+`commands/conan/feedback/+`, which only the recorder may write — plus `agents/jobs/#` (full
+history for the web panel).
+
+As the recorder: `agents/feedback/+/+/+`, and everything else it already reads.
 
 ## Example flow
 
@@ -751,22 +768,28 @@ previously declared but never enforced; it is now enforced on every route.
 
 ## Changes v1.4 → v1.5
 
-One addition, and it is the first message in the protocol that travels *back* along the request.
+One addition, and it is the first message in the protocol that travels *back* along the request —
+and the first that does not go straight from one end to the other.
 
-- **`<root>/commands/<agentId>/feedback/<owner>`.** A verdict — `good`, `bad` or `unusable`, with
-  an optional reason — on a job the agent served. QoS 1, not retained.
-- **The command path, deliberately.** A verdict belongs with the job by subject matter and cannot
-  live there: an agent under enforced ACLs sees only its own job scope, so a verdict in the
-  requester's scope would be unreadable to the agent it is about.
+- **`<root>/feedback/<owner>/<agentId>/<jobId>`.** A verdict — `good`, `bad` or `unusable`, with an
+  optional reason — **filed with a recorder**, which checks it against the mesh's own record and
+  relays it to the agent on `<root>/commands/<agentId>/feedback/<owner>`. QoS 1, neither retained.
+- **Two legs, because an agent cannot check a verdict about itself.** It knows the jobs it served
+  and nothing else — not whether the job was really the claimed owner's, nor what that requester
+  said elsewhere. A participant that sees every job can answer all three.
+- **The second leg is the command path**, because an agent under enforced ACLs reads only its own
+  job scope, so a verdict left in the requester's scope would be unreadable to the agent it is
+  about.
 - **Refused, not reattributed**, on the same rule v1.4 applies to invokes. The owner in the topic
   is the one the broker matched; a verdict for another owner's job is refused and told so.
 - **One verdict per requester per job**, newest winning, so a retry or a redelivery does not become
   a second opinion.
 - **Nothing distinguishes a person from an agent.** A delegating agent is a requester and owes the
   same verdict, which is what makes the loop close on a mesh where most requesters are not people.
-- **Off unless the broker enforces identity**, advertised as `ownerPolicy.feedback`. The one
-  message in the protocol that is refused by default, because an unenforced verdict is worse than
-  no verdict: it is a stranger's opinion recorded as the requester's.
+- **Filed with a recorder, not sent to the agent.** The only two-leg message in the protocol, and
+  the only one whose delivery depends on a participant beyond the two ends. On a mesh with no
+  recorder the loop does not close — a guarantee no implementation can be configured out of,
+  because it is the absence of a participant rather than a check anyone holds.
 
 Nothing about v1.4 changes. An agent that never receives a verdict behaves exactly as it did, and a
 requester that never sends one is not in violation of anything.

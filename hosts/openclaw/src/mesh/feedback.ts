@@ -11,7 +11,7 @@
  * refusal path is not something that only happens against a live broker.
  */
 
-import { feedbackTopic, ownerScope } from "./topics.js";
+import { feedbackFileTopic, ownerScope } from "./topics.js";
 import type { Feedback, JobRecord, Verdict } from "../types.js";
 
 const VERDICTS: ReadonlySet<string> = new Set<Verdict>(["good", "bad", "unusable"]);
@@ -107,26 +107,22 @@ export interface OutboundVerdict {
 }
 
 /**
- * What to publish to tell a peer what its work was worth — or null, when this
- * agent takes no part in feedback.
+ * What to publish to file a verdict on a peer's work — or null, when there is
+ * nothing worth publishing.
  *
- * The only way a verdict leaves this agent, so the gate is in one place and
- * nothing added later can route around it by accident.
+ * It is addressed to the mesh's recorder, never to the peer. There is no
+ * configuration that changes this and no second path: an agent cannot deliver a
+ * verdict to another agent, only file one, and whether that filing becomes
+ * delivery is decided by something else entirely. On a mesh with no recorder it
+ * is a message nobody collects — the feature is absent because a participant is
+ * absent, which is a stronger guarantee than any flag this agent could hold,
+ * since a flag is a line in a file the agent's own operator can edit.
  *
- * Returning null when the mode is off is the point. Gating only what an agent
- * ACCEPTS would leave it sending opinions into a mesh where its own carry no
- * weight: a peer with rules refuses them as unattributable, a peer without
- * rules files them beside anybody else's forgery, and either way this agent's
- * job timelines fill with refusals it can do nothing about. An agent that
- * cannot be trusted to speak should not speak.
- *
- * `selfScope` is this agent's own scope and is not a parameter a caller
- * chooses freely: it is the segment a broker rule granted, and a verdict sent
- * under any other name is one the broker refuses — silently, because a refused
- * publish is still ACKed at QoS 1.
+ * `selfScope` is this agent's own scope and is not a caller's free choice: it
+ * is the segment a broker rule grants, and a verdict filed under any other name
+ * is refused silently, because a refused publish is still ACKed at QoS 1.
  */
 export function verdictFor(
-  mode: "off" | "accept",
   root: string,
   peerId: string,
   selfScope: string,
@@ -134,11 +130,12 @@ export function verdictFor(
   verdict: Verdict,
   reason?: string,
 ): OutboundVerdict | null {
-  if (mode !== "accept") return null;
-  if (!jobId || !VERDICTS.has(verdict)) return null;
+  // Refused here rather than put on the wire for the recorder to reject: a
+  // message that can only be thrown away is not worth sending.
+  if (!jobId || !peerId || !VERDICTS.has(verdict)) return null;
   const why = String(reason ?? "").trim();
   return {
-    topic: feedbackTopic(root, peerId, selfScope),
+    topic: feedbackFileTopic(root, selfScope, peerId, jobId),
     payload: {
       jobId,
       verdict,

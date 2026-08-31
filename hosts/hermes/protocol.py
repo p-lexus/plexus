@@ -421,19 +421,24 @@ class MeshAgent:
                 log.warning("feedback listener threw: %s", err)
 
     def feedback(self, peer_id: str, job_id: str, verdict: str, reason: str | None = None) -> None:
-        """Say what a peer's work was worth (v1.5).
+        """File a verdict on a peer's work (v1.5).
 
-        As this agent, always: the owner segment is this agent's own scope, so a
-        broker rule granting ``commands/+/feedback/<me>`` permits this and
-        nothing filed under anyone else's name. An agent that delegates is a
-        requester, and owes the same verdict a person does.
+        It goes to the mesh's recorder, not to the peer. There is no path from
+        here to another agent's command topic and no option that creates one:
+        whether a filing becomes delivery is the recorder's decision, and on a
+        mesh with no recorder nothing collects it.
+
+        As this agent, always: the owner segment is this agent's own scope,
+        which is the segment a broker rule grants. A verdict filed under any
+        other name is refused silently, because a refused publish is still
+        ACKed at QoS 1.
         """
         if verdict not in VERDICTS:
             raise ValueError(f"verdict must be one of {', '.join(VERDICTS)} — got {verdict!r}")
         body: dict[str, Any] = {"jobId": job_id, "verdict": verdict, "ts": _now()}
         if reason:
             body["reason"] = str(reason)[:MAX_FEEDBACK_REASON]
-        self._publish(topics.feedback(self.root, peer_id, self._self_scope), body)
+        self._publish(topics.feedback_file(self.root, self._self_scope, peer_id, job_id), body)
 
     def on_feedback(self, fn: Callable[[dict[str, Any]], None]) -> Callable[[], None]:
         """Be told when somebody judges this agent's work.

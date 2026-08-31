@@ -126,22 +126,61 @@ export const peerCancelTopic = (root: string, agentId: string): string =>
   `${root}/commands/${agentId}/cancel`;
 
 /**
- * Where an agent hears what its work was worth (v1.5).
+ * Where a requester files a verdict on work an agent did (v1.5).
  *
- * Deliberately the command path and not the job path. `jobs/<owner>/<jobId>/`
- * is where the verdict belongs by subject matter, and it is unreachable: under
- * enforced ACLs an agent subscribes only to `jobs/<its own scope>/#`, so a
- * verdict left in the requester's scope is one the agent can never read. The
- * alternative — letting requesters publish into the agent's own job scope —
- * hands them a topic adjacent to the one results are retained on.
+ * Addressed to the mesh's recorder, not to the agent. A verdict is not a
+ * message between two peers — it is an assertion about the past that outlives
+ * both of them, and the only thing on a mesh positioned to check it is the one
+ * that can see every job: an agent knows the jobs it served, and nothing about
+ * whether the requester's claim is consistent with the rest of the mesh.
  *
- * So it takes the shape the mesh already enforces: owner in the topic, exactly
- * as `invoke` does, matched by the same broker rule and forgeable by nobody.
+ * Everything addressable is in the topic — owner, agent, job — so a broker rule
+ * can bound who may file one and under whose name. `feedback/ci/+/+` is a rule
+ * any MQTT broker can apply.
+ *
+ * Publishing here is not delivery. Nothing reaches the agent until a recorder
+ * relays it, and on a mesh without one this topic is a message nobody collects.
+ * That is the design and not a shortcoming: a verdict nobody authenticated is
+ * worth less than no verdict, because it is a stranger's opinion filed under
+ * the requester's name.
+ */
+export const feedbackFileTopic = (
+  root: string, owner: string, agentId: string, jobId: string,
+): string => `${root}/feedback/${owner}/${agentId}/${jobId}`;
+
+/** Every verdict filed on this mesh — the recorder's subscription. */
+export const feedbackFileFilter = (root: string): string => `${root}/feedback/+/+/+`;
+
+export interface ParsedFeedbackFile {
+  owner: string;
+  agentId: string;
+  jobId: string;
+}
+
+/** The three names a filed verdict carries, or null if this is not one. */
+export function parseFeedbackFileTopic(root: string, topic: string): ParsedFeedbackFile | null {
+  const prefix = `${root}/feedback/`;
+  if (!topic.startsWith(prefix)) return null;
+  const parts = topic.slice(prefix.length).split("/");
+  if (parts.length !== 3 || parts.some((p) => !p)) return null;
+  return { owner: parts[0], agentId: parts[1], jobId: parts[2] };
+}
+
+/**
+ * Where an agent hears what its work was worth — written by the recorder.
+ *
+ * The command path and not the job path, because under enforced ACLs an agent
+ * subscribes only to `jobs/<its own scope>/#`: a verdict left in the
+ * requester's scope is one the agent it is about could never read.
+ *
+ * Publish here is granted to the recorder alone. That is what makes an arriving
+ * verdict worth acting on — it has already been checked against the mesh's own
+ * record of who asked for what, which no single agent can do for itself.
  */
 export const feedbackTopic = (root: string, agentId: string, owner: string): string =>
   `${root}/commands/${agentId}/feedback/${owner}`;
 
-/** Every verdict addressed to this agent, whoever it is from. */
+/** Every verdict relayed to this agent. */
 export const feedbackFilter = (root: string, agentId: string): string =>
   `${root}/commands/${agentId}/feedback/+`;
 
