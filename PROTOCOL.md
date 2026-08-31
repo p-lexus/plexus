@@ -637,6 +637,12 @@ configuration by whoever applied them, exactly as `ownerEnforced` is, and advert
 `ownerPolicy.feedback` (`off` | `accept`) so a requester reads it rather than publishing into
 silence and concluding the mesh agreed.
 
+**The switch governs both directions.** An implementation that does not accept verdicts must not
+send them either. Gating only what it accepts would leave it publishing opinions into a mesh where
+its own carry no weight: a peer with rules refuses them as unattributable, a peer without rules
+files them beside anybody else's forgery, and either way its job timelines fill with refusals it
+can do nothing about. An agent that cannot be trusted to speak should not speak.
+
 **A requester is a requester.** The protocol does not distinguish a person from an agent here. An
 agent that delegates is a requester and owes the same verdict a person does — and because the
 sender's identity comes from the topic, both are equally accountable for it.

@@ -16,7 +16,7 @@ const dist = (p) => new URL(`../dist/${p}`, import.meta.url).href;
 const { ownerScope, buildTopics, jobTopicPattern, parseJobTopic, escapeRe,
   peerInvokeTopicFor, invokeFilter, invokeTopicOwner,
   feedbackTopic, feedbackFilter, feedbackTopicOwner } = await import(dist("mesh/topics.js"));
-const { readFeedback, MAX_REASON } = await import(dist("mesh/feedback.js"));
+const { readFeedback, verdictFor, MAX_REASON } = await import(dist("mesh/feedback.js"));
 const { normalizeJobPublish, renderPrompt, unresolvedPlaceholders, publishRefusal, missingRequiredArgs } = await import(dist("mesh/payload.js"));
 const { createJobStore, MAX_HISTORY } = await import(dist("mesh/jobs.js"));
 const { createVarStore, maskValue } = await import(dist("mesh/vars.js"));
@@ -1288,6 +1288,26 @@ t("verdicts are off unless somebody says the broker enforces who is speaking", (
       resolveConfig({ broker: { url: "mqtt://x" }, mesh: { feedback: v } }, here).mesh.feedback,
       "off", `mesh.feedback ${JSON.stringify(v)} must not enable it`);
   }
+});
+
+t("an agent that takes no part in feedback sends none either", () => {
+  // Gating only what it ACCEPTS would leave it publishing opinions into a mesh
+  // where its own carry no weight — and collecting the refusals.
+  assert.equal(verdictFor("off", ROOT, "dba", "conan", "ask-1", "good"), null);
+  assert.equal(verdictFor(undefined, ROOT, "dba", "conan", "ask-1", "good"), null);
+
+  const out = verdictFor("accept", ROOT, "dba", "conan", "ask-1", "bad", "  wrong table  ");
+  assert.equal(out.topic, `${ROOT}/commands/dba/feedback/conan`,
+    "sent under this agent's own scope, which is the only segment a rule grants it");
+  assert.equal(out.payload.verdict, "bad");
+  assert.equal(out.payload.reason, "wrong table");
+
+  // Nothing outside the vocabulary, and nothing without a job, leaves at all.
+  assert.equal(verdictFor("accept", ROOT, "dba", "conan", "ask-1", "excellent"), null);
+  assert.equal(verdictFor("accept", ROOT, "dba", "conan", "", "good"), null);
+  assert.equal(
+    verdictFor("accept", ROOT, "dba", "conan", "j", "bad", "x".repeat(MAX_REASON + 50)).payload.reason.length,
+    MAX_REASON);
 });
 
 t("a verdict never creates a job, moves its state, or restarts its clock", () => {

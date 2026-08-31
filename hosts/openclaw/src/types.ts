@@ -61,7 +61,14 @@ export interface MeshConfig {
    */
   ownerEnforced?: boolean;
   /**
-   * v1.5: whether to serve `commands/<agentId>/feedback/<owner>`.
+   * v1.5: whether this agent takes part in feedback at all.
+   *
+   * **Both directions.** Off, it neither serves `commands/<agentId>/feedback/
+   * <owner>` nor publishes a verdict to a peer. Gating only what it accepts
+   * would leave it sending opinions into a mesh where its own are worthless —
+   * a peer with rules refuses them as unattributable, a peer without rules
+   * records them beside anybody else's forgery, and either way its job
+   * timelines fill with refusals it can do nothing about.
    *
    * **Off by default, and deliberately not a licence check.** A verdict is only
    * worth recording if the broker vouches for who is speaking. On a broker with

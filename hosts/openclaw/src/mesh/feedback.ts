@@ -11,7 +11,7 @@
  * refusal path is not something that only happens against a live broker.
  */
 
-import { ownerScope } from "./topics.js";
+import { feedbackTopic, ownerScope } from "./topics.js";
 import type { Feedback, JobRecord, Verdict } from "../types.js";
 
 const VERDICTS: ReadonlySet<string> = new Set<Verdict>(["good", "bad", "unusable"]);
@@ -96,6 +96,54 @@ export function readFeedback(
       // disconnect keeps the moment it was formed rather than the moment it
       // was finally delivered.
       ts: Number.isNaN(stamped) ? now : stamped,
+    },
+  };
+}
+
+/** A verdict on its way out: the topic to publish to, and what to put on it. */
+export interface OutboundVerdict {
+  topic: string;
+  payload: Record<string, unknown>;
+}
+
+/**
+ * What to publish to tell a peer what its work was worth — or null, when this
+ * agent takes no part in feedback.
+ *
+ * The only way a verdict leaves this agent, so the gate is in one place and
+ * nothing added later can route around it by accident.
+ *
+ * Returning null when the mode is off is the point. Gating only what an agent
+ * ACCEPTS would leave it sending opinions into a mesh where its own carry no
+ * weight: a peer with rules refuses them as unattributable, a peer without
+ * rules files them beside anybody else's forgery, and either way this agent's
+ * job timelines fill with refusals it can do nothing about. An agent that
+ * cannot be trusted to speak should not speak.
+ *
+ * `selfScope` is this agent's own scope and is not a parameter a caller
+ * chooses freely: it is the segment a broker rule granted, and a verdict sent
+ * under any other name is one the broker refuses — silently, because a refused
+ * publish is still ACKed at QoS 1.
+ */
+export function verdictFor(
+  mode: "off" | "accept",
+  root: string,
+  peerId: string,
+  selfScope: string,
+  jobId: string,
+  verdict: Verdict,
+  reason?: string,
+): OutboundVerdict | null {
+  if (mode !== "accept") return null;
+  if (!jobId || !VERDICTS.has(verdict)) return null;
+  const why = String(reason ?? "").trim();
+  return {
+    topic: feedbackTopic(root, peerId, selfScope),
+    payload: {
+      jobId,
+      verdict,
+      ...(why ? { reason: why.slice(0, MAX_REASON) } : {}),
+      ts: new Date().toISOString(),
     },
   };
 }
