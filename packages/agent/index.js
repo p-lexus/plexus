@@ -117,7 +117,7 @@ export const topics = {
   cancel: (root, id) => `${root}/commands/${id}/cancel`,
   events: (root, owner, jobId) => `${root}/jobs/${owner}/${jobId}/events`,
   result: (root, owner, jobId) => `${root}/jobs/${owner}/${jobId}/result`,
-  jobPattern: (root) => new RegExp(`^${escapeRe(root)}/jobs/([^/]+)/([^/]+)/(events|result)$`),
+  jobPattern: (root) => new RegExp(`^${escapeRe(root)}/jobs/([^/]+)/([^/]+)/(events|result|postmortem)$`),
   registryPattern: (root) => new RegExp(`^${escapeRe(root)}/registry/([^/]+)/(profile|status)$`),
 };
 

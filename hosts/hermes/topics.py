@@ -131,7 +131,7 @@ def job_pattern(root: str) -> re.Pattern[str]:
     Anchored, so the unscoped ``jobs/<jobId>/...`` form can never match — job
     topics are always owner-scoped.
     """
-    return re.compile(rf"^{re.escape(root)}/jobs/([^/]+)/([^/]+)/(events|result)$")
+    return re.compile(rf"^{re.escape(root)}/jobs/([^/]+)/([^/]+)/(events|result|postmortem)$")
 
 
 def registry_pattern(root: str) -> re.Pattern[str]:

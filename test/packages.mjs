@@ -225,6 +225,36 @@ t("topic matching follows MQTT, including the $SYS exclusion", () => {
   assert.ok(!topicMatches("a/b", "a/b/c"));
 });
 
+t("a failed job is routable, and so is the account of why", () => {
+  const routes = [
+    { id: "failed", when: { type: ["error", "timeout"] }, to: "ops", title: "{{service}} failed", level: "serious" },
+    { id: "why", when: { kind: "postmortem" }, to: "ops", title: "why {{service}} failed", body: "{{lesson}}" },
+  ];
+
+  const failure = plan(routes, { jobId: "j1", owner: "ci", kind: "result", service: "code.review", type: "error", error: "timed out reading the diff" });
+  assert.equal(failure.length, 1);
+  assert.equal(failure[0].route.id, "failed");
+  assert.equal(failure[0].payload.title, "code.review failed");
+  assert.equal(failure[0].payload.level, "serious");
+
+  // The explanation arrives later and separately. Holding the failure until a
+  // postmortem that may never be written would mean never reporting the ones
+  // that matter most.
+  const account = plan(routes, { jobId: "j1", owner: "ci", kind: "postmortem", service: "code.review",
+    summary: "skipped files under db/", lesson: "read migrations before judging a schema change" });
+  assert.equal(account.length, 1);
+  assert.equal(account[0].route.id, "why");
+  assert.equal(account[0].payload.body, "read migrations before judging a schema change");
+});
+
+t("a postmortem answers to {{type}} as well as to its kind", () => {
+  // So an operator who wrote `when: { type: "postmortem" }` is not silently
+  // matched by nothing.
+  const ctx = deliveryContext({ jobId: "j1", owner: "ci", kind: "postmortem", lesson: "l" });
+  assert.equal(ctx.type, "postmortem");
+  assert.equal(ctx.kind, "postmortem");
+});
+
 // ── notify: matching ────────────────────────────────────
 t("get reads dotted paths and survives missing branches", () => {
   assert.equal(get({ a: { b: { c: 1 } } }, "a.b.c"), 1);
