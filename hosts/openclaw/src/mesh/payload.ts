@@ -43,9 +43,10 @@ export function normalizeJobPublish(
 
   return {
     payload: JSON.stringify(normalised),
-    // Results are retained by protocol; events deliberately are not, so a
-    // subscriber joining mid-job sees the outcome but not stale progress.
-    retain: parsed.kind === "result" ? true : (retainRequested ?? false),
+    // Results and postmortems are retained by protocol; events deliberately are
+    // not, so a subscriber joining mid-job sees the outcome but not stale
+    // progress.
+    retain: parsed.kind === "events" ? (retainRequested ?? false) : true,
   };
 }
 
@@ -71,7 +72,7 @@ export function normalizeJobPublish(
  * milestones are not retained and cost nothing.
  */
 export function publishRefusal(
-  kind: "events" | "result" | null,
+  kind: "events" | "result" | "postmortem" | null,
   state: { cancelled: boolean; finished: boolean },
   jobId: string,
 ): string | null {

@@ -202,6 +202,8 @@ export interface JobRecord {
    * one verdict per attempt.
    */
   feedback?: Feedback[];
+  /** The agent's own account of why this job went wrong, once it has written one. */
+  postmortem?: { summary?: string; lesson?: string; ts: number };
   /** The job that asked for this one; absent on a request that entered the mesh. */
   parentJobId?: string;
   /** The original request every job in a delegation chain shares. */

@@ -580,8 +580,9 @@ publish `commands/+/invoke`) enforce it at the boundary rather than in the agent
 ## Job lifecycle topics
 
 ```
-agents/jobs/<owner>/<jobId>/events    milestones: accepted, started, diff-fetched, analyzing, result-ready…
-agents/jobs/<owner>/<jobId>/result    terminal payload, RETAINED, QoS 1
+agents/jobs/<owner>/<jobId>/events      milestones: accepted, started, diff-fetched, analyzing, result-ready…
+agents/jobs/<owner>/<jobId>/result      terminal payload, RETAINED, QoS 1
+agents/jobs/<owner>/<jobId>/postmortem  why it went wrong, written by the agent, RETAINED, QoS 1
 ```
 
 Every result carries `jobId`, `owner`, `ts`, and `type`. Known types: `review`,
@@ -599,6 +600,36 @@ retained result but not earlier milestones.
 
 Job topics are **always owner-scoped**. There is no unscoped `jobs/<jobId>/…` form: a result
 belongs to exactly one owner and is published to exactly one topic.
+
+## Postmortems: why it went wrong (v1.5)
+
+A job that fails leaves a state and whatever the executor happened to put in the payload. Nobody
+writes down why, so the same capability makes the same mistake until a person notices.
+
+An agent writes its own, triggered by a terminal `error` or `timeout`, or by a `bad`/`unusable`
+verdict — the second matters because an answer that was delivered and wrong looks like a success
+from everywhere except the requester.
+
+```
+agents/jobs/<owner>/<jobId>/postmortem   { jobId, summary, lesson }   RETAINED, QoS 1
+```
+
+Retained, unlike a verdict: a requester coming back tomorrow to ask why should find the answer.
+
+**Three guards, because this is a model writing prompts for a model.**
+
+*Never recursive.* A postmortem is never written about a postmortem. An agent explaining its own
+explanations produces work nobody asked for, and on a capability that keeps failing it does so
+without end.
+
+*Outside the job lifecycle.* No job is created and no watchdog entry is registered, so nothing here
+is re-dispatched, nudged or requeued. If the executor never publishes, nobody is left waiting —
+which is why this is chased less carefully than a job, not more.
+
+*Capped per failure signature.* A capability failing the same way forty times is one thing to
+explain; forty runs explaining it are thirty-nine spent saying it again. Two per signature per
+hour, and a signature is capability + trigger + outcome, so one noisy capability cannot use up the
+budget that would have explained another.
 
 ## Feedback: what the work was worth (v1.5)
 

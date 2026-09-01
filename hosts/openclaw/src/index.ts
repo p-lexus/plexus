@@ -31,12 +31,13 @@ import type { PluginConfig } from "./types.js";
 import { resolveConfig } from "./config.js";
 import { createLogger } from "./logger.js";
 import {
-  buildTopics, jobTopicPattern, parseJobTopic, ownerScope,
+  buildTopics, jobTopicPattern, parseJobTopic, ownerScope, jobPostmortemTopic,
   registryPattern, parseRegistryTopic, registryProfileFilter, registryStatusFilter,
   invokeFilter, invokeTopicOwner, feedbackFilter, feedbackTopicOwner,
 } from "./mesh/topics.js";
 import { normalizeJobPublish, publishRefusal } from "./mesh/payload.js";
 import { readFeedback, verdictFor } from "./mesh/feedback.js";
+import { createLimiter, promptFor, signatureOf, triggerFor } from "./mesh/postmortem.js";
 import { createCatalog } from "./mesh/catalog.js";
 import { createVarStore } from "./mesh/vars.js";
 import { createJobStore } from "./mesh/jobs.js";
@@ -219,7 +220,9 @@ export default definePluginEntry({
           return { content: [{ type: "text" as const, text: `mesh_ask failed: ${outcome.error}` }], isError: true };
         }
         return { content: [{ type: "text" as const, text:
-          `Answer from ${outcome.agent} (job ${outcome.jobId}):\n${JSON.stringify(outcome.result, null, 2)}` }] };
+          `Answer from ${outcome.agent} (job ${outcome.jobId}):\n${JSON.stringify(outcome.result, null, 2)}\n\n` +
+          `When you have used this, call mesh_feedback with jobId ${outcome.jobId} to say what it was worth. ` +
+          `A capability nobody judges repeats its mistakes.` }] };
       },
     });
 
@@ -380,6 +383,35 @@ export default definePluginEntry({
       performAsk: (req) => ask.ask(req),
     });
 
+    const explained = createLimiter();
+
+    /**
+     * Ask the executor to explain a job that went wrong.
+     *
+     * Runs outside the watchdog entirely: no job is created and no watch is
+     * registered, so nothing here can be re-dispatched or nudged. If the
+     * executor never publishes, nobody is left waiting — which is why the
+     * bridge does not chase this the way it chases a job.
+     */
+    function explain(jobId: string): void {
+      const job = jobs.find(jobId);
+      const trigger = triggerFor(job);
+      if (!job || !trigger) return;
+      if (!explained.take(signatureOf(job, trigger), Date.now())) {
+        logger.info(`[postmortem] ${job.service ?? "unknown"} has already explained this failure recently`);
+        return;
+      }
+
+      const owner = job.owner ?? ownerScope(job.requestedBy);
+      const topic = jobPostmortemTopic(conf.mesh.root, owner, jobId);
+      const sub = (api.runtime as any)?.subagent;
+      if (typeof sub?.run !== "function") return;
+
+      jobs.record({ jobId }, { type: "postmortem_requested" });
+      void sub.run({ sessionKey: `${conf.sessionKey}:postmortem`, message: promptFor(job, trigger, topic) })
+        .catch((e: any) => logger.info(`[postmortem] could not start for ${jobId}: ${e?.message ?? e}`));
+    }
+
     /** File a verdict on a job this agent delegated. Returns why not, or null. */
     function fileVerdict(agent: string, jobId: string, verdict: Verdict, reason?: string): string | null {
       const rec = jobs.find(jobId);
@@ -468,6 +500,12 @@ export default definePluginEntry({
       // client's view matches the cancel_acknowledged contract.
       if (jobs.cancelled.has(jobId)) return true;
 
+      if (kind === "postmortem") {
+        jobs.record({ jobId, postmortem: { summary: data?.summary, lesson: data?.lesson, ts: stamped(data) ?? Date.now() } },
+          { type: "postmortem", note: data?.lesson ?? data?.summary, at: stamped(data) });
+        return true;
+      }
+
       if (kind === "events") {
         const type = String(data?.type ?? "message");
         const note = data?.note ?? data?.stage ?? data?.error ?? (data ? undefined : raw.slice(0, 120));
@@ -496,6 +534,7 @@ export default definePluginEntry({
         );
         jobs.active.delete(jobId);
         dispatcher.forget(jobId);              // terminal — stop watching
+        explain(jobId);
         // If we asked a peer for this, hand the answer back to the waiting
         // executor. This is the return path that makes delegation possible.
         ask.settle(jobId, data);
@@ -576,6 +615,7 @@ export default definePluginEntry({
           ownerScope(judge),
         );
         logger.info(`[feedback] ${judge} judged job ${jobId} ${verdict}${reason ? `: ${reason}` : ""}`);
+        explain(jobId);
         return;
       }
 
