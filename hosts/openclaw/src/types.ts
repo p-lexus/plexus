@@ -19,6 +19,24 @@ export interface BrokerConfig {
   protocolVersion?: 4 | 5;
   /** MQTT 5 only: how long the broker keeps our queued messages while we're down. */
   sessionExpirySeconds?: number;
+  /**
+   * Path to the CA that signed the broker's certificate, for `mqtts://`.
+   *
+   * A box generates its own CA, because a broker that only spoke TLS with a
+   * certificate somebody had to buy first would be run without TLS. Nothing
+   * else trusts that CA, so an agent has to be told where it is — and without
+   * this field there is no way to, which is why every agent has been connecting
+   * in clear to a broker that has had a TLS listener all along.
+   */
+  ca?: string;
+  /**
+   * Connect to `mqtts://` without checking the certificate at all.
+   *
+   * For a broker whose certificate cannot be verified and whose traffic is
+   * still worth encrypting. It stops a passive reader and not an active one, so
+   * it is a step up from plaintext and not a substitute for `ca`.
+   */
+  insecure?: boolean;
 }
 
 export interface MeshConfig {

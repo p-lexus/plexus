@@ -127,6 +127,8 @@ class MeshAgent:
         max_depth: int = 4,
         ask_timeout: float = 300.0,
         require_owner: bool = True,
+        cafile: str | None = None,
+        insecure: bool = False,
         owner_in_topic: str = "accept",
         owner_enforced: bool = False,
         keepalive: int = 30,
@@ -170,9 +172,11 @@ class MeshAgent:
         self._cmd_re = topics.command_pattern(root)
         self._self_scope = owner_scope(agent_id)
 
-        host, _, port = broker.replace("mqtt://", "").replace("tcp://", "").partition(":")
+        host, _, port = (
+            broker.replace("mqtts://", "").replace("mqtt://", "").replace("tcp://", "").partition(":")
+        )
         self._host = host or "localhost"
-        self._port = int(port or 1883)
+        self._port = int(port or (8883 if broker.startswith("mqtts://") else 1883))
 
         self.client = mqtt.Client(
             mqtt.CallbackAPIVersion.VERSION2,
@@ -181,6 +185,13 @@ class MeshAgent:
         )
         if username:
             self.client.username_pw_set(username, password)
+        # A box signs its own certificate, so nothing trusts that CA until it is
+        # told where it is. Without this an agent cannot reach a TLS broker at
+        # all, whatever the URL says.
+        if broker.startswith("mqtts://"):
+            self.client.tls_set(ca_certs=cafile or None)
+            if insecure:
+                self.client.tls_insecure_set(True)
         # Presence, published by the broker itself if this process dies without
         # saying goodbye. No heartbeat service required.
         self.client.will_set(
