@@ -118,6 +118,29 @@ Why `args` needs explaining: a result carries the answer, not the question, so `
 cannot come from it. The plugin observes invoke traffic as well and keeps the two together.
 That's what makes "changes requested on acme/web-app#42" possible at all.
 
+### Failures, and why they happened
+
+A job that fails is the one worth hearing about, and it is the one a notification written into a
+capability's prompt never covers: that fires when the job succeeds and the model remembers.
+Routing covers it because routing does not depend on either.
+
+```json
+[
+  { "id": "failed", "when": { "type": ["error", "timeout"] },
+    "to": "ops", "level": "serious",
+    "title": "{{service}} failed for {{owner}}", "body": "{{error}}" },
+
+  { "id": "why", "when": { "kind": "postmortem" },
+    "to": "ops",
+    "title": "why {{service}} failed", "body": "{{lesson}}" }
+]
+```
+
+Two routes and not one, deliberately. The agent writes its account *after* the job ends (v1.5), so
+a single route would have to hold the failure until an explanation that may never be written —
+and the failures worth hearing about soonest are exactly the ones least likely to be explained.
+The first route tells you it broke; the second tells you why, when there is a why.
+
 ## Agents can ask it directly
 
 Loading the plugin adds a `notify.send` capability to its host agent, so any agent on the mesh can

@@ -89,7 +89,10 @@ export function deliveryContext({ jobId, owner, kind, service, ...rest }) {
     ...result,
     jobId, owner, kind,
     service: service ?? result.service,
-    type: result.type,
+    // A postmortem carries no `type` — it is not an outcome, it is an account
+    // of one. Falling back to the kind lets a route match it the same way it
+    // matches anything else, rather than needing a second vocabulary.
+    type: result.type ?? kind,
     ts: result.ts,
     result,
   };
