@@ -117,8 +117,30 @@ def feedback_topic_owner(root: str, agent_id: str, topic: str) -> str | None:
     return rest if rest and "/" not in rest else None
 
 
+def query(root: str, agent_id: str) -> str:
+    return f"{root}/commands/{agent_id}/query"
+
+
+def config(root: str, agent_id: str) -> str:
+    return f"{root}/commands/{agent_id}/config"
+
+
 def events(root: str, owner: str, job_id: str) -> str:
     return f"{root}/jobs/{owner}/{job_id}/events"
+
+
+def postmortem(root: str, owner: str, job_id: str) -> str:
+    """Why a job went wrong, written by the agent that ran it (v1.5). Retained."""
+    return f"{root}/jobs/{owner}/{job_id}/postmortem"
+
+
+def memory(root: str, service: str) -> str:
+    """What past runs of a capability reported, published by the recorder (v1.5)."""
+    return f"{root}/memory/{service}"
+
+
+def memory_filter(root: str) -> str:
+    return f"{root}/memory/+"
 
 
 def result(root: str, owner: str, job_id: str) -> str:

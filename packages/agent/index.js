@@ -115,8 +115,15 @@ export const topics = {
   feedbackFile: (root, owner, id, jobId) => `${root}/feedback/${owner}/${id}/${jobId}`,
   feedbackFileFilter: (root) => `${root}/feedback/+/+/+`,
   cancel: (root, id) => `${root}/commands/${id}/cancel`,
+  query: (root, id) => `${root}/commands/${id}/query`,
+  config: (root, id) => `${root}/commands/${id}/config`,
   events: (root, owner, jobId) => `${root}/jobs/${owner}/${jobId}/events`,
   result: (root, owner, jobId) => `${root}/jobs/${owner}/${jobId}/result`,
+  /** Why a job went wrong, written by the agent that ran it (v1.5). Retained. */
+  postmortem: (root, owner, jobId) => `${root}/jobs/${owner}/${jobId}/postmortem`,
+  /** What past runs of a capability reported, published by the recorder (v1.5). */
+  memory: (root, service) => `${root}/memory/${service}`,
+  memoryFilter: (root) => `${root}/memory/+`,
   jobPattern: (root) => new RegExp(`^${escapeRe(root)}/jobs/([^/]+)/([^/]+)/(events|result|postmortem)$`),
   registryPattern: (root) => new RegExp(`^${escapeRe(root)}/registry/([^/]+)/(profile|status)$`),
 };

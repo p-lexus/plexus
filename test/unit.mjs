@@ -16,7 +16,9 @@ const dist = (p) => new URL(`../dist/${p}`, import.meta.url).href;
 const { ownerScope, buildTopics, jobTopicPattern, parseJobTopic, escapeRe,
   peerInvokeTopicFor, invokeFilter, invokeTopicOwner,
   feedbackTopic, feedbackFilter, feedbackTopicOwner,
-  feedbackFileTopic, feedbackFileFilter, parseFeedbackFileTopic } = await import(dist("mesh/topics.js"));
+  feedbackFileTopic, feedbackFileFilter, parseFeedbackFileTopic,
+  jobEventsTopic, jobResultTopic, jobPostmortemTopic,
+  memoryTopic, memoryFilter, peerInvokeTopicFor: peerInvokeAs } = await import(dist("mesh/topics.js"));
 const { readFeedback, verdictFor, MAX_REASON } = await import(dist("mesh/feedback.js"));
 const { triggerFor, signatureOf, createLimiter, promptFor } = await import(dist("mesh/postmortem.js"));
 const { renderLessons, MAX_LESSONS, MAX_LESSON_CHARS } = await import(dist("mesh/lessons.js"));
@@ -1416,6 +1418,58 @@ t("the prompt carries what happened and asks for one publish", () => {
   assert.match(prompt, /agents\/jobs\/ci\/j1\/postmortem/);
   assert.match(prompt, /Publish exactly once/);
   assert.match(prompt, /a guess recorded as a finding is worse/);
+});
+
+// ── the address space, held to the fixture ──────────────
+
+t("the bridge addresses the same mesh plexus-agent does", () => {
+  const fx = JSON.parse(fs.readFileSync(new URL("./fixtures/topics.json", import.meta.url), "utf8"));
+  const { root, agentId, owner, jobId, service, built } = fx;
+  const per = buildTopics(root, agentId);
+
+  const mine = {
+    profile: per.profile, status: per.status, invoke: per.invoke,
+    invokeAs: peerInvokeTopicFor(root, agentId, owner),
+    invokeFilter: invokeFilter(root, agentId),
+    cancel: per.cancel, query: per.query, config: per.config,
+    events: jobEventsTopic(root, owner, jobId),
+    result: jobResultTopic(root, owner, jobId),
+    postmortem: jobPostmortemTopic(root, owner, jobId),
+    feedback: feedbackTopic(root, agentId, owner),
+    feedbackFilter: feedbackFilter(root, agentId),
+    feedbackFile: feedbackFileTopic(root, owner, agentId, jobId),
+    feedbackFileFilter: feedbackFileFilter(root),
+    memory: memoryTopic(root, service),
+    memoryFilter: memoryFilter(root),
+  };
+
+  for (const [name, expected] of Object.entries(built)) {
+    assert.equal(mine[name], expected, `${name} disagrees with the reference implementation`);
+  }
+  // And nothing here addresses something the reference cannot: a topic only one
+  // implementation knows about is one the others silently ignore.
+  assert.deepEqual(Object.keys(mine).sort(), Object.keys(built).sort());
+});
+
+t("the bridge reads a job topic the way the fixture says", () => {
+  const fx = JSON.parse(fs.readFileSync(new URL("./fixtures/topics.json", import.meta.url), "utf8"));
+  const re = jobTopicPattern(fx.root);
+
+  for (const c of fx.jobTopics) {
+    const got = parseJobTopic(re, c.topic);
+    if (c.match === false) {
+      assert.equal(got, null, `${c.topic} must not parse as job traffic`);
+      continue;
+    }
+    assert.deepEqual(got, { owner: c.owner, jobId: c.jobId, kind: c.kind }, c.topic);
+  }
+
+  for (const c of fx.invokeOwners) {
+    assert.equal(invokeTopicOwner(fx.root, fx.agentId, c.topic), c.owner, c.topic);
+  }
+  for (const c of fx.ownerScopes) {
+    assert.equal(ownerScope(c.from), c.actual, JSON.stringify(c.from));
+  }
 });
 
 // ── recall (v1.5) ───────────────────────────────────────
