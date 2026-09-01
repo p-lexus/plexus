@@ -1,0 +1,95 @@
+{
+  "fixtureVersion": 1,
+  "protocolVersion": "1.5",
+  "root": "acme/agents",
+  "agentId": "reviewer",
+  "owner": "ci",
+  "jobId": "j1",
+  "service": "code.review",
+  "built": {
+    "profile": "acme/agents/registry/reviewer/profile",
+    "status": "acme/agents/registry/reviewer/status",
+    "invoke": "acme/agents/commands/reviewer/invoke",
+    "invokeAs": "acme/agents/commands/reviewer/invoke/ci",
+    "invokeFilter": "acme/agents/commands/reviewer/invoke/+",
+    "cancel": "acme/agents/commands/reviewer/cancel",
+    "query": "acme/agents/commands/reviewer/query",
+    "config": "acme/agents/commands/reviewer/config",
+    "events": "acme/agents/jobs/ci/j1/events",
+    "result": "acme/agents/jobs/ci/j1/result",
+    "postmortem": "acme/agents/jobs/ci/j1/postmortem",
+    "feedback": "acme/agents/commands/reviewer/feedback/ci",
+    "feedbackFilter": "acme/agents/commands/reviewer/feedback/+",
+    "feedbackFile": "acme/agents/feedback/ci/reviewer/j1",
+    "feedbackFileFilter": "acme/agents/feedback/+/+/+",
+    "memory": "acme/agents/memory/code.review",
+    "memoryFilter": "acme/agents/memory/+"
+  },
+  "jobTopics": [
+    {
+      "topic": "acme/agents/jobs/ci/j1/events",
+      "owner": "ci",
+      "jobId": "j1",
+      "kind": "events"
+    },
+    {
+      "topic": "acme/agents/jobs/ci/j1/result",
+      "owner": "ci",
+      "jobId": "j1",
+      "kind": "result"
+    },
+    {
+      "topic": "acme/agents/jobs/ci/j1/postmortem",
+      "owner": "ci",
+      "jobId": "j1",
+      "kind": "postmortem"
+    },
+    {
+      "topic": "acme/agents/jobs/j1/result",
+      "match": false
+    },
+    {
+      "topic": "acme/agents/jobs/ci/j1/other",
+      "match": false
+    },
+    {
+      "topic": "acme/agents/memory/code.review",
+      "match": false
+    }
+  ],
+  "invokeOwners": [
+    {
+      "topic": "acme/agents/commands/reviewer/invoke/ci",
+      "owner": "ci"
+    },
+    {
+      "topic": "acme/agents/commands/reviewer/invoke",
+      "owner": null
+    },
+    {
+      "topic": "acme/agents/commands/reviewer/invoke/ci/extra",
+      "owner": null
+    },
+    {
+      "topic": "acme/agents/commands/reviewer/feedback/ci",
+      "owner": null
+    }
+  ],
+  "ownerScopes": [
+    {
+      "from": "Mohanad.Q!",
+      "scope": "mohanad-q",
+      "actual": "mohanad-q"
+    },
+    {
+      "from": "--ci--",
+      "scope": "ci",
+      "actual": "ci"
+    },
+    {
+      "from": "",
+      "scope": "public",
+      "actual": "public"
+    }
+  ]
+}

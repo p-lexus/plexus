@@ -187,6 +187,55 @@ def _():
         raise AssertionError("a verdict outside the vocabulary must be refused before it is sent")
 
 
+@t("Hermes addresses the same mesh plexus-agent does")
+def _():
+    fx = json.loads((Path(__file__).resolve().parents[3] / "test" / "fixtures" / "topics.json").read_text())
+    root, agent, owner, job, service = fx["root"], fx["agentId"], fx["owner"], fx["jobId"], fx["service"]
+
+    mine = {
+        "profile": topics.profile(root, agent),
+        "status": topics.status(root, agent),
+        "invoke": topics.invoke(root, agent),
+        "invokeAs": topics.invoke_as(root, agent, owner),
+        "invokeFilter": topics.invoke_filter(root, agent),
+        "cancel": topics.cancel(root, agent),
+        "query": topics.query(root, agent),
+        "config": topics.config(root, agent),
+        "events": topics.events(root, owner, job),
+        "result": topics.result(root, owner, job),
+        "postmortem": topics.postmortem(root, owner, job),
+        "feedback": topics.feedback(root, agent, owner),
+        "feedbackFilter": topics.feedback_filter(root, agent),
+        "feedbackFile": topics.feedback_file(root, owner, agent, job),
+        "feedbackFileFilter": topics.feedback_file_filter(root),
+        "memory": topics.memory(root, service),
+        "memoryFilter": topics.memory_filter(root),
+    }
+    for name, expected in fx["built"].items():
+        assert mine[name] == expected, f"{name}: {mine[name]!r} != {expected!r}"
+    # A topic only one implementation knows about is one the others ignore.
+    assert sorted(mine) == sorted(fx["built"])
+
+
+@t("Hermes reads a job topic the way the fixture says")
+def _():
+    fx = json.loads((Path(__file__).resolve().parents[3] / "test" / "fixtures" / "topics.json").read_text())
+    pattern = topics.job_pattern(fx["root"])
+
+    for case in fx["jobTopics"]:
+        m = pattern.match(case["topic"])
+        if case.get("match") is False:
+            assert m is None, f"{case['topic']} must not parse as job traffic"
+            continue
+        assert m is not None, case["topic"]
+        assert m.group(1) == case["owner"] and m.group(2) == case["jobId"] and m.group(3) == case["kind"]
+
+    for case in fx["invokeOwners"]:
+        assert topics.invoke_topic_owner(fx["root"], fx["agentId"], case["topic"]) == case["owner"], case["topic"]
+    for case in fx["ownerScopes"]:
+        assert topics.owner_scope(case["from"]) == case["actual"], case["from"]
+
+
 @t("the job pattern refuses the unscoped form")
 def _():
     pattern = topics.job_pattern("agents")

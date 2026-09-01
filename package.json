@@ -37,6 +37,7 @@
     "test:packages": "node test/packages.mjs",
     "demo": "node examples/demo.mjs",
     "pdf": "node tools/pdf.mjs PROTOCOL.md PROTOCOL.pdf",
+    "topics": "node tools/topic-fixture.mjs --write",
     "site:video": "node tools/panel-video.mjs"
   },
   "dependencies": {
