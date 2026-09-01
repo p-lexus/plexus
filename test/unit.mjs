@@ -29,7 +29,7 @@ const { createAuth } = await import(dist("http/auth.js"));
 const { resolveConfig, resolveEnvRef, DEFAULTS, deploymentDir } = await import(dist("config.js"));
 const { createCatalog } = await import(dist("mesh/catalog.js"));
 const { createRegistry } = await import(dist("mesh/registry.js"));
-const { deriveClientId, deniedFilters } = await import(dist("mesh/transport.js"));
+const { deriveClientId, deniedFilters, tls } = await import(dist("mesh/transport.js"));
 
 let pass = 0, fail = 0;
 const queue = [];
@@ -1418,6 +1418,34 @@ t("the prompt carries what happened and asks for one publish", () => {
   assert.match(prompt, /agents\/jobs\/ci\/j1\/postmortem/);
   assert.match(prompt, /Publish exactly once/);
   assert.match(prompt, /a guess recorded as a finding is worse/);
+});
+
+// ── TLS ─────────────────────────────────────────────────
+
+t("a plaintext broker is given no TLS options at all", () => {
+  assert.deepEqual(tls({ url: "mqtt://localhost:1883", ca: "/nope/ca.crt" }), {},
+    "reading a CA for a connection that will not use it would fail startup for nothing");
+});
+
+t("an mqtts broker with a named CA verifies against it", () => {
+  const ca = path.join(os.tmpdir(), `plexus-ca-${process.pid}.crt`);
+  fs.writeFileSync(ca, "-----BEGIN CERTIFICATE-----\nnot a real one\n-----END CERTIFICATE-----\n");
+  try {
+    const out = tls({ url: "mqtts://box:8883", ca });
+    assert.equal(out.rejectUnauthorized, true);
+    assert.ok(Buffer.isBuffer(out.ca[0]), "mqtt.js wants the bytes, not the path");
+  } finally { fs.rmSync(ca, { force: true }); }
+});
+
+t("a CA that is not there fails at startup, naming the path", () => {
+  assert.throws(() => tls({ url: "mqtts://box:8883", ca: "/no/such/ca.crt" }), /no\/such\/ca.crt/,
+    "a handshake failure twenty seconds later would not say which file was missing");
+});
+
+t("insecure encrypts and does not verify, and says so in its name", () => {
+  const out = tls({ url: "mqtts://box:8883", insecure: true });
+  assert.equal(out.rejectUnauthorized, false);
+  assert.equal(out.ca, undefined);
 });
 
 // ── the address space, held to the fixture ──────────────

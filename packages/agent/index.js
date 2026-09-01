@@ -29,6 +29,7 @@
 
 import mqtt from "mqtt";
 import os from "node:os";
+import { readFileSync } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
 
 /** The protocol revision this client implements. */
@@ -136,6 +137,20 @@ export const topics = {
  * QoS-1 messages stay orphaned with the dead session, and any invoke published
  * while you were down is lost silently rather than delivered on reconnect.
  */
+/**
+ * TLS options for an `mqtts://` broker, or nothing.
+ *
+ * A box signs its own certificate, so nothing trusts that CA until it is told
+ * where it is. `insecure` encrypts without verifying — a step up from
+ * plaintext, and not a substitute for `ca`.
+ */
+export function brokerTls({ broker, ca, insecure }) {
+  if (!String(broker ?? "").startsWith("mqtts://")) return {};
+  if (insecure) return { rejectUnauthorized: false };
+  if (!ca) return {};
+  return { ca: [readFileSync(ca)], rejectUnauthorized: true };
+}
+
 export function deriveClientId(agentId, root) {
   const suffix = createHash("sha1").update(`${os.hostname()}::${root}::${agentId}`).digest("hex").slice(0, 10);
   return `plexus-${agentId}-${suffix}`;
@@ -209,6 +224,7 @@ export async function connect(options = {}) {
   const feedbackRe = new RegExp(`^${escapeRe(root)}/commands/([^/]+)/feedback/([^/]+)$`);
 
   const client = mqtt.connect(cfg.broker, {
+    ...brokerTls(cfg),
     clientId: cfg.clientId ?? deriveClientId(agentId, root),
     username: cfg.username,
     password: cfg.password,

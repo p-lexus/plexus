@@ -69,6 +69,15 @@
             "default": "agents",
             "description": "Mesh topic root."
           },
+          "ca": {
+            "type": "string",
+            "description": "Path to the CA that signed the broker's certificate, for mqtts:// URLs. A box generates its own CA \u2014 a broker that only spoke TLS with a certificate somebody had to buy first would be run without TLS \u2014 so nothing trusts it until an agent is told where it is. plexus-server add-agent prints this path when the box serves TLS."
+          },
+          "insecure": {
+            "type": "boolean",
+            "default": false,
+            "description": "Connect to mqtts:// without verifying the certificate. Encrypts the traffic and does not authenticate the broker, so it stops a passive reader and not an active one. A step up from plaintext, not a substitute for \"ca\"."
+          },
           "agentId": {
             "type": "string",
             "default": "agent",

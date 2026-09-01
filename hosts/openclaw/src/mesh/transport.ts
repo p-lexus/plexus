@@ -14,6 +14,7 @@
  * like flaky networking.
  */
 
+import fs from "node:fs";
 import mqtt from "mqtt";
 import * as os from "os";
 import { createHash } from "crypto";
@@ -120,6 +121,20 @@ export function deniedFilters(
  * orphaned. That is a one-time cost, paid at the moment an operator is watching
  * anyway, in exchange for every future log line being readable.
  */
+/**
+ * TLS options for an `mqtts://` broker, or nothing.
+ *
+ * Reading the CA here rather than passing a path through: mqtt.js wants the
+ * bytes, and a path that does not resolve should fail at startup with the path
+ * in the message rather than as a handshake error twenty seconds later.
+ */
+export function tls(broker: { url?: string; ca?: string; insecure?: boolean }): Record<string, unknown> {
+  if (!String(broker.url ?? "").startsWith("mqtts://")) return {};
+  if (broker.insecure) return { rejectUnauthorized: false };
+  if (!broker.ca) return {};
+  return { ca: [fs.readFileSync(broker.ca)], rejectUnauthorized: true };
+}
+
 export function deriveClientId(pluginDir: string, agentId: string, configured?: string): string {
   if (configured) return configured;
   const suffix = createHash("sha1").update(`${os.hostname()}::${pluginDir}`).digest("hex").slice(0, 10);
@@ -167,6 +182,7 @@ export function createTransport(
       reconnectPeriod: 5_000,
       connectTimeout: 15_000,
       protocolVersion: cfg.broker.protocolVersion,
+      ...tls(cfg.broker),
       // MQTT 5 only: bounds how long the broker holds our queued messages, so a
       // decommissioned deployment stops accumulating them forever.
       ...(cfg.broker.protocolVersion === 5
