@@ -114,6 +114,10 @@ export function aclFor({ root, role, id, ownerInTopic = false } = {}) {
         `${root}/registry/+/profile`,    // peer discovery
         `${root}/registry/+/status`,
         `${root}/jobs/${id}/#`,          // answers to what it delegated
+        // What past runs reported, published by the recorder (v1.5). Read-only:
+        // an agent that could write here would be writing the mesh's memory of
+        // capabilities it does not serve.
+        `${root}/memory/+`,
       ],
     };
   }

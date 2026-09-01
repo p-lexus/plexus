@@ -132,6 +132,16 @@ t("v1.4: the invoke topic builders put the owner where an ACL can see it", () =>
   assert.equal(topics.invoke("acme/agents", "reviewer"), "acme/agents/commands/reviewer/invoke");
 });
 
+t("v1.5: an agent reads the mesh's memory and cannot write it", () => {
+  const rev = aclFor({ root: R, role: "agent", id: "reviewer" });
+  const ci = aclFor({ root: R, role: "requester", id: "ci" });
+  assert.ok(permits(rev.subscribe, `${R}/memory/code.review`));
+  assert.ok(!permits(rev.publish, `${R}/memory/code.review`),
+    "an agent that could write here would be writing the memory of capabilities it does not serve");
+  assert.ok(!permits(ci.subscribe, `${R}/memory/code.review`),
+    "and a requester has no business reading what agents were told about themselves");
+});
+
 t("v1.5: an agent may write down why its own job went wrong", () => {
   const rev = aclFor({ root: R, role: "agent", id: "reviewer" });
   const ci = aclFor({ root: R, role: "requester", id: "ci" });

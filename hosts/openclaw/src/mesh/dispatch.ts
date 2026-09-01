@@ -29,6 +29,8 @@ export interface DispatcherDeps {
   cfg: ResolvedConfig;
   /** Called when a job is cancelled, so anything it delegated stops too. */
   onCancel?(jobId: string, requestedBy?: string): void;
+  /** What past runs of a capability reported, already rendered as quoted data. */
+  lessonsFor?(service: string): string;
   /** A directory of peers, injected into the executor's briefing. */
   peerSummary?(): string;
   /**
@@ -354,11 +356,16 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     const subagentSessionKey = `agent:main:subagent:mesh-${jobId}`;
     const briefing = executorBriefing(owner, jobId, depth);
 
-    const messageText = cap.prompt
+    // Before the instructions, so what the model reads last is what it is
+    // being asked to do rather than what somebody else once wrote.
+    const recalled = deps.lessonsFor?.(service) ?? "";
+
+    const instructions = cap.prompt
       ? `${renderPrompt(String(cap.prompt), varOrWarn, jobId, requestedBy, args)}\n\n${briefing}`
       : `Agent-mesh job.\nJobId: ${jobId}\nService: ${service}\n` +
         `Description: ${cap.description ?? ""}\nArgs: ${JSON.stringify(args)}\n` +
         (requestedBy ? `Requested by: ${requestedBy}\n` : "") + `\n${briefing}`;
+    const messageText = recalled ? `${recalled}\n\n${instructions}` : instructions;
 
     // A prompt that rendered with holes in it still runs, and still returns
     // something that reads like an answer. Say so on the job itself: the
