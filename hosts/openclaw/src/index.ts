@@ -319,6 +319,7 @@ export default definePluginEntry({
       settled: transport.settled(),
       activeJobs: [...jobs.active],
       agentId: conf.mesh.agentId,
+      selfScope: ownerScope(conf.mesh.agentId),
       meshRoot: conf.mesh.root,
       protocolVersion: PROTOCOL_VERSION,
       session: { ...transport.session },
@@ -432,6 +433,8 @@ export default definePluginEntry({
 
     const { server } = startHttpServer({
       cfg: conf, logger, auth, sse, jobs, vars, dispatcher, registry,
+      fileVerdict: (agent, jobId, verdict, reason) =>
+        fileVerdict(agent, jobId, verdict as Verdict, reason),
       snapshot,
       peers: () => peers.list(),
       profileWithBroker: () => ({
