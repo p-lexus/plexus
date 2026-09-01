@@ -524,14 +524,19 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     // the executor can tell which agent said what.
     const blocks = results.map(({ d, outcome }) =>
       outcome.ok
-        ? `### ${d.as} — answered by ${d.agent} (${d.service})\n${JSON.stringify(outcome.result, null, 2)}`
+        ? `### ${d.as} — answered by ${d.agent} (${d.service}), job ${outcome.jobId}\n${JSON.stringify(outcome.result, null, 2)}`
         : `### ${d.as} — ${d.agent} could not answer\n${outcome.error}`,
     );
+    const answered = results.filter((r) => r.outcome.ok).map((r) => r.outcome.jobId);
     return {
       ok: true,
       context:
         `CONTEXT FROM OTHER AGENTS\nThese answers were gathered for you before you started. ` +
-        `Use them; do not ask for them again.\n\n${blocks.join("\n\n")}`,
+        `Use them; do not ask for them again.\n\n${blocks.join("\n\n")}` +
+        (answered.length
+          ? `\n\nWhen you have used them, say what each was worth: mesh_feedback with jobId ` +
+            `${answered.join(" and ")}. A capability nobody judges repeats its mistakes.`
+          : ""),
     };
   }
 

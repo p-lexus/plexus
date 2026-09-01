@@ -18,6 +18,7 @@ const { ownerScope, buildTopics, jobTopicPattern, parseJobTopic, escapeRe,
   feedbackTopic, feedbackFilter, feedbackTopicOwner,
   feedbackFileTopic, feedbackFileFilter, parseFeedbackFileTopic } = await import(dist("mesh/topics.js"));
 const { readFeedback, verdictFor, MAX_REASON } = await import(dist("mesh/feedback.js"));
+const { triggerFor, signatureOf, createLimiter, promptFor } = await import(dist("mesh/postmortem.js"));
 const { normalizeJobPublish, renderPrompt, unresolvedPlaceholders, publishRefusal, missingRequiredArgs } = await import(dist("mesh/payload.js"));
 const { createJobStore, MAX_HISTORY } = await import(dist("mesh/jobs.js"));
 const { createVarStore, maskValue } = await import(dist("mesh/vars.js"));
@@ -1335,6 +1336,66 @@ t("a verdict never creates a job, moves its state, or restarts its clock", () =>
   assert.equal(s.find("j2").state, "done", "an opinion is not an outcome");
   assert.equal(s.find("j2").finishedAt, finishedAt);
   assert.equal(s.find("j2").events.length, 1, "a verdict is not a milestone on the timeline");
+});
+
+// ── postmortems (v1.5) ──────────────────────────────────
+
+const ended = (over = {}) => ({ jobId: "j1", service: "code.review", state: "error", updatedAt: 0, ...over });
+
+t("a job is explained when it failed, or when somebody said it was poor", () => {
+  assert.equal(triggerFor(ended({ state: "error" })), "failure");
+  assert.equal(triggerFor(ended({ state: "timeout" })), "failure");
+  assert.equal(triggerFor(ended({ state: "done" })), null);
+  assert.equal(triggerFor(undefined), null);
+
+  const judged = (v) => ended({ state: "done", feedback: [{ verdict: v, by: "ci", ts: 1 }] });
+  assert.equal(triggerFor(judged("bad")), "verdict");
+  assert.equal(triggerFor(judged("unusable")), "verdict");
+  assert.equal(triggerFor(judged("good")), null, "praise needs no explanation");
+});
+
+t("a postmortem is never written about a postmortem", () => {
+  const explained = ended({ postmortem: { summary: "s", lesson: "l", ts: 1 } });
+  assert.equal(triggerFor(explained), null,
+    "an agent explaining its own explanations does so without end");
+});
+
+t("the same failure twice is one failure", () => {
+  const a = ended({ state: "timeout" });
+  const b = ended({ jobId: "j2", state: "timeout" });
+  assert.equal(signatureOf(a, "failure"), signatureOf(b, "failure"));
+  assert.notEqual(signatureOf(a, "failure"), signatureOf(ended({ state: "error" }), "failure"));
+  assert.notEqual(signatureOf(a, "failure"),
+    signatureOf(ended({ service: "other", state: "timeout" }), "failure"));
+});
+
+t("a flapping capability is explained twice an hour, not once a failure", () => {
+  const limiter = createLimiter(2);
+  const now = 1_000_000;
+  assert.equal(limiter.take("code.review:failure:timeout", now), true);
+  assert.equal(limiter.take("code.review:failure:timeout", now + 1_000), true);
+  assert.equal(limiter.take("code.review:failure:timeout", now + 2_000), false);
+
+  // A different failure has its own budget: one noisy capability must not use
+  // up the runs that would have explained another.
+  assert.equal(limiter.take("dba.schema:failure:error", now + 2_000), true);
+
+  // And the hour passes.
+  assert.equal(limiter.take("code.review:failure:timeout", now + 3_600_001), true);
+});
+
+t("the prompt carries what happened and asks for one publish", () => {
+  const job = ended({
+    state: "timeout",
+    events: [{ type: "accepted", ts: 0 }, { type: "requeued", note: "silent", ts: 1000 }],
+    feedback: [{ verdict: "unusable", reason: "answered a different question", by: "ci", ts: 2 }],
+  });
+  const prompt = promptFor(job, "verdict", "agents/jobs/ci/j1/postmortem");
+  assert.match(prompt, /requeued — silent/);
+  assert.match(prompt, /ci called it unusable: answered a different question/);
+  assert.match(prompt, /agents\/jobs\/ci\/j1\/postmortem/);
+  assert.match(prompt, /Publish exactly once/);
+  assert.match(prompt, /a guess recorded as a finding is worse/);
 });
 
 // Ask timeouts are unref'd so a pending delegation never keeps the gateway

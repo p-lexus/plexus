@@ -34,17 +34,27 @@ export const jobResultTopic = (root: string, owner: string, jobId: string): stri
   `${root}/jobs/${owner}/${jobId}/result`;
 
 /**
+ * Where an agent writes down why a job went wrong (v1.5).
+ *
+ * Retained, unlike an event: a requester coming back tomorrow to ask why should
+ * find the answer, and a postmortem is a durable fact about a job rather than a
+ * moment in its run.
+ */
+export const jobPostmortemTopic = (root: string, owner: string, jobId: string): string =>
+  `${root}/jobs/${owner}/${jobId}/postmortem`;
+
+/**
  * Matches any owner-scoped job topic on this mesh, including ones our own
  * executors publish. Anchored, so the unscoped v1.0 form can never match —
  * job topics are always owner-scoped.
  */
 export const jobTopicPattern = (meshRoot: string): RegExp =>
-  new RegExp(`^${escapeRe(meshRoot)}/jobs/([^/]+)/([^/]+)/(events|result)$`);
+  new RegExp(`^${escapeRe(meshRoot)}/jobs/([^/]+)/([^/]+)/(events|result|postmortem)$`);
 
 export interface ParsedJobTopic {
   owner: string;
   jobId: string;
-  kind: "events" | "result";
+  kind: "events" | "result" | "postmortem";
 }
 
 export function parseJobTopic(pattern: RegExp, topic: string): ParsedJobTopic | null {
@@ -53,7 +63,7 @@ export function parseJobTopic(pattern: RegExp, topic: string): ParsedJobTopic | 
   return {
     owner: decodeURIComponent(m[1]),
     jobId: decodeURIComponent(m[2]),
-    kind: m[3] as "events" | "result",
+    kind: m[3] as ParsedJobTopic["kind"],
   };
 }
 
