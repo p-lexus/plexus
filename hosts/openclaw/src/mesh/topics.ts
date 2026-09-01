@@ -83,6 +83,26 @@ export const ownerScope = (requestedBy?: string): string => {
   return s || "public";
 };
 
+/**
+ * What past runs of a capability reported (v1.5).
+ *
+ * Retained and published by the mesh's recorder, so an agent has it the moment
+ * it subscribes and does not ask for it per job. Nothing on a delivery path
+ * polls, and this is not a delivery path either.
+ */
+export const memoryTopic = (root: string, service: string): string =>
+  `${root}/memory/${service}`;
+
+export const memoryFilter = (root: string): string => `${root}/memory/+`;
+
+/** The capability a memory topic is about, or null if this is not one. */
+export function memoryTopicService(root: string, topic: string): string | null {
+  const prefix = `${root}/memory/`;
+  if (!topic.startsWith(prefix)) return null;
+  const rest = topic.slice(prefix.length);
+  return rest && !rest.includes("/") ? rest : null;
+}
+
 /** Every agent's retained profile and presence — how peers are discovered. */
 export const registryProfileFilter = (root: string): string => `${root}/registry/+/profile`;
 export const registryStatusFilter = (root: string): string => `${root}/registry/+/status`;

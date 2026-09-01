@@ -32,12 +32,14 @@ import { resolveConfig } from "./config.js";
 import { createLogger } from "./logger.js";
 import {
   buildTopics, jobTopicPattern, parseJobTopic, ownerScope, jobPostmortemTopic,
+  memoryFilter, memoryTopicService,
   registryPattern, parseRegistryTopic, registryProfileFilter, registryStatusFilter,
   invokeFilter, invokeTopicOwner, feedbackFilter, feedbackTopicOwner,
 } from "./mesh/topics.js";
 import { normalizeJobPublish, publishRefusal } from "./mesh/payload.js";
 import { readFeedback, verdictFor } from "./mesh/feedback.js";
 import { createLimiter, promptFor, signatureOf, triggerFor } from "./mesh/postmortem.js";
+import { renderLessons } from "./mesh/lessons.js";
 import { createCatalog } from "./mesh/catalog.js";
 import { createVarStore } from "./mesh/vars.js";
 import { createJobStore } from "./mesh/jobs.js";
@@ -377,12 +379,16 @@ export default definePluginEntry({
       runtime: api.runtime,
       publish: transport.publish,
       peerSummary: () => peers.summary(),
+      lessonsFor: (service) => memory.get(service) ?? "",
       onCancel: (jobId, requestedBy) => ask.cancelChildren(jobId, requestedBy ?? conf.mesh.agentId),
       // Late-bound: the ask service needs the dispatcher's lineage lookup, so
       // the two are mutually dependent and neither can be built first.
       performAsk: (req) => ask.ask(req),
     });
 
+    // What the recorder has published about each capability. Retained, so this
+    // fills on subscribe and updates as the mesh learns.
+    const memory = new Map<string, string>();
     const explained = createLimiter();
 
     /**
@@ -561,6 +567,14 @@ export default definePluginEntry({
     function onMessage(topic: string, raw: string, data: any): void {
       logger.info(`received on ${topic}: ${raw.slice(0, 300)}`);
 
+      const service = memoryTopicService(conf.mesh.root, topic);
+      if (service !== null) {
+        const rendered = renderLessons(Array.isArray(data?.lessons) ? data.lessons : [], service);
+        if (rendered) memory.set(service, rendered);
+        else memory.delete(service);
+        return;
+      }
+
       // Peer registry: who else is on the mesh and what they can do.
       const reg = parseRegistryTopic(registryRe, topic);
       if (reg) {
@@ -688,6 +702,8 @@ export default definePluginEntry({
       [topics.config]: { qos: 1 },
       [`${conf.mesh.root}/jobs/#`]: { qos: 1 },   // history for the panel
       // Retained, so subscribing reveals the whole mesh immediately.
+      // v1.5. Retained, so this arrives on subscribe and needs no request.
+      [memoryFilter(conf.mesh.root)]: { qos: 1 },
       [registryProfileFilter(conf.mesh.root)]: { qos: 1 },
       [registryStatusFilter(conf.mesh.root)]: { qos: 1 },
     });

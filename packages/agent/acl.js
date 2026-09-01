@@ -114,6 +114,10 @@ export function aclFor({ root, role, id, ownerInTopic = false } = {}) {
         `${root}/registry/+/profile`,    // peer discovery
         `${root}/registry/+/status`,
         `${root}/jobs/${id}/#`,          // answers to what it delegated
+        // What past runs reported, published by the recorder (v1.5). Read-only:
+        // an agent that could write here would be writing the mesh's memory of
+        // capabilities it does not serve.
+        `${root}/memory/+`,
       ],
     };
   }
@@ -133,7 +137,11 @@ export function aclFor({ root, role, id, ownerInTopic = false } = {}) {
   // above exist to withhold. It is a separate identity for that reason, and the
   // UI in front of it is where per-user scoping belongs.
   return {
-    publish: [`${root}/commands/+/#`],
+    publish: [
+      `${root}/commands/+/#`,
+      // The mesh's memory, which the recorder writes and agents only read.
+      `${root}/memory/+`,
+    ],
     subscribe: [`${root}/#`],
   };
 }
