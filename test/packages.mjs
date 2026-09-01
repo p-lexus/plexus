@@ -132,6 +132,15 @@ t("v1.4: the invoke topic builders put the owner where an ACL can see it", () =>
   assert.equal(topics.invoke("acme/agents", "reviewer"), "acme/agents/commands/reviewer/invoke");
 });
 
+t("v1.5: an agent may write down why its own job went wrong", () => {
+  const rev = aclFor({ root: R, role: "agent", id: "reviewer" });
+  const ci = aclFor({ root: R, role: "requester", id: "ci" });
+  assert.ok(permits(rev.publish, `${R}/jobs/ci/j1/postmortem`),
+    "an agent serves many owners, so its postmortems cannot be narrowed by id");
+  assert.ok(!permits(ci.publish, `${R}/jobs/ci/j1/postmortem`),
+    "a requester does not get to write the agent's account of what happened");
+});
+
 t("v1.5: a verdict can only be filed under the identity that gives it", () => {
   const ci = aclFor({ root: R, role: "requester", id: "ci" });
   assert.ok(permits(ci.publish, `${R}/feedback/ci/reviewer/j1`), "judging work it asked for");

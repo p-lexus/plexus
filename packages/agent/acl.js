@@ -98,6 +98,8 @@ export function aclFor({ root, role, id, ownerInTopic = false } = {}) {
         // The narrowing that matters is on the subscribe side.
         `${root}/jobs/+/+/events`,
         `${root}/jobs/+/+/result`,
+        // Why a job went wrong, written by the agent that ran it (v1.5).
+        `${root}/jobs/+/+/postmortem`,
         // Delegation: an agent asks its peers, as itself.
         invoke,
         `${root}/commands/+/cancel`,
