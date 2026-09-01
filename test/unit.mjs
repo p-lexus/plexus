@@ -694,6 +694,7 @@ const { createAskService } = await import(dist("mesh/ask.js"));
 
 function askHarness(opts = {}) {
   const published = [];
+  const filed = [];
   const peers = new Map(Object.entries(opts.peers ?? {
     dba: { agentId: "dba", online: true, capabilities: [{ service: "schema.review" }], lastSeen: 0 },
   }));
@@ -707,9 +708,28 @@ function askHarness(opts = {}) {
     peer: (id) => peers.get(id),
     lineageOf: opts.lineageOf ?? (() => ({ depth: 0 })),
     onDelegated: () => {},
+    fileVerdict: (agent, jobId, verdict, reason) => filed.push({ agent, jobId, verdict, reason }),
   });
-  return { svc, published };
+  return { svc, published, filed };
 }
+
+t("a delegation that produced no answer is judged unusable, without being asked", async () => {
+  const { svc, filed } = askHarness({ timeoutMs: 20 });
+  const p = svc.ask({ agent: "dba", service: "schema.review", parentJobId: "rev-1" });
+  await p;
+  assert.equal(filed.length, 1);
+  assert.equal(filed[0].verdict, "unusable");
+  assert.equal(filed[0].agent, "dba");
+  assert.match(filed[0].reason, /did not answer/);
+});
+
+t("a delegation that answered is judged by nobody", async () => {
+  const { svc, published, filed } = askHarness({ timeoutMs: 5_000 });
+  const p = svc.ask({ agent: "dba", service: "schema.review", parentJobId: "rev-1" });
+  svc.settle(published[0].payload.jobId, { type: "review", verdict: "LGTM" });
+  assert.equal((await p).ok, true);
+  assert.equal(filed.length, 0, "an answer that arrived is not thereby a good answer");
+});
 
 t("ask publishes to the peer's invoke topic with us as requester", async () => {
   const { svc, published } = askHarness();
