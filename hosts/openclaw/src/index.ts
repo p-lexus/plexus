@@ -26,6 +26,7 @@ import type { Server } from "http";
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 
 import { PROTOCOL_VERSION } from "./types.js";
+import type { Verdict } from "./types.js";
 import type { PluginConfig } from "./types.js";
 import { resolveConfig } from "./config.js";
 import { createLogger } from "./logger.js";
@@ -35,7 +36,7 @@ import {
   invokeFilter, invokeTopicOwner, feedbackFilter, feedbackTopicOwner,
 } from "./mesh/topics.js";
 import { normalizeJobPublish, publishRefusal } from "./mesh/payload.js";
-import { readFeedback } from "./mesh/feedback.js";
+import { readFeedback, verdictFor } from "./mesh/feedback.js";
 import { createCatalog } from "./mesh/catalog.js";
 import { createVarStore } from "./mesh/vars.js";
 import { createJobStore } from "./mesh/jobs.js";
@@ -92,6 +93,8 @@ interface ActiveInstance {
   ask(req: { agent: string; service: string; args?: any; parentJobId?: string }): Promise<any>;
   peers(): any[];
   providersOf(service: string): any[];
+  /** File a verdict on a delegated job. Returns why it was refused, or null. */
+  fileVerdict(agent: string, jobId: string, verdict: string, reason?: string): string | null;
   delegationMode: string;
 }
 const MODULE_SLOT = Symbol.for("mqtt-bridge.module");
@@ -217,6 +220,33 @@ export default definePluginEntry({
         }
         return { content: [{ type: "text" as const, text:
           `Answer from ${outcome.agent} (job ${outcome.jobId}):\n${JSON.stringify(outcome.result, null, 2)}` }] };
+      },
+    });
+
+    api.registerTool({
+      name: "mesh_feedback",
+      description:
+        "Say what a peer's answer was worth, after you have used it. Call this for work you " +
+        "delegated with mesh_ask: \"good\" if the answer did its job, \"bad\" if it was poor, " +
+        "\"unusable\" if it did not answer the question at all. Give a specific reason — it is " +
+        "read back before that capability runs again, so \"wrong table\" is worth more than " +
+        "\"not great\". A delegation that failed outright is already reported without you.",
+      parameters: Type.Object({
+        jobId: Type.String({ description: "The job id mesh_ask returned." }),
+        verdict: Type.String({ description: "good | bad | unusable" }),
+        agent: Type.Optional(Type.String({ description: "The peer you asked. Checked against the job." })),
+        reason: Type.Optional(Type.String({ description: "Why, specifically. One or two sentences." })),
+      }),
+      async execute(_id: string, params: { jobId: string; verdict: string; agent?: string; reason?: string }) {
+        const inst = active();
+        if (!inst) return notReady("mesh_feedback");
+        const refused = inst.fileVerdict(params.agent ?? "", params.jobId, params.verdict, params.reason);
+        if (refused) {
+          return { content: [{ type: "text" as const, text: `mesh_feedback refused: ${refused}` }], isError: true };
+        }
+        return { content: [{ type: "text" as const, text:
+          `Filed "${params.verdict}" on job ${params.jobId}. It reaches the peer if this mesh has a ` +
+          `recorder to relay it; on a mesh without one nothing collects it.` }] };
       },
     });
 
@@ -349,6 +379,28 @@ export default definePluginEntry({
       performAsk: (req) => ask.ask(req),
     });
 
+    /** File a verdict on a job this agent delegated. Returns why not, or null. */
+    function fileVerdict(agent: string, jobId: string, verdict: Verdict, reason?: string): string | null {
+      const rec = jobs.find(jobId);
+      const me = ownerScope(conf.mesh.agentId);
+
+      if (!rec?.delegated) return `job ${jobId} is not one this agent delegated`;
+      if (agent && rec.delegatedTo && rec.delegatedTo !== agent) {
+        return `job ${jobId} was delegated to ${rec.delegatedTo}, not ${agent}`;
+      }
+      if (rec.feedback?.some((f) => f.by === me)) {
+        return `a verdict on job ${jobId} has already been filed`;
+      }
+
+      const out = verdictFor(conf.mesh.root, rec.delegatedTo ?? agent, me, jobId, verdict, reason);
+      if (!out) return `"${verdict}" is not a verdict — expected good, bad or unusable`;
+
+      transport.publish(out.topic, JSON.stringify(out.payload), { qos: 1 });
+      // Recorded here because the relay returns on a topic this agent cannot read.
+      jobs.recordFeedback(jobId, { verdict, ...(reason ? { reason } : {}), by: me, ts: Date.now() });
+      return null;
+    }
+
     const ask = createAskService({
       selfAgentId: conf.mesh.agentId,
       meshRoot: conf.mesh.root,
@@ -361,6 +413,10 @@ export default definePluginEntry({
       // it says it serves rather than what this deployment happens to prefer.
       peerOwnerTopicMode: (id) => (peers.get(id) as any)?.ownerPolicy?.topic,
       lineageOf: (jobId) => dispatcher.lineageOf(jobId),
+      fileVerdict: (agent, jobId, verdict, reason) => {
+        const refused = fileVerdict(agent, jobId, verdict, reason);
+        if (refused) logger.info(`[feedback] not filed for ${jobId}: ${refused}`);
+      },
       onDelegated: (info) => {
         // Recorded locally so a delegated job is visible in our console even
         // though a peer is doing the work.
@@ -652,6 +708,8 @@ export default definePluginEntry({
       ask: (req: any) => ask.ask(req),
       peers: () => peers.list(),
       providersOf: (service: string) => peers.providersOf(service),
+      fileVerdict: (agent: string, jobId: string, verdict: string, reason?: string) =>
+        fileVerdict(agent, jobId, verdict as Verdict, reason),
       delegationMode: conf.mesh.delegation,
     };
 

@@ -14,7 +14,7 @@
  * jobs, linked by parentJobId/rootJobId rather than one job passed around.
  */
 
-import type { Logger, Peer } from "../types.js";
+import type { Logger, Peer, Verdict } from "../types.js";
 import { peerInvokeTopic, peerInvokeTopicFor, peerCancelTopic, ownerScope } from "./topics.js";
 
 export interface AskRequest {
@@ -58,6 +58,7 @@ export interface AskDeps {
   /** Lineage of the parent job, so the chain continues correctly. */
   lineageOf(jobId?: string): { rootJobId?: string; depth: number };
   onDelegated(info: { jobId: string; agent: string; service: string; parentJobId?: string; rootJobId?: string; depth: number }): void;
+  fileVerdict?(agent: string, jobId: string, verdict: Verdict, reason: string): void;
 }
 
 export interface AskService {
@@ -77,6 +78,14 @@ export function createAskService(deps: AskDeps): AskService {
   const finish = (p: Pending, outcome: AskOutcome) => {
     clearTimeout(p.timer);
     pending.delete(p.jobId);
+
+    // Failure is the only verdict a requester can give without an opinion: an
+    // answer that merely arrived is not thereby a good one.
+    if (!outcome.ok) {
+      deps.fileVerdict?.(p.agent, p.jobId, "unusable",
+        outcome.error ?? "the delegation ended without an answer");
+    }
+
     p.resolve(outcome);
   };
 
@@ -159,9 +168,8 @@ export function createAskService(deps: AskDeps): AskService {
         const timer = setTimeout(() => {
           const p = pending.get(jobId);
           if (!p) return;
-          pending.delete(jobId);
           deps.logger.warn(`ask ${jobId} to ${agent} timed out after ${Math.round(deps.timeoutMs / 60_000)}min`);
-          resolve({
+          finish(p, {
             ok: false, jobId, agent,
             error: `${agent} did not answer within ${Math.round(deps.timeoutMs / 60_000)} minutes. It may be offline or overloaded.`,
           });
