@@ -152,6 +152,7 @@ main{max-width:1160px;margin:0 auto;padding:22px 20px 64px}
 .chip.accent{background:var(--accent-soft);color:var(--accent)}
 
 /* Timeline — the milestone history, previously discarded by the bridge. */
+.verdicts{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}
 .job-body{border-top:1px solid var(--line);padding:14px;display:grid;gap:14px;background:var(--surface-2)}
 .tl{display:flex;flex-direction:column;gap:0;position:relative}
 .tl-i{display:grid;grid-template-columns:11px 1fr;gap:10px;padding:0 0 11px;position:relative}
@@ -576,8 +577,32 @@ function jobCard(j) {
       ${j.result ? `<div>
         <div class="eyebrow" style="margin-bottom:7px">Result</div>
         <pre class="payload">${esc(JSON.stringify(j.result, null, 2))}</pre></div>` : ''}
+      ${judgeBlock(j)}
     </div>` : ''}
   </div>`;
+}
+
+// Only work this agent delegated. For a job it served, the requester is
+// somewhere else on the mesh and the broker grants this agent
+// feedback/<its own scope>/+/+ and nothing wider.
+function judgeBlock(j) {
+  if (!j.delegated || !j.delegatedTo) return '';
+  const mine = (j.feedback || []).find((f) => f.by === status.selfScope);
+  if (mine) {
+    return `<div>
+      <div class="eyebrow" style="margin-bottom:7px">What it was worth</div>
+      <p class="note">Filed <b>${esc(mine.verdict)}</b>${mine.reason ? ` — ${esc(mine.reason)}` : ''}.
+        One verdict per delegation.</p></div>`;
+  }
+  return `<div>
+    <div class="eyebrow" style="margin-bottom:7px">What was it worth</div>
+    <input class="input" id="why-${esc(j.jobId)}" placeholder="why, specifically — read back before this capability runs again">
+    <div class="verdicts">
+      ${['good', 'bad', 'unusable'].map((v) =>
+        `<button class="btn quiet small" data-judge="${esc(j.jobId)}" data-verdict="${v}">${v}</button>`).join('')}
+    </div>
+    <p class="note">Filed with the mesh's recorder as <span class="mono">${esc(status.selfScope || 'this agent')}</span>.
+      On a mesh with no recorder nothing collects it.</p></div>`;
 }
 
 function tlItem(e) {
@@ -977,6 +1002,13 @@ document.addEventListener('click', async (e) => {
     if (!confirm(`Cancel ${d.cancel}?\n\nThe mesh publishes a terminal result immediately and ignores anything the executor sends afterwards. Work already running may still finish internally.`)) return;
     const r = await post('/cancel', { jobId: d.cancel, requestedBy: 'web-ui' });
     toast(r.ok ? 'Cancelled ' + d.cancel : 'That job is no longer active');
+    loadAll();
+  }
+  else if (d.judge) {
+    const why = $(`why-${d.judge}`)?.value.trim() ?? '';
+    const job = (jobs.history || []).find((j) => j.jobId === d.judge);
+    const r = await post('/feedback', { agent: job?.delegatedTo, jobId: d.judge, verdict: d.verdict, reason: why });
+    toast(r.ok ? `Filed "${d.verdict}" on ${d.judge}` : (r.data.error || 'Could not file it'));
     loadAll();
   }
   else if (d.use) { page = 'run'; render(); const s = $('r-svc'); if (s) { s.value = d.use; fillArgs(); } }
