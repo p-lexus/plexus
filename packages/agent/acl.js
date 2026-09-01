@@ -137,7 +137,11 @@ export function aclFor({ root, role, id, ownerInTopic = false } = {}) {
   // above exist to withhold. It is a separate identity for that reason, and the
   // UI in front of it is where per-user scoping belongs.
   return {
-    publish: [`${root}/commands/+/#`],
+    publish: [
+      `${root}/commands/+/#`,
+      // The mesh's memory, which the recorder writes and agents only read.
+      `${root}/memory/+`,
+    ],
     subscribe: [`${root}/#`],
   };
 }

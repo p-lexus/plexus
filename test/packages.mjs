@@ -140,6 +140,10 @@ t("v1.5: an agent reads the mesh's memory and cannot write it", () => {
     "an agent that could write here would be writing the memory of capabilities it does not serve");
   assert.ok(!permits(ci.subscribe, `${R}/memory/code.review`),
     "and a requester has no business reading what agents were told about themselves");
+
+  // Somebody has to write it, and it is the one identity that sees every job.
+  const box = aclFor({ root: R, role: "console", id: "console" });
+  assert.ok(permits(box.publish, `${R}/memory/code.review`));
 });
 
 t("v1.5: an agent may write down why its own job went wrong", () => {
