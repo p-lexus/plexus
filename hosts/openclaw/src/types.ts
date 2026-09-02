@@ -95,6 +95,8 @@ export interface MeshConfig {
    * answers nothing and every job pays exactly this once. Default 2s.
    */
   recallTimeoutMs?: number;
+  /** How long a requester's executor gets to judge a delegation it received. */
+  reviewGraceMs?: number;
   /**
    * Which forms of agent-to-agent delegation this deployment permits.
    *
@@ -197,6 +199,10 @@ export interface Feedback {
   verdict: Verdict;
   /** Free text from whoever judged. Capped on the way in. */
   reason?: string;
+  /** What actually happened, in the requester's words — the evidence. */
+  details?: string;
+  /** What a later run should do. Written for good work as well as bad. */
+  lesson?: string;
   /**
    * Who judged, as the topic carried it — a person or another agent, and the
    * protocol does not distinguish them. That is the point: an agent that

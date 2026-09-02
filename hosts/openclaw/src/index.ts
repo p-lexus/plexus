@@ -38,9 +38,11 @@ import {
 } from "./mesh/topics.js";
 import { normalizeJobPublish, publishRefusal } from "./mesh/payload.js";
 import { readFeedback, verdictFor } from "./mesh/feedback.js";
+import type { Said } from "./mesh/feedback.js";
 import { createLimiter, promptFor, signatureOf, triggerFor } from "./mesh/postmortem.js";
 import { renderLessons } from "./mesh/lessons.js";
 import { createRecall } from "./mesh/recall.js";
+import { reviewPromptFor, UNJUDGED } from "./mesh/review.js";
 import { createCatalog } from "./mesh/catalog.js";
 import { createVarStore } from "./mesh/vars.js";
 import { createJobStore } from "./mesh/jobs.js";
@@ -98,7 +100,7 @@ interface ActiveInstance {
   peers(): any[];
   providersOf(service: string): any[];
   /** File a verdict on a delegated job. Returns why it was refused, or null. */
-  fileVerdict(agent: string, jobId: string, verdict: string, reason?: string): string | null;
+  fileVerdict(agent: string, jobId: string, verdict: string, said?: Said): string | null;
   delegationMode: string;
 }
 const MODULE_SLOT = Symbol.for("mqtt-bridge.module");
@@ -241,12 +243,22 @@ export default definePluginEntry({
         jobId: Type.String({ description: "The job id mesh_ask returned." }),
         verdict: Type.String({ description: "good | bad | unusable" }),
         agent: Type.Optional(Type.String({ description: "The peer you asked. Checked against the job." })),
-        reason: Type.Optional(Type.String({ description: "Why, specifically. One or two sentences." })),
+          reason: Type.String({ description: "Why, specifically. One or two sentences." }),
+          details: Type.Optional(Type.String({
+            description: "What actually happened — what you asked for, what came back, what you " +
+              "did with it. The evidence behind the verdict." })),
+          lesson: Type.String({
+            description: "What a later run of this capability should do. Write one for good work " +
+              "too: \"keep checking the rate limit\" is a lesson, \"nice one\" is not." }),
       }),
-      async execute(_id: string, params: { jobId: string; verdict: string; agent?: string; reason?: string }) {
+        async execute(_id: string, params: {
+          jobId: string; verdict: string; agent?: string;
+          reason: string; details?: string; lesson: string;
+        }) {
         const inst = active();
         if (!inst) return notReady("mesh_feedback");
-        const refused = inst.fileVerdict(params.agent ?? "", params.jobId, params.verdict, params.reason);
+        const refused = inst.fileVerdict(params.agent ?? "", params.jobId, params.verdict,
+          { reason: params.reason, details: params.details, lesson: params.lesson });
         if (refused) {
           return { content: [{ type: "text" as const, text: `mesh_feedback refused: ${refused}` }], isError: true };
         }
@@ -410,6 +422,44 @@ export default definePluginEntry({
      * executor never publishes, nobody is left waiting — which is why the
      * bridge does not chase this the way it chases a job.
      */
+    /**
+     * Get a verdict out of this agent for work it asked another to do.
+     *
+     * Enforced rather than offered: an executor that has moved on will never
+     * come back to judge, and a capability nobody judges repeats its mistakes.
+     * The floor verdict is the guarantee — a delegation cannot end in silence,
+     * and what it records is "delivered, unexamined" rather than praise nobody
+     * gave.
+     */
+    function review(agent: string, jobId: string): void {
+      if (!recall.heard) return;
+      const rec = jobs.find(jobId);
+      if (!rec) return;
+
+      const me = ownerScope(conf.mesh.agentId);
+      const judged = () => !!jobs.find(jobId)?.feedback?.some((f) => f.by === me);
+      if (judged()) return;
+
+      const floor = () => {
+        if (judged()) return;
+        const refused = fileVerdict(agent, jobId, UNJUDGED.verdict, {
+          reason: UNJUDGED.reason,
+          details: `Asked ${agent} for ${rec.service ?? "a capability"} as job ${jobId}. ` +
+            `It answered and nothing here judged the answer within ${conf.mesh.reviewGraceMs}ms.`,
+        });
+        if (refused) logger.info(`[feedback] no verdict for ${jobId}: ${refused}`);
+      };
+
+      const sub = (api.runtime as any)?.subagent;
+      if (typeof sub?.run !== "function") { floor(); return; }
+
+      void sub.run({ sessionKey: `${conf.sessionKey}:review`, message: reviewPromptFor(rec, agent) })
+        .catch((e: any) => logger.info(`[feedback] could not review ${jobId}: ${e?.message ?? e}`));
+
+      const grace = setTimeout(floor, conf.mesh.reviewGraceMs);
+      grace.unref?.();
+    }
+
     function explain(jobId: string): void {
       const job = jobs.find(jobId);
       const trigger = triggerFor(job);
@@ -435,7 +485,7 @@ export default definePluginEntry({
     }
 
     /** File a verdict on a job this agent delegated. Returns why not, or null. */
-    function fileVerdict(agent: string, jobId: string, verdict: Verdict, reason?: string): string | null {
+    function fileVerdict(agent: string, jobId: string, verdict: Verdict, said?: Said): string | null {
       const rec = jobs.find(jobId);
       const me = ownerScope(conf.mesh.agentId);
 
@@ -453,12 +503,15 @@ export default definePluginEntry({
         return "nothing records verdicts on this mesh — the feedback cycle needs a Plexus box";
       }
 
-      const out = verdictFor(conf.mesh.root, rec.delegatedTo ?? agent, me, jobId, verdict, reason);
+      const out = verdictFor(conf.mesh.root, rec.delegatedTo ?? agent, me, jobId, verdict, said);
       if (!out) return `"${verdict}" is not a verdict — expected good, bad or unusable`;
 
       transport.publish(out.topic, JSON.stringify(out.payload), { qos: 1 });
       // Recorded here because the relay returns on a topic this agent cannot read.
-      jobs.recordFeedback(jobId, { verdict, ...(reason ? { reason } : {}), by: me, ts: Date.now() });
+      // The payload is the authority on what was said: it is what the recorder
+      // will keep, already trimmed to the caps.
+      const { jobId: _id, verdict: _v, ts: _ts, ...said_ } = out.payload as any;
+      jobs.recordFeedback(jobId, { verdict, ...said_, by: me, ts: Date.now() });
       return null;
     }
 
@@ -478,6 +531,7 @@ export default definePluginEntry({
         const refused = fileVerdict(agent, jobId, verdict, reason);
         if (refused) logger.info(`[feedback] not filed for ${jobId}: ${refused}`);
       },
+      onAnswered: (agent, jobId) => review(agent, jobId),
       onDelegated: (info) => {
         // Recorded locally so a delegated job is visible in our console even
         // though a peer is doing the work.
@@ -493,8 +547,8 @@ export default definePluginEntry({
 
     const { server } = startHttpServer({
       cfg: conf, logger, auth, sse, jobs, vars, dispatcher, registry,
-      fileVerdict: (agent, jobId, verdict, reason) =>
-        fileVerdict(agent, jobId, verdict as Verdict, reason),
+      fileVerdict: (agent, jobId, verdict, said) =>
+        fileVerdict(agent, jobId, verdict as Verdict, said),
       snapshot,
       peers: () => peers.list(),
       profileWithBroker: () => ({
@@ -789,8 +843,8 @@ export default definePluginEntry({
       ask: (req: any) => ask.ask(req),
       peers: () => peers.list(),
       providersOf: (service: string) => peers.providersOf(service),
-      fileVerdict: (agent: string, jobId: string, verdict: string, reason?: string) =>
-        fileVerdict(agent, jobId, verdict as Verdict, reason),
+      fileVerdict: (agent: string, jobId: string, verdict: string, said?: Said) =>
+        fileVerdict(agent, jobId, verdict as Verdict, said),
       delegationMode: conf.mesh.delegation,
     };
 

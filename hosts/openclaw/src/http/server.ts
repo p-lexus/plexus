@@ -9,6 +9,7 @@
  */
 
 import * as fs from "fs";
+import type { Said } from "../mesh/feedback.js";
 import * as path from "path";
 import { createServer } from "http";
 import type { IncomingMessage, ServerResponse, Server } from "http";
@@ -41,7 +42,7 @@ export interface HttpDeps {
   dispatcher: Dispatcher;
   registry: Registry;
   /** File a verdict on a delegated job. Returns why not, or null. */
-  fileVerdict(agent: string, jobId: string, verdict: string, reason?: string): string | null;
+  fileVerdict(agent: string, jobId: string, verdict: string, said?: Said): string | null;
   snapshot(): Record<string, unknown>;
   profileWithBroker(): Record<string, unknown>;
   peers(): unknown[];
@@ -178,7 +179,8 @@ export function createHttpHandler(deps: HttpDeps) {
       if (!auth.sameOrigin(req)) { refuseCrossOrigin(res); return true; }
       const body = await readBody(req);
       const refused = deps.fileVerdict(
-        String(body.agent ?? ""), String(body.jobId ?? ""), String(body.verdict ?? ""), body.reason);
+        String(body.agent ?? ""), String(body.jobId ?? ""), String(body.verdict ?? ""),
+        { reason: body.reason, details: body.details, lesson: body.lesson });
       sendJson(res, refused ? 400 : 200, refused ? { ok: false, error: refused } : { ok: true, jobId: body.jobId });
       return true;
     }
