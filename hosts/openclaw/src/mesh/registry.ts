@@ -46,7 +46,12 @@ export function createRegistry(deps: RegistryDeps): Registry {
       agentId: deps.agentId,
       displayName: svc.displayName ?? deps.agentId,
       status: deps.connected() ? "online" : "offline",
-      protocolVersion: svc.protocolVersion ?? PROTOCOL_VERSION,
+      // The code's, never the catalog's. A capability file says what this
+      // agent offers; what it SPEAKS is decided by the implementation in
+      // this process, and a file that can answer for it is a file that can
+      // lie about it — one deployment advertised 1.2 across three releases
+      // because the number had been typed there once.
+      protocolVersion: PROTOCOL_VERSION,
       capabilities: svc.capabilities,
       commands: ["invoke", "query", "cancel", "config"],
       executionModel: "transport in framework; logic in agent",
