@@ -328,6 +328,10 @@ export default definePluginEntry({
       selfScope: ownerScope(conf.mesh.agentId),
       meshRoot: conf.mesh.root,
       protocolVersion: PROTOCOL_VERSION,
+        // Whether anything on this mesh records. The panel offers no verdict
+        // where nothing keeps one, and an operator asking why the feedback
+        // cycle is quiet reads the answer here.
+        recorder: recall.heard,
       session: { ...transport.session },
       ownerPolicy: ownerPolicy(),
       // What the broker allows, as opposed to what was asked for. A mesh whose
@@ -410,6 +414,11 @@ export default definePluginEntry({
       const job = jobs.find(jobId);
       const trigger = triggerFor(job);
       if (!job || !trigger) return;
+      // A postmortem costs an executor run to write and exists for a recorder
+      // to keep. Where nothing answers there is no recorder: it would be paid
+      // for, published to a topic the broker most likely refuses without
+      // saying so, and read by nobody.
+      if (!recall.heard) return;
       if (!explained.take(signatureOf(job, trigger), Date.now())) {
         logger.info(`[postmortem] ${job.service ?? "unknown"} has already explained this failure recently`);
         return;
@@ -436,6 +445,12 @@ export default definePluginEntry({
       }
       if (rec.feedback?.some((f) => f.by === me)) {
         return `a verdict on job ${jobId} has already been filed`;
+      }
+      // A verdict reaches the agent it judges only by way of a recorder: it is
+      // filed on one topic and delivered on another, and no agent may publish
+      // the delivering one. Without a box it goes nowhere.
+      if (!recall.heard) {
+        return "nothing records verdicts on this mesh — the feedback cycle needs a Plexus box";
       }
 
       const out = verdictFor(conf.mesh.root, rec.delegatedTo ?? agent, me, jobId, verdict, reason);

@@ -13,10 +13,17 @@
  * than a failure.
  *
  * A mesh with no recorder answers nothing, ever — so after a few silences the
- * question still goes out and nothing waits for it. Otherwise every job on such
- * a mesh pays the full timeout forever for an answer that cannot come, which is
- * this feature's entire cost charged for none of its benefit. An answer arriving
- * at any point says a recorder is there and puts the wait back.
+ * question goes out only occasionally and nothing waits for it. Otherwise every
+ * job on such a mesh pays the full timeout forever for an answer that cannot
+ * come, which is this feature's entire cost charged for none of its benefit.
+ *
+ * That question is also how the agent knows where it is. Memory, postmortems
+ * and verdicts are the box's half of the protocol: on a bare broker they are
+ * published into topics nothing reads and the broker most likely refuses, which
+ * costs an executor run per failure and hides the refusal, because a refused
+ * publish is acknowledged at QoS 1. So `heard` — has anything ever answered —
+ * gates the lot, and it is a fact the mesh states rather than a setting anyone
+ * configures.
  */
 
 import type { Logger } from "../types.js";
@@ -29,6 +36,8 @@ export interface RecallDeps {
   logger: Logger;
   publish(topic: string, payload: string, opts?: { qos?: 0 | 1 | 2; retain?: boolean }): void;
   askTopic(service: string): string;
+  /** Injected so the re-probe interval is testable without waiting five minutes. */
+  now?(): number;
 }
 
 export interface Recall {
@@ -39,6 +48,15 @@ export interface Recall {
   readonly waiting: number;
   /** Whether this mesh has stopped being waited on. */
   readonly quiet: boolean;
+  /**
+   * Whether anything on this mesh has ever answered — the one question that
+   * distinguishes a mesh with a recorder from a bare broker.
+   *
+   * Everything in the feedback cycle is gated on it, so it is deliberately a
+   * fact rather than a setting: an operator cannot turn the cycle on where
+   * nothing records, and does not have to turn it on where something does.
+   */
+  readonly heard: boolean;
 }
 
 /**
@@ -50,22 +68,41 @@ export interface Recall {
  */
 const QUIET_AFTER = 3;
 
+/**
+ * How often a quiet mesh is asked again.
+ *
+ * Once quiet, asking per job is noise on a broker that refuses the topic
+ * anyway. Asking never would mean a box added later is never noticed, and the
+ * cycle would stay off on a mesh that has one — so the question goes out
+ * occasionally, and the first answer turns everything back on.
+ */
+const REPROBE_MS = 5 * 60_000;
+
 export function createRecall(deps: RecallDeps): Recall {
   const pending = new Map<string, { resolve(v: string): void; timer: NodeJS.Timeout }>();
+  const now = () => (deps.now ? deps.now() : Date.now());
   let silences = 0;
+  let heard = false;
+  let lastAsk = 0;
+
+  const ask = (service: string) => {
+    lastAsk = now();
+    deps.publish(deps.askTopic(service), JSON.stringify({ agentId: deps.agentId, service }), { qos: 1 });
+  };
 
   return {
     get waiting() { return pending.size; },
     get quiet() { return silences >= QUIET_AFTER; },
+    get heard() { return heard; },
 
     of(service) {
       if (!service) return Promise.resolve("");
 
-      // Asked but not awaited. The question still goes out, so a recorder that
-      // appears later is heard — and the answer it sends re-arms the wait for
-      // the job after this one.
+      // Asked occasionally, awaited never. The question is what finds a box
+      // that appeared after this agent started; its answer is what turns the
+      // feedback cycle back on.
       if (silences >= QUIET_AFTER) {
-        deps.publish(deps.askTopic(service), JSON.stringify({ agentId: deps.agentId, service }), { qos: 1 });
+        if (now() - lastAsk >= REPROBE_MS) ask(service);
         return Promise.resolve("");
       }
 
@@ -92,21 +129,22 @@ export function createRecall(deps: RecallDeps): Recall {
           // made rather than about anything going wrong.
           deps.logger.info(
             silences >= QUIET_AFTER
-              ? `[memory] nothing has answered on this mesh — still asking, no longer waiting`
+              ? `[memory] nothing answers here — no box on this mesh, so memory, postmortems and verdicts are off`
               : `[memory] no answer for ${service} in ${deps.timeoutMs}ms — running without it`);
           p.resolve("");
         }, deps.timeoutMs);
         timer.unref?.();
         pending.set(service, { resolve, timer });
 
-        deps.publish(deps.askTopic(service), JSON.stringify({ agentId: deps.agentId, service }), { qos: 1 });
+        ask(service);
       });
     },
 
     settle(service, rendered) {
       // Something answers here. That is true even when nobody was waiting —
-      // which is exactly the case while quiet, and is how waiting resumes.
+      // which is exactly the case while quiet, and is how the cycle resumes.
       silences = 0;
+      heard = true;
       const p = pending.get(service);
       if (!p) return false;
       clearTimeout(p.timer);

@@ -1496,6 +1496,34 @@ t("an answer nobody is waiting for is not an error", () => {
     "a late reply arrives after the job started, and dropping it is the whole point of the timeout");
 });
 
+t("the feedback cycle is off until something answers", async () => {
+  const { svc } = recallHarness(20);
+  assert.equal(svc.heard, false,
+    "memory, postmortems and verdicts are the box's half — off on a bare broker");
+  svc.settle("code.review", "lessons");
+  assert.equal(svc.heard, true, "one answer is what says a recorder is there");
+});
+
+t("a quiet mesh is asked again occasionally, not per job", async () => {
+  let clock = 0;
+  const asked = [];
+  const svc = createRecall({
+    meshRoot: "agents", agentId: "conan", timeoutMs: 20, logger: quietLogger,
+    publish: (topic) => asked.push(topic),
+    askTopic: (service) => `agents/memory/ask/conan/${service}`,
+    now: () => clock,
+  });
+  for (let i = 0; i < 3; i++) await svc.of("code.review");
+  const afterQuiet = asked.length;
+
+  await svc.of("code.review");
+  assert.equal(asked.length, afterQuiet, "asking per job is noise on a broker that refuses the topic");
+
+  clock += 5 * 60_000;
+  await svc.of("code.review");
+  assert.equal(asked.length, afterQuiet + 1, "a box added later must still be found");
+});
+
 t("a mesh that never answers stops being waited on", async () => {
   const { svc, asked } = recallHarness(20);
   for (let i = 0; i < 3; i++) await svc.of("code.review");
@@ -1505,7 +1533,8 @@ t("a mesh that never answers stops being waited on", async () => {
   assert.equal(await svc.of("code.review"), "");
   assert.ok(Date.now() - started < 15,
     "every job on a mesh with no recorder was paying the whole timeout for an answer that cannot come");
-  assert.equal(asked.length, 4, "the question still goes out, so a recorder appearing later is heard");
+  assert.equal(asked.length, 3,
+    "and it stops asking per job — a mesh with no box is asked again on a timer, above");
 });
 
 t("an answer at any point puts the wait back", async () => {
