@@ -229,6 +229,25 @@ t("topic matching follows MQTT, including the $SYS exclusion", () => {
   assert.ok(!topicMatches("a/b", "a/b/c"));
 });
 
+t("somebody calling the work bad can page a channel", () => {
+  const routes = [{
+    id: "poor", to: "ops", level: "serious",
+    when: { type: "feedback", verdict: ["bad", "unusable"] },
+    title: "{{service}} was called {{verdict}}", body: "{{note}}",
+  }];
+
+  const bad = plan(routes, { jobId: "j1", owner: "ci", kind: "events", type: "feedback",
+    service: "code.review", verdict: "bad", note: "missed the migration" });
+  assert.equal(bad.length, 1);
+  assert.equal(bad[0].payload.title, "code.review was called bad");
+  assert.equal(bad[0].payload.body, "missed the migration");
+
+  // Praise is not an alert. A channel that fires on every verdict is a channel
+  // somebody mutes, and the muted one is where the bad news was going.
+  assert.equal(plan(routes, { jobId: "j2", owner: "ci", kind: "events", type: "feedback",
+    service: "code.review", verdict: "good" }).length, 0);
+});
+
 t("a failed job is routable, and so is the account of why", () => {
   const routes = [
     { id: "failed", when: { type: ["error", "timeout"] }, to: "ops", title: "{{service}} failed", level: "serious" },

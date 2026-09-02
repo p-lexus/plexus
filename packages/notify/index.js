@@ -239,6 +239,17 @@ export default definePlugin({
         if (message.type === "accepted" && message.service && !requestOf.has(message.jobId)) {
           requestOf.set(message.jobId, { service: message.service, args: {} });
         }
+        // A verdict is the one milestone worth telling somebody about. It
+        // cannot be watched where it actually travels — commands/<agent>/
+        // feedback/<owner> belongs to the judged agent and no plugin may read
+        // another agent's commands — so the agent republishes it here, on the
+        // job's own timeline, which is what makes it reachable at all.
+        //
+        // Only this one. Every other milestone is progress, and a notification
+        // per milestone is how a channel becomes something people mute.
+        if (message.type === "feedback") {
+          onResult(message).catch((err) => log(`routing failed: ${err.message}`));
+        }
         return;
       }
       onResult(message).catch((err) => log(`routing failed: ${err.message}`));

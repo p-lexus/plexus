@@ -136,6 +136,22 @@ Routing covers it because routing does not depend on either.
 ]
 ```
 
+### And when somebody says it was poor
+
+```json
+{ "id": "poor", "when": { "type": "feedback", "verdict": ["bad", "unusable"] },
+  "to": "ops", "level": "serious",
+  "title": "{{service}} was called {{verdict}}", "body": "{{note}}" }
+```
+
+A verdict travels on `commands/<agent>/feedback/<owner>`, which belongs to the judged agent and
+which no plugin may read. What makes this reachable is that the agent republishes an accepted
+verdict on the job's own timeline — so this route matches an **event**, not a result.
+
+Match on the verdict. A route that fires on every one includes the good ones, and a channel that
+congratulates you all day is a channel somebody mutes — and the muted one is where the bad news was
+going.
+
 Two routes and not one, deliberately. The agent writes its account *after* the job ends (v1.5), so
 a single route would have to hold the failure until an explanation that may never be written —
 and the failures worth hearing about soonest are exactly the ones least likely to be explained.
