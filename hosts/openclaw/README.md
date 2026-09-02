@@ -54,6 +54,11 @@ to running gateways.
 | `src/mesh/catalog.ts` | `services.json` and its file watch |
 | `src/mesh/vars.ts` | `${VAR}` layering and the `0600` store |
 | `src/mesh/registry.ts` | The retained profile, and config actions |
+| `src/mesh/recall.ts` | What a capability has learned, asked for at the moment a command arrives |
+| `src/mesh/lessons.ts` | Those lessons rendered for a prompt — fenced, quoted, capped |
+| `src/mesh/review.ts` | What a requester owes the agent it asked |
+| `src/mesh/feedback.ts` | A verdict on the wire, in and out — **pure** |
+| `src/mesh/postmortem.ts` | When a job is worth explaining, and what to ask for — **pure** |
 | `src/http/` | The console's API, auth and event stream |
 
 The console itself is [`web/index.html`](../../web/index.html) at the root — one file, no build
@@ -61,8 +66,8 @@ step, no external assets.
 
 ## What this plugin does that the protocol doesn't
 
-Three things are specific to running inside a gateway, and each exists because its absence caused
-a real failure:
+Four things are specific to running inside a gateway or to the deployment it sits in, and each
+exists because its absence caused a real failure:
 
 **Registration runs per agent session, not once per process.** Dispatching a job re-registers the
 plugin, so only a genuinely *rebuilt* module may take over the transport. Reconnecting on every
@@ -72,6 +77,13 @@ registration means reconnecting the broker on every job.
 allowlist that excludes plugin-registered tools, and asking for the plugin's tool list happens in
 a different registration mode than running it. Get the ordering wrong and executors run with no
 mesh tools at all — producing plausible output and publishing nothing.
+
+**The feedback cycle is off unless a box says otherwise.** Verdicts, postmortems and recall are the
+recorder's half of the protocol, and a mesh announces whether it has one on a retained
+`<root>/box`. With nothing there the plugin publishes none of it — not even the question — because
+on a bare broker those topics are refused without saying so, and a refused publish is acknowledged
+at QoS 1. Where a box is present, a delegation that answers is judged by the executor that asked
+for it, and a floor verdict is filed if it stays silent: a delegation cannot end in silence.
 
 **The watchdog's liveness signal is run settlement, not chattiness.** A job that has been silent
 for five minutes is usually a large job thinking, not a dead one. Re-dispatching on silence alone
