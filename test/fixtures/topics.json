@@ -1,6 +1,6 @@
 {
   "fixtureVersion": 1,
-  "protocolVersion": "1.5",
+  "protocolVersion": "1.6",
   "root": "acme/agents",
   "agentId": "reviewer",
   "owner": "ci",
@@ -29,6 +29,7 @@
     "memoryReply": "acme/agents/commands/reviewer/memory/code.review",
     "memoryReplyFilter": "acme/agents/commands/reviewer/memory/+",
     "alert": "acme/agents/alerts/code.review",
+    "box": "acme/agents/box",
     "alertFilter": "acme/agents/alerts/+"
   },
   "jobTopics": [

@@ -49,6 +49,7 @@ const built = {
   memoryReply: topics.memoryReply(ROOT, AGENT, SERVICE),
   memoryReplyFilter: topics.memoryReplyFilter(ROOT, AGENT),
   alert: topics.alert(ROOT, SERVICE),
+  box: topics.box(ROOT),
   alertFilter: topics.alertFilter(ROOT),
 };
 

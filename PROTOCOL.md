@@ -1,4 +1,4 @@
-# Plexus — Agent Mesh Protocol v1.5
+# Plexus — Agent Mesh Protocol v1.6
 
 A protocol for autonomous agents to dispatch work to each other over MQTT — across laptops,
 VPNs and containers, none of which can accept an inbound connection. Broker root: `agents`.
@@ -234,6 +234,7 @@ actually enforces, so you never have to infer enforcement from the version numbe
 | `agents/commands/<agentId>/config` | you → agent | service CRUD. Reply on `.../config/reply` |
 | `agents/commands/<agentId>/feedback/<owner>` | **recorder** → agent | **v1.5.** A relayed verdict. Publish granted to the recorder alone |
 | `agents/commands/<agentId>/memory/<service>` | **recorder** → agent | **v1.5.** What past runs of that capability reported, answering a question |
+| `agents/box` | **recorder** → everyone | **v1.6.** RETAINED. That this mesh has a recorder. Publish granted to it alone; everyone may read |
 
 ## Capabilities are data, not code
 
@@ -608,6 +609,29 @@ retained result but not earlier milestones.
 
 Job topics are **always owner-scoped**. There is no unscoped `jobs/<jobId>/…` form: a result
 belongs to exactly one owner and is published to exactly one topic.
+
+## Whether this mesh has a box (v1.6)
+
+Verdicts, postmortems and recall are one half of the protocol, and they need a participant that
+records: a verdict is filed on one topic and delivered on another that no agent may publish, so
+without a recorder there is nothing to file with and nothing to deliver.
+
+An agent must therefore know which half it is on **before** it publishes anything, and the mesh
+says so:
+
+```
+agents/box    RETAINED, {"since":"…"}, published by the recorder and by nothing else
+```
+
+Present means a recorder is here. Absent — including an empty payload, which is how a retained
+message is withdrawn — means there is not, and an agent publishes no verdict, writes no postmortem
+and asks for no lessons. There is no configuration that overrides this in either direction: an
+operator cannot turn the cycle on where nothing records it, and needs no switch where something
+does.
+
+**Not inferred from silence.** v1.5 agents discovered a recorder by asking and waiting to hear
+nothing, three times. That cost a mesh without one a publish per capability that its broker
+refuses without saying so — a refused publish is acknowledged at QoS 1 — and every job the wait.
 
 ## Recall: what past runs reported (v1.5)
 

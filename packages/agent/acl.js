@@ -122,6 +122,11 @@ export function aclFor({ root, role, id, ownerInTopic = false } = {}) {
         // loud so somebody hears it, which means every agent may hear it — a
         // plugin that delivers alerts is an agent like any other.
         `${root}/alerts/+`,
+        // Whether this mesh has a box (v1.6). Every identity may read it and
+        // none may write it: an agent that could announce a box would switch on
+        // a cycle nothing records, and one that could withdraw the announcement
+        // would switch off everyone else's.
+        `${root}/box`,
         // Answers about what past runs of a capability reported (v1.5). They
         // arrive under this agent's own commands subtree, which the first rule
         // already covers — listed nowhere else because there is nothing else
@@ -137,6 +142,7 @@ export function aclFor({ root, role, id, ownerInTopic = false } = {}) {
         `${root}/jobs/${id}/#`,          // its own scope, and nothing else
         `${root}/registry/+/profile`,    // so it can see what is on offer
         `${root}/registry/+/status`,
+        `${root}/box`,                   // whether anything records its verdicts
       ],
     };
   }
@@ -153,6 +159,11 @@ export function aclFor({ root, role, id, ownerInTopic = false } = {}) {
       // recorder, which is the one identity that sees every job.
       `${root}/memory/+`,
       `${root}/alerts/+`,
+      // Its own presence (v1.6). The one identity that may say a box is here is
+      // the box, and the announcement is retained with a will behind it — so a
+      // box that dies withdraws it, and the mesh falls back to the free half of
+      // the protocol by itself.
+      `${root}/box`,
     ],
     subscribe: [`${root}/#`],
   };

@@ -145,6 +145,20 @@ export function parseMemoryAsk(root: string, topic: string): ParsedMemoryAsk | n
   return { agentId: parts[0], service: parts[1] };
 }
 
+/**
+ * Where a box says it is here (v1.6).
+ *
+ * Retained, and cleared by the box's will when it goes. An agent subscribes on
+ * connect and learns from the answer — or from the silence — which half of the
+ * protocol it is on, before it publishes anything.
+ *
+ * It replaces asking. Until now an agent discovered a recorder by sending a
+ * question and waiting to hear nothing, three times, which cost a bare broker a
+ * publish it refuses and every job the wait. Silence is a poor way to learn
+ * something a participant could simply say.
+ */
+export const boxTopic = (root: string): string => `${root}/box`;
+
 /** Where the mesh says a capability has gone wrong repeatedly (v1.5). */
 export const alertTopic = (root: string, service: string): string => `${root}/alerts/${service}`;
 

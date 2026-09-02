@@ -32,7 +32,7 @@ import { resolveConfig } from "./config.js";
 import { createLogger } from "./logger.js";
 import {
   buildTopics, jobTopicPattern, parseJobTopic, ownerScope, jobPostmortemTopic,
-  memoryAskTopic, memoryReplyFilter, memoryReplyService,
+  memoryAskTopic, memoryReplyFilter, memoryReplyService, boxTopic,
   registryPattern, parseRegistryTopic, registryProfileFilter, registryStatusFilter,
   invokeFilter, invokeTopicOwner, feedbackFilter, feedbackTopicOwner,
 } from "./mesh/topics.js";
@@ -657,6 +657,18 @@ export default definePluginEntry({
         return;
       }
 
+      // v1.6. A box saying it is here, or its will saying it is gone. This is
+      // the only thing that turns the feedback cycle on, and an empty payload
+      // is how a retained announcement is withdrawn — so it reads as absence.
+      if (topic === boxTopic(conf.mesh.root)) {
+        const there = String(raw ?? "").trim() !== "";
+        recall.present(there);
+        logger.info(there
+          ? "[memory] a box records this mesh — verdicts, postmortems and lessons are on"
+          : "[memory] no box on this mesh — verdicts, postmortems and lessons are off");
+        return;
+      }
+
       if (recordJobTraffic(topic, raw, data)) return;
 
       // v1.4: an invoke whose topic carries the owner. The segment is passed on
@@ -779,6 +791,10 @@ export default definePluginEntry({
       // agent's own commands subtree, so an ACL already grants it and no reply
       // for another agent can arrive here.
       [memoryReplyFilter(conf.mesh.root, conf.mesh.agentId)]: { qos: 1 },
+      // v1.6. Whether this mesh has a box. Retained, so the answer is here
+      // before the first job is — and absent on a bare broker, which is how
+      // the agent knows to publish none of the cycle.
+      [boxTopic(conf.mesh.root)]: { qos: 1 },
       // Retained, so subscribing reveals the whole mesh immediately.
       [registryProfileFilter(conf.mesh.root)]: { qos: 1 },
       [registryStatusFilter(conf.mesh.root)]: { qos: 1 },

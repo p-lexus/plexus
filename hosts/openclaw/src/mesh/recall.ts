@@ -12,18 +12,15 @@
  * short, it is bounded, and running without lessons is a normal outcome rather
  * than a failure.
  *
- * A mesh with no recorder answers nothing, ever — so after a few silences the
- * question goes out only occasionally and nothing waits for it. Otherwise every
- * job on such a mesh pays the full timeout forever for an answer that cannot
- * come, which is this feature's entire cost charged for none of its benefit.
+ * Asked only where something answers. Memory, postmortems and verdicts are the
+ * box's half of the protocol, and a mesh says whether it has one on <root>/box —
+ * retained, so the answer is here before the first job. Nothing is published
+ * until it says yes.
  *
- * That question is also how the agent knows where it is. Memory, postmortems
- * and verdicts are the box's half of the protocol: on a bare broker they are
- * published into topics nothing reads and the broker most likely refuses, which
- * costs an executor run per failure and hides the refusal, because a refused
- * publish is acknowledged at QoS 1. So `heard` — has anything ever answered —
- * gates the lot, and it is a fact the mesh states rather than a setting anyone
- * configures.
+ * That replaced guessing. Presence used to be inferred from silence: ask, wait
+ * out the timeout, conclude after three of them. It worked and it cost a bare
+ * broker a publish it refuses without saying so, every job the wait, and the
+ * agent three jobs of not knowing where it was.
  */
 
 import type { Logger } from "../types.js";
@@ -36,8 +33,6 @@ export interface RecallDeps {
   logger: Logger;
   publish(topic: string, payload: string, opts?: { qos?: 0 | 1 | 2; retain?: boolean }): void;
   askTopic(service: string): string;
-  /** Injected so the re-probe interval is testable without waiting five minutes. */
-  now?(): number;
 }
 
 export interface Recall {
@@ -46,65 +41,45 @@ export interface Recall {
   /** Deliver an answer that arrived. Returns whether anybody was waiting. */
   settle(service: string, rendered: string): boolean;
   readonly waiting: number;
-  /** Whether this mesh has stopped being waited on. */
-  readonly quiet: boolean;
   /**
-   * Whether anything on this mesh has ever answered — the one question that
-   * distinguishes a mesh with a recorder from a bare broker.
+   * Whether this mesh has a box — from what the box says, not from silence.
    *
    * Everything in the feedback cycle is gated on it, so it is deliberately a
    * fact rather than a setting: an operator cannot turn the cycle on where
    * nothing records, and does not have to turn it on where something does.
    */
   readonly heard: boolean;
+
+  /**
+   * A box announced itself, or withdrew.
+   *
+   * Retained, so this arrives on connect before the first job — and its will
+   * clears it, so a box that dies takes the cycle down with it rather than
+   * leaving agents publishing into a topic nobody reads.
+   */
+  present(there: boolean): void;
 }
-
-/**
- * Unanswered asks before the wait is dropped.
- *
- * A mesh with no recorder answers nothing, ever, and waiting the full timeout
- * before every job is the whole cost of this feature charged for nothing. Three
- * is enough to tell "no recorder here" from a box that was restarting.
- */
-const QUIET_AFTER = 3;
-
-/**
- * How often a quiet mesh is asked again.
- *
- * Once quiet, asking per job is noise on a broker that refuses the topic
- * anyway. Asking never would mean a box added later is never noticed, and the
- * cycle would stay off on a mesh that has one — so the question goes out
- * occasionally, and the first answer turns everything back on.
- */
-const REPROBE_MS = 5 * 60_000;
 
 export function createRecall(deps: RecallDeps): Recall {
   const pending = new Map<string, { resolve(v: string): void; timer: NodeJS.Timeout }>();
-  const now = () => (deps.now ? deps.now() : Date.now());
-  let silences = 0;
   let heard = false;
-  let lastAsk = 0;
 
-  const ask = (service: string) => {
-    lastAsk = now();
+  const ask = (service: string) =>
     deps.publish(deps.askTopic(service), JSON.stringify({ agentId: deps.agentId, service }), { qos: 1 });
-  };
 
   return {
     get waiting() { return pending.size; },
-    get quiet() { return silences >= QUIET_AFTER; },
     get heard() { return heard; },
 
-    of(service) {
-      if (!service) return Promise.resolve("");
+    present(there) {
+      heard = there;
+    },
 
-      // Asked occasionally, awaited never. The question is what finds a box
-      // that appeared after this agent started; its answer is what turns the
-      // feedback cycle back on.
-      if (silences >= QUIET_AFTER) {
-        if (now() - lastAsk >= REPROBE_MS) ask(service);
-        return Promise.resolve("");
-      }
+    of(service) {
+      // Not asked where nothing answers. On a bare broker this is the whole of
+      // the feature's cost — a publish the broker refuses without saying so,
+      // and a wait before every job — bought for nothing.
+      if (!service || !heard) return Promise.resolve("");
 
       // One question per capability at a time. Two jobs for the same capability
       // arriving together are one question, and the second would otherwise
@@ -123,14 +98,10 @@ export function createRecall(deps: RecallDeps): Recall {
           const p = pending.get(service);
           if (!p) return;
           pending.delete(service);
-          silences++;
-          // Info, not warn: a mesh with no recorder is a supported deployment,
-          // and a warning per job would be a warning about a choice somebody
-          // made rather than about anything going wrong.
-          deps.logger.info(
-            silences >= QUIET_AFTER
-              ? `[memory] nothing answers here — no box on this mesh, so memory, postmortems and verdicts are off`
-              : `[memory] no answer for ${service} in ${deps.timeoutMs}ms — running without it`);
+          // Info, not warn. The box said it was here, so this is a slow or
+          // restarting recorder rather than a mesh without one, and the job
+          // proceeds either way.
+          deps.logger.info(`[memory] no answer for ${service} in ${deps.timeoutMs}ms — running without it`);
           p.resolve("");
         }, deps.timeoutMs);
         timer.unref?.();
@@ -141,9 +112,8 @@ export function createRecall(deps: RecallDeps): Recall {
     },
 
     settle(service, rendered) {
-      // Something answers here. That is true even when nobody was waiting —
-      // which is exactly the case while quiet, and is how the cycle resumes.
-      silences = 0;
+      // Something answered, so something is there — true even if the
+      // announcement has not arrived yet, and harmless when it has.
       heard = true;
       const p = pending.get(service);
       if (!p) return false;
