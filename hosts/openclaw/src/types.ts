@@ -5,7 +5,7 @@
  * dragging the MQTT client or the plugin SDK along with them.
  */
 
-export const PROTOCOL_VERSION = "1.5";
+export const PROTOCOL_VERSION = "1.6";
 
 // ── Configuration ──────────────────────────────────────
 

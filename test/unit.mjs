@@ -19,7 +19,7 @@ const { ownerScope, buildTopics, jobTopicPattern, parseJobTopic, escapeRe,
   feedbackFileTopic, feedbackFileFilter, parseFeedbackFileTopic,
   jobEventsTopic, jobResultTopic, jobPostmortemTopic,
   memoryTopic, memoryFilter, alertTopic, alertFilter,
-  memoryAskTopic, memoryAskFilter, memoryReplyTopic, memoryReplyFilter,
+  memoryAskTopic, memoryAskFilter, memoryReplyTopic, memoryReplyFilter, boxTopic,
   peerInvokeTopicFor: peerInvokeAs } = await import(dist("mesh/topics.js"));
 const { readFeedback, verdictFor, MAX_REASON, MAX_DETAILS, MAX_LESSON } = await import(dist("mesh/feedback.js"));
 const { triggerFor, signatureOf, createLimiter, promptFor } = await import(dist("mesh/postmortem.js"));
@@ -1535,6 +1535,7 @@ function recallHarness(timeoutMs = 30) {
 
 t("a command asks about its own capability, naming who is asking", async () => {
   const { svc, asked } = recallHarness();
+  svc.present(true);
   const p = svc.of("code.review");
   assert.equal(asked.length, 1);
   assert.equal(asked[0].topic, "agents/memory/ask/conan/code.review");
@@ -1552,6 +1553,7 @@ t("a recorder that does not answer costs the job a wait and nothing else", async
 
 t("two jobs for one capability ask once and both get the answer", async () => {
   const { svc, asked } = recallHarness();
+  svc.present(true);
   const a = svc.of("code.review");
   const b = svc.of("code.review");
   assert.equal(asked.length, 1, "the second question would have been the same question");
@@ -1566,6 +1568,40 @@ t("an answer nobody is waiting for is not an error", () => {
     "a late reply arrives after the job started, and dropping it is the whole point of the timeout");
 });
 
+t("a mesh with no box is never asked", async () => {
+  // The whole free tier in one assertion: no announcement, so no publish, no
+  // wait, and a job that runs exactly as it did before any of this existed.
+  const { svc, asked } = recallHarness(20);
+  const started = Date.now();
+  assert.equal(await svc.of("code.review"), "");
+  assert.ok(Date.now() - started < 15, "a bare broker must not cost a job the timeout");
+  assert.equal(asked.length, 0, "nothing may be published where nothing records");
+});
+
+t("an answer proves a box, announcement or not", () => {
+  // Belt and braces: a reply can only have come from a recorder, so it counts
+  // even if the announcement has not arrived.
+  const { svc } = recallHarness();
+  svc.settle("code.review", "lessons");
+  assert.equal(svc.heard, true);
+});
+
+t("a box says it is here; the agent does not guess", () => {
+  // Discovery was three unanswered questions and a wait. A box announces
+  // itself instead, retained, so an agent knows before its first job — and on
+  // a bare broker there is nothing to hear and nothing is published.
+  const { svc } = recallHarness(20);
+  assert.equal(svc.heard, false, "nothing has said it is here");
+
+  svc.present(true);
+  assert.equal(svc.heard, true);
+
+  // An empty payload is how a retained announcement is withdrawn, which is
+  // what the box's will publishes when it dies.
+  svc.present(false);
+  assert.equal(svc.heard, false, "a box that died must take the cycle with it");
+});
+
 t("the feedback cycle is off until something answers", async () => {
   const { svc } = recallHarness(20);
   assert.equal(svc.heard, false,
@@ -1573,54 +1609,6 @@ t("the feedback cycle is off until something answers", async () => {
   svc.settle("code.review", "lessons");
   assert.equal(svc.heard, true, "one answer is what says a recorder is there");
 });
-
-t("a quiet mesh is asked again occasionally, not per job", async () => {
-  let clock = 0;
-  const asked = [];
-  const svc = createRecall({
-    meshRoot: "agents", agentId: "conan", timeoutMs: 20, logger: quietLogger,
-    publish: (topic) => asked.push(topic),
-    askTopic: (service) => `agents/memory/ask/conan/${service}`,
-    now: () => clock,
-  });
-  for (let i = 0; i < 3; i++) await svc.of("code.review");
-  const afterQuiet = asked.length;
-
-  await svc.of("code.review");
-  assert.equal(asked.length, afterQuiet, "asking per job is noise on a broker that refuses the topic");
-
-  clock += 5 * 60_000;
-  await svc.of("code.review");
-  assert.equal(asked.length, afterQuiet + 1, "a box added later must still be found");
-});
-
-t("a mesh that never answers stops being waited on", async () => {
-  const { svc, asked } = recallHarness(20);
-  for (let i = 0; i < 3; i++) await svc.of("code.review");
-  assert.equal(svc.quiet, true);
-
-  const started = Date.now();
-  assert.equal(await svc.of("code.review"), "");
-  assert.ok(Date.now() - started < 15,
-    "every job on a mesh with no recorder was paying the whole timeout for an answer that cannot come");
-  assert.equal(asked.length, 3,
-    "and it stops asking per job — a mesh with no box is asked again on a timer, above");
-});
-
-t("an answer at any point puts the wait back", async () => {
-  const { svc } = recallHarness(20);
-  for (let i = 0; i < 3; i++) await svc.of("code.review");
-
-  // Nobody is waiting — this is a reply to the ask the quiet path still sent.
-  svc.settle("code.review", "a box appeared");
-  assert.equal(svc.quiet, false);
-
-  const p = svc.of("code.review");
-  svc.settle("code.review", "lessons");
-  assert.equal(await p, "lessons", "the job after the first answer waits again");
-});
-
-// ── the address space, held to the fixture ──────────────
 
 t("the bridge addresses the same mesh plexus-agent does", () => {
   const fx = JSON.parse(fs.readFileSync(new URL("./fixtures/topics.json", import.meta.url), "utf8"));
@@ -1632,6 +1620,7 @@ t("the bridge addresses the same mesh plexus-agent does", () => {
     invokeAs: peerInvokeTopicFor(root, agentId, owner),
     invokeFilter: invokeFilter(root, agentId),
     cancel: per.cancel, query: per.query, config: per.config,
+    box: boxTopic(root),
     events: jobEventsTopic(root, owner, jobId),
     result: jobResultTopic(root, owner, jobId),
     postmortem: jobPostmortemTopic(root, owner, jobId),

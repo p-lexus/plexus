@@ -33,7 +33,7 @@ import { readFileSync } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
 
 /** The protocol revision this client implements. */
-export const PROTOCOL_VERSION = "1.5";
+export const PROTOCOL_VERSION = "1.6";
 
 /** The verdicts a requester may return (v1.5). */
 export const VERDICTS = /** @type {const} */ (["good", "bad", "unusable"]);
@@ -114,6 +114,14 @@ export const topics = {
    * client could hold, since a flag is a line its own operator can edit.
    */
   feedbackFile: (root, owner, id, jobId) => `${root}/feedback/${owner}/${id}/${jobId}`,
+
+  /**
+   * Where a box announces itself (v1.6). Retained, and withdrawn by its will.
+   *
+   * Everything in the feedback cycle hangs off this one fact: an agent that
+   * sees nothing here is on a bare broker, and publishes none of it.
+   */
+  box: (root) => `${root}/box`,
   feedbackFileFilter: (root) => `${root}/feedback/+/+/+`,
   cancel: (root, id) => `${root}/commands/${id}/cancel`,
   query: (root, id) => `${root}/commands/${id}/query`,

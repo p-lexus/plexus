@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 
-PROTOCOL_VERSION = "1.5"
+PROTOCOL_VERSION = "1.6"
 
 _OWNER_STRIP = re.compile(r"[^a-z0-9_-]+")
 _OWNER_EDGES = re.compile(r"^-+|-+$")
@@ -159,6 +159,17 @@ def memory_reply(root: str, agent_id: str, service: str) -> str:
 
 def memory_reply_filter(root: str, agent_id: str) -> str:
     return f"{root}/commands/{agent_id}/memory/+"
+
+
+def box(root: str) -> str:
+    """Where a box announces itself (v1.6).
+
+    Retained, and cleared by its will when it goes. An agent subscribes on
+    connect and learns which half of the protocol it is on before publishing
+    anything — the feedback cycle belongs to a mesh with a box, and an agent
+    that sees nothing here publishes none of it.
+    """
+    return f"{root}/box"
 
 
 def alert(root: str, service: str) -> str:
