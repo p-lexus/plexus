@@ -126,6 +126,12 @@ export const topics = {
   memory: (root, service) => `${root}/memory/${service}`,
   memoryFilter: (root) => `${root}/memory/+`,
   /** Where the mesh says a capability has gone wrong repeatedly (v1.5). */
+  /** v1.5: asking what past runs of a capability reported, when a command arrives. */
+  memoryAsk: (root, id, service) => `${root}/memory/ask/${id}/${service}`,
+  memoryAskFilter: (root) => `${root}/memory/ask/+/+`,
+  /** Where the answer comes back: the capability is in the topic, so nothing correlates. */
+  memoryReply: (root, id, service) => `${root}/commands/${id}/memory/${service}`,
+  memoryReplyFilter: (root, id) => `${root}/commands/${id}/memory/+`,
   alert: (root, service) => `${root}/alerts/${service}`,
   alertFilter: (root) => `${root}/alerts/+`,
   jobPattern: (root) => new RegExp(`^${escapeRe(root)}/jobs/([^/]+)/([^/]+)/(events|result|postmortem)$`),

@@ -24,6 +24,10 @@
     "feedbackFileFilter": "acme/agents/feedback/+/+/+",
     "memory": "acme/agents/memory/code.review",
     "memoryFilter": "acme/agents/memory/+",
+    "memoryAsk": "acme/agents/memory/ask/reviewer/code.review",
+    "memoryAskFilter": "acme/agents/memory/ask/+/+",
+    "memoryReply": "acme/agents/commands/reviewer/memory/code.review",
+    "memoryReplyFilter": "acme/agents/commands/reviewer/memory/+",
     "alert": "acme/agents/alerts/code.review",
     "alertFilter": "acme/agents/alerts/+"
   },
