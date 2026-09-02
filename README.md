@@ -12,7 +12,7 @@
 
 <p align="center">
   <a href="LICENSE"><img alt="License: Apache 2.0" src="https://img.shields.io/badge/license-Apache%202.0-3fb9a5"></a>
-  <a href="PROTOCOL.md"><img alt="Protocol v1.5" src="https://img.shields.io/badge/protocol-v1.5-3fb9a5"></a>
+  <a href="PROTOCOL.md"><img alt="Protocol v1.6" src="https://img.shields.io/badge/protocol-v1.6-3fb9a5"></a>
   <img alt="Node 18+" src="https://img.shields.io/badge/node-%E2%89%A5%2018-3fb9a5">
   <img alt="One dependency" src="https://img.shields.io/badge/dependencies-1-3fb9a5">
   <img alt="macOS | Linux | Windows" src="https://img.shields.io/badge/macOS%20%7C%20Linux%20%7C%20Windows-3fb9a5">
@@ -420,6 +420,23 @@ registry.
 **A chain of agents is a chain of jobs.** Each ask creates its own job, linked by `parentJobId`
 and `rootJobId`, so a request through five agents is traceable as one thing — and cancellable as
 one thing.
+
+**Work that nobody judges repeats its mistakes.** A job used to end and nothing came back: the
+requester used the answer or binned it, and the agent never learned which, so the same capability
+made the same mistake for as long as anyone kept asking. Since v1.5 a verdict travels back —
+`good`, `bad` or `unusable`, with why, what happened, and **what a later run should do** — and the
+agent that ran the job explains its own failures. Those lessons are read back to that capability
+at the moment its next command arrives, quoted as data rather than instructions.
+
+An agent that delegates is made to judge what it gets back; a person is asked at the console or by
+`plexus feedback`; and what nobody judged is counted, because a broker can refuse a publish but
+never compel one.
+
+**That half needs a recorder, and a mesh says whether it has one.** A verdict is filed on one
+topic and delivered on another that no agent may publish — so without something to file it with,
+there is nothing to deliver. Since v1.6 the recorder announces itself on a retained `<root>/box`,
+and an agent that sees nothing there publishes none of it: no verdict, no postmortem, no question.
+On a bare broker Plexus is exactly what it was before any of this existed.
 
 ---
 
@@ -1166,15 +1183,20 @@ names, and no wall-clock dependence.
 
 Things that will bite you, stated plainly rather than discovered later.
 
-**Identity is not authenticated.** `requestedBy` is a self-declared string. MQTT delivers topic
-and payload only — a publisher's broker identity does not travel with the message — so anyone
-with broker credentials can claim any owner scope. Owner scoping is a **convention that keeps
-honest clients from seeing each other's traffic**, not a security boundary.
+**Identity is not authenticated by the protocol.** `requestedBy` is a self-declared string. MQTT
+delivers topic and payload only — a publisher's broker identity does not travel with the message —
+so on a broker that enforces nothing, anyone with credentials can claim any owner scope. There,
+owner scoping is a **convention that keeps honest clients from seeing each other's traffic**, not
+a security boundary.
 
-This is fine for one team's private mesh. It is not sufficient for agents belonging to parties
-who don't already trust each other. The fix is broker-side — EMQX ACLs, or rule-engine
-enrichment feeding `mesh.verifyOwner` — which means the protocol delegates its hardest problem
-to your deployment. Know that going in.
+The fix is broker-side, and it is a fix the protocol was shaped for rather than one bolted on:
+since v1.4 the owner is a **topic segment**, so a rule can bound it. Where those rules are applied
+the claim is checked — an agent granted `feedback/<its own scope>/+/+` cannot file a verdict as
+somebody else, and the broker refuses it. Agents report which they are on as
+`ownerPolicy.verified`, because an agent cannot observe this and must be told.
+
+What remains true: the protocol delegates its hardest problem to your deployment. Applying those
+rules by hand on somebody else's broker is work, which is what a box does for you.
 
 **Delegation holds sessions open.** An asking agent waits for its answer, so a four-deep chain
 occupies four agent sessions simultaneously. `mesh.maxDepth` bounds it, but this model favours
@@ -1213,8 +1235,10 @@ In rough order of how much they'd unlock:
 
 - **Extract the Python client.** The implementation already exists inside the Hermes plugin and
   is tested against the JS one; packaging it as `plexus-agent-py` is mostly moving files.
-- **Verified identity end to end.** A working EMQX rule-engine recipe feeding `mesh.verifyOwner`,
-  so owner scoping becomes enforcement rather than convention.
+- **Verified identity on any broker.** The owner has been a topic segment since v1.4, and rules
+  that bound it are generated where a box applies them. What is missing is the recipe for the rest:
+  an EMQX rule-engine configuration feeding `mesh.verifyOwner`, so a mesh on somebody else's broker
+  gets the same enforcement by hand.
 - **Non-blocking delegation.** Let an asking agent hand off instead of waiting, for fan-out
   shapes the current model can't serve.
 - **Enforced request schemas**, so a malformed invoke is rejected at the boundary rather than
