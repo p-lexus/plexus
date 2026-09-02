@@ -95,6 +95,56 @@ export const memoryTopic = (root: string, service: string): string =>
 
 export const memoryFilter = (root: string): string => `${root}/memory/+`;
 
+/**
+ * Where an agent asks what past runs of a capability reported, at the moment a
+ * command for it arrives (v1.5).
+ *
+ * Asked rather than held: an agent that subscribed to every capability's memory
+ * would carry lessons for capabilities it does not serve, and a snapshot from
+ * whenever it last connected. Asking costs a round trip and answers with what
+ * is true now.
+ */
+export const memoryAskTopic = (root: string, agentId: string, service: string): string =>
+  `${root}/memory/ask/${agentId}/${service}`;
+
+/** Every question, for the recorder that answers them. */
+export const memoryAskFilter = (root: string): string => `${root}/memory/ask/+/+`;
+
+/**
+ * Where the answer comes back.
+ *
+ * The capability is in the topic, so a reply needs no correlation id — the one
+ * thing dynamic-security taught this project the hard way, where replies share
+ * a topic and carry nothing to match them to a request.
+ */
+export const memoryReplyTopic = (root: string, agentId: string, service: string): string =>
+  `${root}/commands/${agentId}/memory/${service}`;
+
+export const memoryReplyFilter = (root: string, agentId: string): string =>
+  `${root}/commands/${agentId}/memory/+`;
+
+/** The capability a reply is about, or null if this is not one. */
+export function memoryReplyService(root: string, agentId: string, topic: string): string | null {
+  const prefix = `${root}/commands/${agentId}/memory/`;
+  if (!topic.startsWith(prefix)) return null;
+  const rest = topic.slice(prefix.length);
+  return rest && !rest.includes("/") ? rest : null;
+}
+
+export interface ParsedMemoryAsk {
+  agentId: string;
+  service: string;
+}
+
+/** Who is asking and about what, or null if this is not a question. */
+export function parseMemoryAsk(root: string, topic: string): ParsedMemoryAsk | null {
+  const prefix = `${root}/memory/ask/`;
+  if (!topic.startsWith(prefix)) return null;
+  const parts = topic.slice(prefix.length).split("/");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
+  return { agentId: parts[0], service: parts[1] };
+}
+
 /** The capability a memory topic is about, or null if this is not one. */
 export function memoryTopicService(root: string, topic: string): string | null {
   const prefix = `${root}/memory/`;

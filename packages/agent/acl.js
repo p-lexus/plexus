@@ -102,6 +102,10 @@ export function aclFor({ root, role, id, ownerInTopic = false } = {}) {
         `${root}/jobs/+/+/postmortem`,
         // Delegation: an agent asks its peers, as itself.
         invoke,
+        // Asking what past runs of a capability reported, as itself: the
+        // question names who is asking so the answer has somewhere to go, and
+        // an agent cannot ask in another's name and read the reply.
+        `${root}/memory/ask/${id}/+`,
         `${root}/commands/+/cancel`,
         // And files a verdict on what they gave back. An agent that delegates
         // is a requester and owes the same verdict a person does — as itself,
@@ -114,10 +118,10 @@ export function aclFor({ root, role, id, ownerInTopic = false } = {}) {
         `${root}/registry/+/profile`,    // peer discovery
         `${root}/registry/+/status`,
         `${root}/jobs/${id}/#`,          // answers to what it delegated
-        // What past runs reported, published by the recorder (v1.5). Read-only:
-        // an agent that could write here would be writing the mesh's memory of
-        // capabilities it does not serve.
-        `${root}/memory/+`,
+        // Answers about what past runs of a capability reported (v1.5). They
+        // arrive under this agent's own commands subtree, which the first rule
+        // already covers — listed nowhere else because there is nothing else
+        // to grant.
       ],
     };
   }
@@ -138,6 +142,8 @@ export function aclFor({ root, role, id, ownerInTopic = false } = {}) {
   // UI in front of it is where per-user scoping belongs.
   return {
     publish: [
+      // Includes the answers to what past runs of a capability reported, which
+      // come back under the asking agent's own commands subtree.
       `${root}/commands/+/#`,
       // The mesh's memory, which the recorder writes and agents only read.
       `${root}/memory/+`,

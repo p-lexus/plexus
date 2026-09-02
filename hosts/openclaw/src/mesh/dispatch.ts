@@ -29,8 +29,15 @@ export interface DispatcherDeps {
   cfg: ResolvedConfig;
   /** Called when a job is cancelled, so anything it delegated stops too. */
   onCancel?(jobId: string, requestedBy?: string): void;
-  /** What past runs of a capability reported, already rendered as quoted data. */
-  lessonsFor?(service: string): string;
+  /**
+   * What past runs of a capability reported, asked for now.
+   *
+   * Awaited before the executor starts, which is the point: the answer is what
+   * the mesh knows at this moment rather than whatever arrived earlier. It
+   * resolves to "" rather than rejecting, and quickly — a job is never held on
+   * a recorder that is not answering.
+   */
+  lessonsFor?(service: string): Promise<string>;
   /** A directory of peers, injected into the executor's briefing. */
   peerSummary?(): string;
   /**
@@ -356,16 +363,12 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
     const subagentSessionKey = `agent:main:subagent:mesh-${jobId}`;
     const briefing = executorBriefing(owner, jobId, depth);
 
-    // Before the instructions, so what the model reads last is what it is
-    // being asked to do rather than what somebody else once wrote.
-    const recalled = deps.lessonsFor?.(service) ?? "";
-
     const instructions = cap.prompt
       ? `${renderPrompt(String(cap.prompt), varOrWarn, jobId, requestedBy, args)}\n\n${briefing}`
       : `Agent-mesh job.\nJobId: ${jobId}\nService: ${service}\n` +
         `Description: ${cap.description ?? ""}\nArgs: ${JSON.stringify(args)}\n` +
         (requestedBy ? `Requested by: ${requestedBy}\n` : "") + `\n${briefing}`;
-    const messageText = recalled ? `${recalled}\n\n${instructions}` : instructions;
+    const messageText = instructions;
 
     // A prompt that rendered with holes in it still runs, and still returns
     // something that reads like an answer. Say so on the job itself: the
@@ -410,7 +413,11 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
               { type: "error", note: outcome.error });
             return;
           }
-          launch(`${messageText}\n\n${outcome.context}`);
+          const withContext = `${messageText}\n\n${outcome.context}`;
+          if (!deps.lessonsFor) return void launch(withContext);
+          void deps.lessonsFor(service)
+            .catch(() => "")
+            .then((recalled) => launch(recalled ? `${recalled}\n\n${withContext}` : withContext));
         })
         .catch((e: any) => {
           jobs.active.delete(jobId);
@@ -420,6 +427,17 @@ export function createDispatcher(deps: DispatcherDeps): Dispatcher {
       return { ok: true, jobId };
     }
 
+    // Everything above is synchronous on purpose: a refusal publishes a
+    // terminal result now, before anybody waits. Recall is not a refusal, so it
+    // happens here — asked at the moment this command arrived, awaited before
+    // the executor starts, and bounded inside lessonsFor so a recorder that is
+    // not answering costs a job a short wait and nothing else.
+    if (deps.lessonsFor) {
+      void deps.lessonsFor(service)
+        .catch(() => "")
+        .then((recalled) => launch(recalled ? `${recalled}\n\n${messageText}` : messageText));
+      return { ok: true, jobId };
+    }
     return launch(messageText);
 
     function launch(finalMessage: string): DispatchResult {
