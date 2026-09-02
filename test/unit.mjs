@@ -1496,6 +1496,31 @@ t("an answer nobody is waiting for is not an error", () => {
     "a late reply arrives after the job started, and dropping it is the whole point of the timeout");
 });
 
+t("a mesh that never answers stops being waited on", async () => {
+  const { svc, asked } = recallHarness(20);
+  for (let i = 0; i < 3; i++) await svc.of("code.review");
+  assert.equal(svc.quiet, true);
+
+  const started = Date.now();
+  assert.equal(await svc.of("code.review"), "");
+  assert.ok(Date.now() - started < 15,
+    "every job on a mesh with no recorder was paying the whole timeout for an answer that cannot come");
+  assert.equal(asked.length, 4, "the question still goes out, so a recorder appearing later is heard");
+});
+
+t("an answer at any point puts the wait back", async () => {
+  const { svc } = recallHarness(20);
+  for (let i = 0; i < 3; i++) await svc.of("code.review");
+
+  // Nobody is waiting — this is a reply to the ask the quiet path still sent.
+  svc.settle("code.review", "a box appeared");
+  assert.equal(svc.quiet, false);
+
+  const p = svc.of("code.review");
+  svc.settle("code.review", "lessons");
+  assert.equal(await p, "lessons", "the job after the first answer waits again");
+});
+
 // ── the address space, held to the fixture ──────────────
 
 t("the bridge addresses the same mesh plexus-agent does", () => {
