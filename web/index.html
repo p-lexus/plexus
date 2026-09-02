@@ -594,6 +594,16 @@ function judgeBlock(j) {
       <p class="note">Filed <b>${esc(mine.verdict)}</b>${mine.reason ? ` — ${esc(mine.reason)}` : ''}.
         One verdict per delegation.</p></div>`;
   }
+  // Offered only where something records. A verdict is filed on one topic and
+  // delivered on another that no agent may publish, so with no recorder the
+  // button files into nothing — and the broker acknowledges the publish it
+  // refused, so it would even look like it worked.
+  if (!status.recorder) {
+    return `<div>
+      <div class="eyebrow" style="margin-bottom:7px">What was it worth</div>
+      <p class="note">Nothing records verdicts on this mesh. Judging what an agent delegated, the
+        postmortems it writes and the lessons it reads back are all kept by a Plexus box.</p></div>`;
+  }
   return `<div>
     <div class="eyebrow" style="margin-bottom:7px">What was it worth</div>
     <input class="input" id="why-${esc(j.jobId)}" placeholder="why, specifically — read back before this capability runs again">
@@ -601,8 +611,7 @@ function judgeBlock(j) {
       ${['good', 'bad', 'unusable'].map((v) =>
         `<button class="btn quiet small" data-judge="${esc(j.jobId)}" data-verdict="${v}">${v}</button>`).join('')}
     </div>
-    <p class="note">Filed with the mesh's recorder as <span class="mono">${esc(status.selfScope || 'this agent')}</span>.
-      On a mesh with no recorder nothing collects it.</p></div>`;
+    <p class="note">Filed with the mesh's recorder as <span class="mono">${esc(status.selfScope || 'this agent')}</span>.</p></div>`;
 }
 
 function tlItem(e) {
