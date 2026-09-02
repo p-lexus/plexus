@@ -23,7 +23,9 @@
     "feedbackFile": "acme/agents/feedback/ci/reviewer/j1",
     "feedbackFileFilter": "acme/agents/feedback/+/+/+",
     "memory": "acme/agents/memory/code.review",
-    "memoryFilter": "acme/agents/memory/+"
+    "memoryFilter": "acme/agents/memory/+",
+    "alert": "acme/agents/alerts/code.review",
+    "alertFilter": "acme/agents/alerts/+"
   },
   "jobTopics": [
     {

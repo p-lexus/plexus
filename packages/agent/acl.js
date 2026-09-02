@@ -118,6 +118,10 @@ export function aclFor({ root, role, id, ownerInTopic = false } = {}) {
         `${root}/registry/+/profile`,    // peer discovery
         `${root}/registry/+/status`,
         `${root}/jobs/${id}/#`,          // answers to what it delegated
+        // A capability the mesh has judged poorly three times running. Said out
+        // loud so somebody hears it, which means every agent may hear it — a
+        // plugin that delivers alerts is an agent like any other.
+        `${root}/alerts/+`,
         // Answers about what past runs of a capability reported (v1.5). They
         // arrive under this agent's own commands subtree, which the first rule
         // already covers — listed nowhere else because there is nothing else
@@ -145,8 +149,10 @@ export function aclFor({ root, role, id, ownerInTopic = false } = {}) {
       // Includes the answers to what past runs of a capability reported, which
       // come back under the asking agent's own commands subtree.
       `${root}/commands/+/#`,
-      // The mesh's memory, which the recorder writes and agents only read.
+      // The mesh's memory, and the alerts it raises. Both written by the
+      // recorder, which is the one identity that sees every job.
       `${root}/memory/+`,
+      `${root}/alerts/+`,
     ],
     subscribe: [`${root}/#`],
   };

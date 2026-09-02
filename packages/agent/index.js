@@ -125,6 +125,9 @@ export const topics = {
   /** What past runs of a capability reported, published by the recorder (v1.5). */
   memory: (root, service) => `${root}/memory/${service}`,
   memoryFilter: (root) => `${root}/memory/+`,
+  /** Where the mesh says a capability has gone wrong repeatedly (v1.5). */
+  alert: (root, service) => `${root}/alerts/${service}`,
+  alertFilter: (root) => `${root}/alerts/+`,
   jobPattern: (root) => new RegExp(`^${escapeRe(root)}/jobs/([^/]+)/([^/]+)/(events|result|postmortem)$`),
   registryPattern: (root) => new RegExp(`^${escapeRe(root)}/registry/([^/]+)/(profile|status)$`),
 };
@@ -222,6 +225,10 @@ export async function connect(options = {}) {
   const cmdOwnerRe = new RegExp(`^${escapeRe(root)}/commands/([^/]+)/invoke/([^/]+)$`);
   // v1.5. Same shape, and the owner segment reaches the handler as it arrived.
   const feedbackRe = new RegExp(`^${escapeRe(root)}/commands/([^/]+)/feedback/([^/]+)$`);
+  // v1.5. Watchers used to be reachable only from job topics, so `watch(fn,
+  // "alerts")` subscribed a filter nothing ever dispatched to — a handler that
+  // is never called and no error anywhere.
+  const alertRe = new RegExp(`^${escapeRe(root)}/alerts/([^/]+)$`);
 
   const client = mqtt.connect(cfg.broker, {
     ...brokerTls(cfg),
@@ -275,6 +282,9 @@ export async function connect(options = {}) {
 
     const job = jobRe.exec(topic);
     if (job) return onJobTopic(decodeURIComponent(job[1]), decodeURIComponent(job[2]), job[3], raw);
+
+    const alert = alertRe.exec(topic);
+    if (alert) return onAlert(decodeURIComponent(alert[1]), raw);
 
     const cmd = cmdRe.exec(topic);
     if (cmd) {
@@ -394,6 +404,15 @@ export async function connect(options = {}) {
     if (data.status === "offline") { peers.delete(peerId); return; }
     peers.set(peerId, data);
     for (const w of [...peerWaiters]) w(peerId, data);
+  }
+
+  function onAlert(service, raw) {
+    if (!raw) return;
+    let data;
+    try { data = JSON.parse(raw); } catch { return; }
+    for (const w of watchers) {
+      try { w({ kind: "alert", service, ...data }); } catch (err) { log(`watcher threw: ${err.message}`); }
+    }
   }
 
   function onJobTopic(owner, jobId, kind, raw) {

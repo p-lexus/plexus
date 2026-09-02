@@ -232,6 +232,15 @@ export default definePlugin({
       }
     });
 
+    // A second subscription rather than a wider one: alerts are not job traffic
+    // and folding them into the same filter would mean every plugin watching
+    // jobs also receives them whether it wants to or not.
+    const unwatchAlerts = await agent.watch((message) => {
+      if (message.kind !== "alert") return;
+      onResult({ ...message, type: "alert" })
+        .catch((err) => log(`routing an alert failed: ${err.message}`));
+    }, "alerts");
+
     const unwatch = await agent.watch((message) => {
       if (message.kind === "events") {
         // `accepted` repeats the service; useful when this plugin started after
@@ -271,6 +280,7 @@ export default definePlugin({
       async stop() {
         stopped = true;
         unwatch?.();
+        unwatchAlerts?.();
         unobserve?.();
         await deliveryLog.flush().catch(() => {});
         log(`seen ${stats.seen}, delivered ${stats.delivered}, ` +

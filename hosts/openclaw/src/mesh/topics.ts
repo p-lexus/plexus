@@ -145,6 +145,11 @@ export function parseMemoryAsk(root: string, topic: string): ParsedMemoryAsk | n
   return { agentId: parts[0], service: parts[1] };
 }
 
+/** Where the mesh says a capability has gone wrong repeatedly (v1.5). */
+export const alertTopic = (root: string, service: string): string => `${root}/alerts/${service}`;
+
+export const alertFilter = (root: string): string => `${root}/alerts/+`;
+
 /** The capability a memory topic is about, or null if this is not one. */
 export function memoryTopicService(root: string, topic: string): string | null {
   const prefix = `${root}/memory/`;

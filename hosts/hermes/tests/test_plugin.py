@@ -210,6 +210,8 @@ def _():
         "feedbackFileFilter": topics.feedback_file_filter(root),
         "memory": topics.memory(root, service),
         "memoryFilter": topics.memory_filter(root),
+        "alert": topics.alert(root, service),
+        "alertFilter": topics.alert_filter(root),
     }
     for name, expected in fx["built"].items():
         assert mine[name] == expected, f"{name}: {mine[name]!r} != {expected!r}"
