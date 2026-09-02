@@ -25,6 +25,7 @@ const { readFeedback, verdictFor, MAX_REASON } = await import(dist("mesh/feedbac
 const { triggerFor, signatureOf, createLimiter, promptFor } = await import(dist("mesh/postmortem.js"));
 const { renderLessons, MAX_LESSONS, MAX_LESSON_CHARS } = await import(dist("mesh/lessons.js"));
 const { createRecall } = await import(dist("mesh/recall.js"));
+const { PROTOCOL_VERSION } = await import(dist("types.js"));
 const { normalizeJobPublish, renderPrompt, unresolvedPlaceholders, publishRefusal, missingRequiredArgs } = await import(dist("mesh/payload.js"));
 const { createJobStore, MAX_HISTORY } = await import(dist("mesh/jobs.js"));
 const { createVarStore, maskValue } = await import(dist("mesh/vars.js"));
@@ -177,6 +178,33 @@ t("watching a catalog whose directory does not exist yet does not throw", () => 
   const stop = cat.watch(() => {});
   assert.equal(typeof stop, "function");
   stop();
+});
+
+t("a catalog cannot decide what protocol the agent speaks", () => {
+  // A deployment ran for three releases advertising 1.2 because the number had
+  // been typed into its capability file once. What an agent OFFERS is the
+  // catalog's; what it SPEAKS is the implementation's.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "deploy-"));
+  const file = path.join(dir, "services.json");
+  fs.writeFileSync(file, JSON.stringify({ protocolVersion: "1.2", capabilities: [] }));
+  const published = [];
+  const registry = createRegistry({
+    agentId: "conan",
+    profileTopic: "r/registry/conan/profile",
+    requireOwner: true,
+    verifyOwner: false,
+    ownerPolicy: () => ({ required: true, topic: "accept", verified: false }),
+    catalog: createCatalog(file, { info() {}, warn() {}, error() {} }),
+    logger: { info() {}, warn() {}, error() {} },
+    connected: () => true,
+    publish: (topic, payload, opts) => published.push({ topic, payload, opts }),
+    onPublished: () => {},
+  });
+
+  registry.publishProfile();
+  const profile = JSON.parse(published.at(-1).payload);
+  assert.equal(profile.protocolVersion, PROTOCOL_VERSION,
+    "the file's number reached the mesh and nothing anywhere said so");
 });
 
 t("the panel adds and removes capabilities at the new location, and republishes", () => {

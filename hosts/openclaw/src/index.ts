@@ -669,7 +669,7 @@ export default definePluginEntry({
             }
           : {
               agentId: conf.mesh.agentId,
-              protocolVersion: svc.protocolVersion ?? PROTOCOL_VERSION,
+              protocolVersion: PROTOCOL_VERSION,
               ownerPolicy: ownerPolicy(),
       // What the broker allows, as opposed to what was asked for. A mesh whose
       // ACLs have narrowed us should say so somewhere an operator looks.

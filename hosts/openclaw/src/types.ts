@@ -166,7 +166,6 @@ export interface Capability {
 export interface ServicesFile {
   agentId?: string;
   displayName?: string;
-  protocolVersion?: string;
   capabilities: Capability[];
 }
 
