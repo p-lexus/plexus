@@ -229,6 +229,26 @@ t("topic matching follows MQTT, including the $SYS exclusion", () => {
   assert.ok(!topicMatches("a/b", "a/b/c"));
 });
 
+t("a capability judged poorly three times running is worth paging about", () => {
+  const routes = [{
+    id: "streak", to: "oncall", level: "critical",
+    when: { type: "alert" },
+    title: "{{service}} has been judged poorly {{streak}} times running",
+    body: "{{agent}}",
+  }];
+  const fired = plan(routes, {
+    kind: "alert", service: "code.review", agent: "reviewer", streak: 3,
+    verdicts: [{ verdict: "bad" }, { verdict: "bad" }, { verdict: "unusable" }],
+  });
+  assert.equal(fired.length, 1);
+  assert.equal(fired[0].payload.title, "code.review has been judged poorly 3 times running");
+  assert.equal(fired[0].payload.level, "critical");
+
+  // And a single bad verdict is not a streak: the two routes are different
+  // alarms and somebody may want only the second.
+  assert.equal(plan(routes, { kind: "events", type: "feedback", verdict: "bad" }).length, 0);
+});
+
 t("somebody calling the work bad can page a channel", () => {
   const routes = [{
     id: "poor", to: "ops", level: "serious",

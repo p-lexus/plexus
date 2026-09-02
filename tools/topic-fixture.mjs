@@ -44,6 +44,8 @@ const built = {
   feedbackFileFilter: topics.feedbackFileFilter(ROOT),
   memory: topics.memory(ROOT, SERVICE),
   memoryFilter: topics.memoryFilter(ROOT),
+  alert: topics.alert(ROOT, SERVICE),
+  alertFilter: topics.alertFilter(ROOT),
 };
 
 /**

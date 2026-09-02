@@ -143,6 +143,15 @@ def memory_filter(root: str) -> str:
     return f"{root}/memory/+"
 
 
+def alert(root: str, service: str) -> str:
+    """Where the mesh says a capability has gone wrong repeatedly (v1.5)."""
+    return f"{root}/alerts/{service}"
+
+
+def alert_filter(root: str) -> str:
+    return f"{root}/alerts/+"
+
+
 def result(root: str, owner: str, job_id: str) -> str:
     return f"{root}/jobs/{owner}/{job_id}/result"
 

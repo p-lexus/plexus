@@ -152,6 +152,18 @@ Match on the verdict. A route that fires on every one includes the good ones, an
 congratulates you all day is a channel somebody mutes — and the muted one is where the bad news was
 going.
 
+### And when it keeps happening
+
+```json
+{ "id": "streak", "when": { "type": "alert" }, "to": "oncall", "level": "critical",
+  "title": "{{service}} has been judged poorly {{streak}} times running", "body": "{{agent}}" }
+```
+
+The mesh raises this itself when a capability is judged poorly three times in a row — a different
+alarm from a single bad verdict, and somebody may want only this one. It fires **when the streak
+starts and not again**: a capability failing forty times running pages once, rather than
+thirty-eight more times after anybody could have acted.
+
 Two routes and not one, deliberately. The agent writes its account *after* the job ends (v1.5), so
 a single route would have to hold the failure until an explanation that may never be written —
 and the failures worth hearing about soonest are exactly the ones least likely to be explained.
