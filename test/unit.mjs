@@ -21,10 +21,11 @@ const { ownerScope, buildTopics, jobTopicPattern, parseJobTopic, escapeRe,
   memoryTopic, memoryFilter, alertTopic, alertFilter,
   memoryAskTopic, memoryAskFilter, memoryReplyTopic, memoryReplyFilter,
   peerInvokeTopicFor: peerInvokeAs } = await import(dist("mesh/topics.js"));
-const { readFeedback, verdictFor, MAX_REASON } = await import(dist("mesh/feedback.js"));
+const { readFeedback, verdictFor, MAX_REASON, MAX_DETAILS, MAX_LESSON } = await import(dist("mesh/feedback.js"));
 const { triggerFor, signatureOf, createLimiter, promptFor } = await import(dist("mesh/postmortem.js"));
 const { renderLessons, MAX_LESSONS, MAX_LESSON_CHARS } = await import(dist("mesh/lessons.js"));
 const { createRecall } = await import(dist("mesh/recall.js"));
+const { reviewPromptFor, UNJUDGED } = await import(dist("mesh/review.js"));
 const { PROTOCOL_VERSION } = await import(dist("types.js"));
 const { normalizeJobPublish, renderPrompt, unresolvedPlaceholders, publishRefusal, missingRequiredArgs } = await import(dist("mesh/payload.js"));
 const { createJobStore, MAX_HISTORY } = await import(dist("mesh/jobs.js"));
@@ -730,6 +731,7 @@ const { createAskService } = await import(dist("mesh/ask.js"));
 function askHarness(opts = {}) {
   const published = [];
   const filed = [];
+  const answered = [];
   const peers = new Map(Object.entries(opts.peers ?? {
     dba: { agentId: "dba", online: true, capabilities: [{ service: "schema.review" }], lastSeen: 0 },
   }));
@@ -743,9 +745,10 @@ function askHarness(opts = {}) {
     peer: (id) => peers.get(id),
     lineageOf: opts.lineageOf ?? (() => ({ depth: 0 })),
     onDelegated: () => {},
-    fileVerdict: (agent, jobId, verdict, reason) => filed.push({ agent, jobId, verdict, reason }),
+    onAnswered: (agent, jobId) => answered.push({ agent, jobId }),
+    fileVerdict: (agent, jobId, verdict, said) => filed.push({ agent, jobId, verdict, ...said }),
   });
-  return { svc, published, filed };
+  return { svc, published, filed, answered };
 }
 
 t("what a capability learned is put in front of its instructions, not after", async () => {
@@ -776,12 +779,38 @@ t("a delegation that produced no answer is judged unusable, without being asked"
   assert.match(filed[0].reason, /did not answer/);
 });
 
-t("a delegation that answered is judged by nobody", async () => {
-  const { svc, published, filed } = askHarness({ timeoutMs: 5_000 });
+t("a delegation that answered is handed back for judging", async () => {
+  // It is NOT judged here: an answer that merely arrived is not thereby a good
+  // one, and only the host owns an executor able to form the opinion. What this
+  // guarantees is that the host is told, every time — the requester owes a
+  // verdict on work it asked for, and silence is not one of the options.
+  const { svc, published, filed, answered } = askHarness({ timeoutMs: 5_000 });
   const p = svc.ask({ agent: "dba", service: "schema.review", parentJobId: "rev-1" });
-  svc.settle(published[0].payload.jobId, { type: "review", verdict: "LGTM" });
+  const jobId = published[0].payload.jobId;
+  svc.settle(jobId, { type: "review", verdict: "LGTM" });
   assert.equal((await p).ok, true);
-  assert.equal(filed.length, 0, "an answer that arrived is not thereby a good answer");
+  assert.equal(filed.length, 0, "the service does not invent an opinion it does not have");
+  assert.deepEqual(answered, [{ agent: "dba", jobId }]);
+});
+
+t("what the requester is asked for is a record, not a label", () => {
+  const job = { jobId: "ask-9", service: "schema.review", result: { verdict: "LGTM" } };
+  const prompt = reviewPromptFor(job, "dba");
+  for (const field of ["verdict", "reason", "details", "lesson"]) {
+    assert.ok(prompt.includes(field), `the review must ask for ${field}`);
+  }
+  assert.ok(/good work as well as bad/.test(prompt),
+    "a capability that gets it right is worth saying so about, specifically");
+  assert.ok(prompt.includes("ask-9") && prompt.includes("dba"));
+});
+
+t("the floor verdict records that nobody looked, rather than praise", () => {
+  // The guarantee is that a delegation cannot end in silence. The danger is
+  // buying that with a lie: a mesh full of automatic "good" would be worse than
+  // one with gaps, because the gaps at least admit what they are.
+  assert.equal(UNJUDGED.verdict, "good");
+  assert.match(UNJUDGED.reason, /did not judge it further/);
+  assert.equal(UNJUDGED.lesson, "", "an unexamined job teaches nothing, and must not pretend to");
 });
 
 t("ask publishes to the peer's invoke topic with us as requester", async () => {
@@ -1350,7 +1379,7 @@ t("a verdict is filed with the recorder, never handed to the peer", () => {
   // deliver a verdict to another agent — it can only file one, and on a mesh
   // with no recorder that is a message nobody collects. A feature absent
   // because a participant is absent cannot be switched on by editing a config.
-  const out = verdictFor(ROOT, "dba", "conan", "ask-1", "bad", "  wrong table  ");
+  const out = verdictFor(ROOT, "dba", "conan", "ask-1", "bad", { reason: "  wrong table  " });
   assert.equal(out.topic, `${ROOT}/feedback/conan/dba/ask-1`);
   assert.ok(!out.topic.includes("/commands/"),
     "nothing this agent publishes reaches a peer's command path");
@@ -1362,8 +1391,21 @@ t("a verdict is filed with the recorder, never handed to the peer", () => {
   assert.equal(verdictFor(ROOT, "dba", "conan", "", "good"), null);
   assert.equal(verdictFor(ROOT, "", "conan", "j1", "good"), null);
   assert.equal(
-    verdictFor(ROOT, "dba", "conan", "j", "bad", "x".repeat(MAX_REASON + 50)).payload.reason.length,
+    verdictFor(ROOT, "dba", "conan", "j", "bad", { reason: "x".repeat(MAX_REASON + 50) })
+      .payload.reason.length,
     MAX_REASON);
+
+  // What a later run should do, and the evidence behind the verdict. Both are
+  // capped like the reason: a lesson is a sentence, not a transcript.
+  const full = verdictFor(ROOT, "dba", "conan", "j", "good", {
+    reason: "answered exactly what was asked",
+    details: "d".repeat(MAX_DETAILS + 50),
+    lesson: "l".repeat(MAX_LESSON + 50),
+  });
+  assert.equal(full.payload.details.length, MAX_DETAILS);
+  assert.equal(full.payload.lesson.length, MAX_LESSON);
+  assert.equal(full.payload.verdict, "good",
+    "good work carries a lesson too — that is what makes it repeatable");
 });
 
 t("a filed verdict names the owner, the agent and the job, so a rule can bound it", () => {

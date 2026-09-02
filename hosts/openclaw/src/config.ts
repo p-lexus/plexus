@@ -10,6 +10,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { REVIEW_GRACE_MS } from "./mesh/review.js";
 import type { PluginConfig } from "./types.js";
 
 export interface ResolvedConfig {
@@ -37,6 +38,7 @@ export interface ResolvedConfig {
     maxDepth: number;
     askTimeoutMs: number;
     recallTimeoutMs: number;
+    reviewGraceMs: number;
     delegation: "both" | "declared" | "dynamic" | "off";
     promptVars: Record<string, string>;
   };
@@ -149,6 +151,7 @@ export function resolveConfig(cfg: Partial<PluginConfig>, pluginDir: string): Re
       maxDepth: mesh.maxDepth ?? DEFAULTS.maxDepth,
       askTimeoutMs: mesh.askTimeoutMs ?? DEFAULTS.askTimeoutMs,
       recallTimeoutMs: mesh.recallTimeoutMs ?? 2_000,
+      reviewGraceMs: mesh.reviewGraceMs ?? REVIEW_GRACE_MS,
       delegation: mesh.delegation ?? DEFAULTS.delegation,
       promptVars: (mesh.promptVars ?? {}) as Record<string, string>,
     },

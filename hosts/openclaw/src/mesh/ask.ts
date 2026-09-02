@@ -14,6 +14,7 @@
  * jobs, linked by parentJobId/rootJobId rather than one job passed around.
  */
 
+import type { Said } from "./feedback.js";
 import type { Logger, Peer, Verdict } from "../types.js";
 import { peerInvokeTopic, peerInvokeTopicFor, peerCancelTopic, ownerScope } from "./topics.js";
 
@@ -58,7 +59,12 @@ export interface AskDeps {
   /** Lineage of the parent job, so the chain continues correctly. */
   lineageOf(jobId?: string): { rootJobId?: string; depth: number };
   onDelegated(info: { jobId: string; agent: string; service: string; parentJobId?: string; rootJobId?: string; depth: number }): void;
-  fileVerdict?(agent: string, jobId: string, verdict: Verdict, reason: string): void;
+  fileVerdict?(agent: string, jobId: string, verdict: Verdict, said: Said): void;
+  /**
+   * A delegation that answered. The requester owes it a verdict, and only the
+   * host can obtain one — it owns the executor that has to form the opinion.
+   */
+  onAnswered?(agent: string, jobId: string): void;
 }
 
 export interface AskService {
@@ -79,12 +85,18 @@ export function createAskService(deps: AskDeps): AskService {
     clearTimeout(p.timer);
     pending.delete(p.jobId);
 
-    // Failure is the only verdict a requester can give without an opinion: an
-    // answer that merely arrived is not thereby a good one.
+    // A delegation that ended badly is judged here and now, because nobody
+    // else will: the requester's executor may never look at this job again.
     if (!outcome.ok) {
-      deps.fileVerdict?.(p.agent, p.jobId, "unusable",
-        outcome.error ?? "the delegation ended without an answer");
+      const why = outcome.error ?? "the delegation ended without an answer";
+      deps.fileVerdict?.(p.agent, p.jobId, "unusable", {
+        reason: why,
+        details: `Asked ${p.agent} for job ${p.jobId}. ${why}`,
+        lesson: "Answer, or fail in a way the requester can act on.",
+      });
     }
+
+    if (outcome.ok) deps.onAnswered?.(p.agent, p.jobId);
 
     p.resolve(outcome);
   };
