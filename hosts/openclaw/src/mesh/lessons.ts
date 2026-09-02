@@ -15,6 +15,10 @@ import type { Verdict } from "../types.js";
 export interface Lesson {
   kind: "verdict" | "postmortem";
   text: string;
+  /** What a later run should do. The only part that changes this run. */
+  lesson?: string;
+  /** What happened, in the judge's words. */
+  details?: string;
   verdict?: Verdict;
   by?: string;
   jobId?: string;
@@ -23,6 +27,15 @@ export interface Lesson {
 
 export const MAX_LESSONS = 5;
 export const MAX_LESSON_CHARS = 300;
+
+/**
+ * Evidence is capped harder than the headline.
+ *
+ * It is the least actionable of the three and the longest — the box allows two
+ * thousand characters — and five lessons of it would push the job's own
+ * instructions out of the model's attention, which is a strange way to help.
+ */
+export const MAX_DETAIL_CHARS = 240;
 
 const FENCE = "<<<PAST-RUN>>>";
 const END = "<<<END-PAST-RUN>>>";
@@ -35,13 +48,18 @@ const END = "<<<END-PAST-RUN>>>";
  * stop. Newlines go too: a single line cannot open a heading or a bullet that
  * reads as part of the surrounding prompt.
  */
-function quote(text: string): string {
+function quote(text: string, cap = MAX_LESSON_CHARS): string {
   return String(text ?? "")
     .replace(/[\r\n]+/g, " ")
     .split(FENCE).join("")
     .split(END).join("")
     .trim()
-    .slice(0, MAX_LESSON_CHARS);
+    // A leading bullet would let a lesson pose as a line this file wrote,
+    // which is the same trick as closing the fence early and just as cheap to
+    // remove.
+    .replace(/^[-*+\u2022\s]+/, "")
+    .trim()
+    .slice(0, cap);
 }
 
 const describe = (l: Lesson): string =>
@@ -58,13 +76,25 @@ const describe = (l: Lesson): string =>
  */
 export function renderLessons(lessons: Lesson[], service: string): string {
   const usable = (lessons ?? [])
-    .map((l) => ({ ...l, text: quote(l.text) }))
-    .filter((l) => l.text)
+    .map((l) => ({
+      ...l,
+      text: quote(l.text),
+      lesson: quote(l.lesson ?? ""),
+      details: quote(l.details ?? "", MAX_DETAIL_CHARS),
+    }))
+    // A lesson with nothing but advice is still worth carrying: what to do is
+    // the part that changes a run, and it can outlive the headline it came in
+    // with.
+    .filter((l) => l.text || l.lesson)
     .slice(0, MAX_LESSONS);
 
   if (!usable.length) return "";
 
-  const lines = usable.map((l) => `- ${describe(l)}: ${l.text}`);
+  const lines = usable.flatMap((l) => [
+    `- ${describe(l)}${l.text ? `: ${l.text}` : ""}`,
+    ...(l.lesson ? [`  what to do: ${l.lesson}`] : []),
+    ...(l.details ? [`  what happened: ${l.details}`] : []),
+  ]);
 
   return [
     `WHAT PAST RUNS OF ${service} REPORTED`,

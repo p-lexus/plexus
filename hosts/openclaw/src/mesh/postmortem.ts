@@ -101,10 +101,14 @@ export function promptFor(job: JobRecord, trigger: Trigger, topic: string): stri
     judged ? `\nWhat the requester said:\n${judged}` : "",
     job.result ? `\nWhat was published:\n  ${JSON.stringify(job.result).slice(0, 800)}` : "",
     "",
-    "Answer three things in under 150 words: what was asked, what went wrong, and what a later run should do differently.",
+    "Answer three things: what was asked, what went wrong, and what a later run should do differently.",
     "Do not restate the timeline. If the cause is not recoverable from what is above, say so — a guess recorded as a finding is worse than an admission.",
     "",
-    `Then publish it with mqtt_publish to ${topic}, as {"jobId":"${job.jobId}","summary":"...","lesson":"..."}.`,
+    `Then publish it with mqtt_publish to ${topic}, as`,
+    `{"jobId":"${job.jobId}","summary":"...","lesson":"...","details":"..."} where`,
+    "  summary  one line: what went wrong",
+    "  lesson   what a later run should do — this is read back before this capability runs again",
+    "  details  the fuller account, for somebody who needs more than the summary",
     "Publish exactly once. Do not publish anything else, and do not start any other work.",
   ].filter(Boolean).join("\n");
 }
