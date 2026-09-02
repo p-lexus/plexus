@@ -132,18 +132,22 @@ t("v1.4: the invoke topic builders put the owner where an ACL can see it", () =>
   assert.equal(topics.invoke("acme/agents", "reviewer"), "acme/agents/commands/reviewer/invoke");
 });
 
-t("v1.5: an agent reads the mesh's memory and cannot write it", () => {
+t("v1.5: an agent asks about a capability as itself, and reads only its own answer", () => {
   const rev = aclFor({ root: R, role: "agent", id: "reviewer" });
   const ci = aclFor({ root: R, role: "requester", id: "ci" });
-  assert.ok(permits(rev.subscribe, `${R}/memory/code.review`));
-  assert.ok(!permits(rev.publish, `${R}/memory/code.review`),
-    "an agent that could write here would be writing the memory of capabilities it does not serve");
-  assert.ok(!permits(ci.subscribe, `${R}/memory/code.review`),
-    "and a requester has no business reading what agents were told about themselves");
-
-  // Somebody has to write it, and it is the one identity that sees every job.
   const box = aclFor({ root: R, role: "console", id: "console" });
-  assert.ok(permits(box.publish, `${R}/memory/code.review`));
+
+  assert.ok(permits(rev.publish, `${R}/memory/ask/reviewer/code.review`), "asking, as itself");
+  assert.ok(!permits(rev.publish, `${R}/memory/ask/dba/code.review`),
+    "an agent that could ask in another's name would have the answer sent to that agent");
+  assert.ok(!permits(ci.publish, `${R}/memory/ask/ci/code.review`),
+    "a requester runs nothing, so it has nothing to recall");
+
+  // The answer comes back under the asking agent's own commands subtree, so
+  // one agent cannot read what another was told.
+  assert.ok(permits(rev.subscribe, `${R}/commands/reviewer/memory/code.review`));
+  assert.ok(!permits(rev.subscribe, `${R}/commands/dba/memory/code.review`));
+  assert.ok(permits(box.publish, `${R}/commands/reviewer/memory/code.review`), "the recorder answers");
 });
 
 t("v1.5: an agent may write down why its own job went wrong", () => {

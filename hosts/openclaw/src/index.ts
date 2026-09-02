@@ -32,7 +32,7 @@ import { resolveConfig } from "./config.js";
 import { createLogger } from "./logger.js";
 import {
   buildTopics, jobTopicPattern, parseJobTopic, ownerScope, jobPostmortemTopic,
-  memoryFilter, memoryTopicService,
+  memoryAskTopic, memoryReplyFilter, memoryReplyService,
   registryPattern, parseRegistryTopic, registryProfileFilter, registryStatusFilter,
   invokeFilter, invokeTopicOwner, feedbackFilter, feedbackTopicOwner,
 } from "./mesh/topics.js";
@@ -40,6 +40,7 @@ import { normalizeJobPublish, publishRefusal } from "./mesh/payload.js";
 import { readFeedback, verdictFor } from "./mesh/feedback.js";
 import { createLimiter, promptFor, signatureOf, triggerFor } from "./mesh/postmortem.js";
 import { renderLessons } from "./mesh/lessons.js";
+import { createRecall } from "./mesh/recall.js";
 import { createCatalog } from "./mesh/catalog.js";
 import { createVarStore } from "./mesh/vars.js";
 import { createJobStore } from "./mesh/jobs.js";
@@ -379,16 +380,22 @@ export default definePluginEntry({
       runtime: api.runtime,
       publish: transport.publish,
       peerSummary: () => peers.summary(),
-      lessonsFor: (service) => memory.get(service) ?? "",
+      lessonsFor: (service) => recall.of(service),
       onCancel: (jobId, requestedBy) => ask.cancelChildren(jobId, requestedBy ?? conf.mesh.agentId),
       // Late-bound: the ask service needs the dispatcher's lineage lookup, so
       // the two are mutually dependent and neither can be built first.
       performAsk: (req) => ask.ask(req),
     });
 
-    // What the recorder has published about each capability. Retained, so this
-    // fills on subscribe and updates as the mesh learns.
-    const memory = new Map<string, string>();
+    // Asked when a command arrives, rather than held. See mesh/recall.ts.
+    const recall = createRecall({
+      meshRoot: conf.mesh.root,
+      agentId: conf.mesh.agentId,
+      timeoutMs: conf.mesh.recallTimeoutMs,
+      logger,
+      publish: transport.publish,
+      askTopic: (service) => memoryAskTopic(conf.mesh.root, conf.mesh.agentId, service),
+    });
     const explained = createLimiter();
 
     /**
@@ -567,11 +574,9 @@ export default definePluginEntry({
     function onMessage(topic: string, raw: string, data: any): void {
       logger.info(`received on ${topic}: ${raw.slice(0, 300)}`);
 
-      const service = memoryTopicService(conf.mesh.root, topic);
-      if (service !== null) {
-        const rendered = renderLessons(Array.isArray(data?.lessons) ? data.lessons : [], service);
-        if (rendered) memory.set(service, rendered);
-        else memory.delete(service);
+      const answered = memoryReplyService(conf.mesh.root, conf.mesh.agentId, topic);
+      if (answered !== null) {
+        recall.settle(answered, renderLessons(Array.isArray(data?.lessons) ? data.lessons : [], answered));
         return;
       }
 
@@ -701,9 +706,11 @@ export default definePluginEntry({
       [topics.cancel]: { qos: 1 },
       [topics.config]: { qos: 1 },
       [`${conf.mesh.root}/jobs/#`]: { qos: 1 },   // history for the panel
+      // v1.5. Where answers about a capability's lessons come back. Under this
+      // agent's own commands subtree, so an ACL already grants it and no reply
+      // for another agent can arrive here.
+      [memoryReplyFilter(conf.mesh.root, conf.mesh.agentId)]: { qos: 1 },
       // Retained, so subscribing reveals the whole mesh immediately.
-      // v1.5. Retained, so this arrives on subscribe and needs no request.
-      [memoryFilter(conf.mesh.root)]: { qos: 1 },
       [registryProfileFilter(conf.mesh.root)]: { qos: 1 },
       [registryStatusFilter(conf.mesh.root)]: { qos: 1 },
     });

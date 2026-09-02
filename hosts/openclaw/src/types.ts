@@ -88,6 +88,14 @@ export interface MeshConfig {
   /** How long mesh_ask waits for a peer's terminal result. Default 10 min. */
   askTimeoutMs?: number;
   /**
+   * How long a job waits for what past runs of its capability reported.
+   *
+   * Short by design: this sits between a command arriving and the executor
+   * starting, so it is time a requester spends waiting. A mesh with no recorder
+   * answers nothing and every job pays exactly this once. Default 2s.
+   */
+  recallTimeoutMs?: number;
+  /**
    * Which forms of agent-to-agent delegation this deployment permits.
    *
    *   "both"     declared dependencies AND the mesh_ask tool (default)

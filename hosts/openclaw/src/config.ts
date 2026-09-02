@@ -36,6 +36,7 @@ export interface ResolvedConfig {
     maxJobDurationMs: number;
     maxDepth: number;
     askTimeoutMs: number;
+    recallTimeoutMs: number;
     delegation: "both" | "declared" | "dynamic" | "off";
     promptVars: Record<string, string>;
   };
@@ -147,6 +148,7 @@ export function resolveConfig(cfg: Partial<PluginConfig>, pluginDir: string): Re
       maxJobDurationMs: mesh.maxJobDurationMs ?? DEFAULTS.maxJobDurationMs,
       maxDepth: mesh.maxDepth ?? DEFAULTS.maxDepth,
       askTimeoutMs: mesh.askTimeoutMs ?? DEFAULTS.askTimeoutMs,
+      recallTimeoutMs: mesh.recallTimeoutMs ?? 2_000,
       delegation: mesh.delegation ?? DEFAULTS.delegation,
       promptVars: (mesh.promptVars ?? {}) as Record<string, string>,
     },

@@ -22,6 +22,7 @@ const { ownerScope, buildTopics, jobTopicPattern, parseJobTopic, escapeRe,
 const { readFeedback, verdictFor, MAX_REASON } = await import(dist("mesh/feedback.js"));
 const { triggerFor, signatureOf, createLimiter, promptFor } = await import(dist("mesh/postmortem.js"));
 const { renderLessons, MAX_LESSONS, MAX_LESSON_CHARS } = await import(dist("mesh/lessons.js"));
+const { createRecall } = await import(dist("mesh/recall.js"));
 const { normalizeJobPublish, renderPrompt, unresolvedPlaceholders, publishRefusal, missingRequiredArgs } = await import(dist("mesh/payload.js"));
 const { createJobStore, MAX_HISTORY } = await import(dist("mesh/jobs.js"));
 const { createVarStore, maskValue } = await import(dist("mesh/vars.js"));
@@ -965,7 +966,7 @@ function dispatchHarness({ delegation = "both", delegates, askResult, maxJobDura
     },
     publish: (topic, payload) => published.push({ topic, payload: JSON.parse(payload) }),
     peerSummary: () => "- dba: schema.review",
-    lessonsFor: () => lessons ?? "",
+    lessonsFor: async () => lessons ?? "",
     performAsk: async (req) => {
       asked.push(req);
       return askResult ?? { ok: true, jobId: "ask-1", agent: req.agent, result: { verdict: "LGTM" } };
@@ -1446,6 +1447,51 @@ t("insecure encrypts and does not verify, and says so in its name", () => {
   const out = tls({ url: "mqtts://box:8883", insecure: true });
   assert.equal(out.rejectUnauthorized, false);
   assert.equal(out.ca, undefined);
+});
+
+// ── recall on command (v1.5) ────────────────────────────
+
+function recallHarness(timeoutMs = 30) {
+  const asked = [];
+  const svc = createRecall({
+    meshRoot: "agents", agentId: "conan", timeoutMs, logger: quietLogger,
+    publish: (topic, payload) => asked.push({ topic, payload: JSON.parse(payload) }),
+    askTopic: (service) => `agents/memory/ask/conan/${service}`,
+  });
+  return { svc, asked };
+}
+
+t("a command asks about its own capability, naming who is asking", async () => {
+  const { svc, asked } = recallHarness();
+  const p = svc.of("code.review");
+  assert.equal(asked.length, 1);
+  assert.equal(asked[0].topic, "agents/memory/ask/conan/code.review");
+  assert.equal(asked[0].payload.service, "code.review");
+  svc.settle("code.review", "WHAT PAST RUNS REPORTED");
+  assert.equal(await p, "WHAT PAST RUNS REPORTED");
+});
+
+t("a recorder that does not answer costs the job a wait and nothing else", async () => {
+  const { svc } = recallHarness(20);
+  assert.equal(await svc.of("code.review"), "",
+    "a mesh with no recorder is a supported deployment, not a failure");
+  assert.equal(svc.waiting, 0, "and nothing is left pending");
+});
+
+t("two jobs for one capability ask once and both get the answer", async () => {
+  const { svc, asked } = recallHarness();
+  const a = svc.of("code.review");
+  const b = svc.of("code.review");
+  assert.equal(asked.length, 1, "the second question would have been the same question");
+  svc.settle("code.review", "lessons");
+  assert.deepEqual([await a, await b], ["lessons", "lessons"],
+    "the second job must not wait out its timeout on an answer already delivered");
+});
+
+t("an answer nobody is waiting for is not an error", () => {
+  const { svc } = recallHarness();
+  assert.equal(svc.settle("code.review", "late"), false,
+    "a late reply arrives after the job started, and dropping it is the whole point of the timeout");
 });
 
 // ── the address space, held to the fixture ──────────────
