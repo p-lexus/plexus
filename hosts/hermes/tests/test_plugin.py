@@ -210,6 +210,10 @@ def _():
         "feedbackFileFilter": topics.feedback_file_filter(root),
         "memory": topics.memory(root, service),
         "memoryFilter": topics.memory_filter(root),
+        "memoryAsk": topics.memory_ask(root, agent, service),
+        "memoryAskFilter": topics.memory_ask_filter(root),
+        "memoryReply": topics.memory_reply(root, agent, service),
+        "memoryReplyFilter": topics.memory_reply_filter(root, agent),
         "alert": topics.alert(root, service),
         "alertFilter": topics.alert_filter(root),
     }

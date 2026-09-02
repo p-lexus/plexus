@@ -44,6 +44,10 @@ const built = {
   feedbackFileFilter: topics.feedbackFileFilter(ROOT),
   memory: topics.memory(ROOT, SERVICE),
   memoryFilter: topics.memoryFilter(ROOT),
+  memoryAsk: topics.memoryAsk(ROOT, AGENT, SERVICE),
+  memoryAskFilter: topics.memoryAskFilter(ROOT),
+  memoryReply: topics.memoryReply(ROOT, AGENT, SERVICE),
+  memoryReplyFilter: topics.memoryReplyFilter(ROOT, AGENT),
   alert: topics.alert(ROOT, SERVICE),
   alertFilter: topics.alertFilter(ROOT),
 };

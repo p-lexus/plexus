@@ -143,6 +143,24 @@ def memory_filter(root: str) -> str:
     return f"{root}/memory/+"
 
 
+def memory_ask(root: str, agent_id: str, service: str) -> str:
+    """Asking what past runs of a capability reported, when a command arrives (v1.5)."""
+    return f"{root}/memory/ask/{agent_id}/{service}"
+
+
+def memory_ask_filter(root: str) -> str:
+    return f"{root}/memory/ask/+/+"
+
+
+def memory_reply(root: str, agent_id: str, service: str) -> str:
+    """Where the answer comes back. The capability is in the topic, so nothing correlates."""
+    return f"{root}/commands/{agent_id}/memory/{service}"
+
+
+def memory_reply_filter(root: str, agent_id: str) -> str:
+    return f"{root}/commands/{agent_id}/memory/+"
+
+
 def alert(root: str, service: str) -> str:
     """Where the mesh says a capability has gone wrong repeatedly (v1.5)."""
     return f"{root}/alerts/{service}"

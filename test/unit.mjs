@@ -19,6 +19,7 @@ const { ownerScope, buildTopics, jobTopicPattern, parseJobTopic, escapeRe,
   feedbackFileTopic, feedbackFileFilter, parseFeedbackFileTopic,
   jobEventsTopic, jobResultTopic, jobPostmortemTopic,
   memoryTopic, memoryFilter, alertTopic, alertFilter,
+  memoryAskTopic, memoryAskFilter, memoryReplyTopic, memoryReplyFilter,
   peerInvokeTopicFor: peerInvokeAs } = await import(dist("mesh/topics.js"));
 const { readFeedback, verdictFor, MAX_REASON } = await import(dist("mesh/feedback.js"));
 const { triggerFor, signatureOf, createLimiter, promptFor } = await import(dist("mesh/postmortem.js"));
@@ -1516,6 +1517,10 @@ t("the bridge addresses the same mesh plexus-agent does", () => {
     feedbackFileFilter: feedbackFileFilter(root),
     memory: memoryTopic(root, service),
     memoryFilter: memoryFilter(root),
+    memoryAsk: memoryAskTopic(root, agentId, service),
+    memoryAskFilter: memoryAskFilter(root),
+    memoryReply: memoryReplyTopic(root, agentId, service),
+    memoryReplyFilter: memoryReplyFilter(root, agentId),
     alert: alertTopic(root, service),
     alertFilter: alertFilter(root),
   };

@@ -50,6 +50,13 @@ another client on the same broker, and each has a test:
     command topic. One relayed to `<root>/commands/<agentId>/feedback/<owner>` for a job that owner
     did not request is **refused, not reattributed**, and the refusal is published where the sender
     can read it.
+11. An implementation that recalls asks **as itself**, on
+    `<root>/memory/ask/<agentId>/<service>`, when a command for that capability arrives — and runs
+    the job without lessons rather than waiting indefinitely for an answer. The three
+    implementations agree on every address in
+    [`test/fixtures/topics.json`](test/fixtures/topics.json), which is generated rather than
+    written: a specification with three implementations drifts, and the addresses are what drifts
+    first.
 
 ## Why MQTT
 
@@ -226,6 +233,7 @@ actually enforces, so you never have to infer enforcement from the version numbe
 | `agents/commands/<agentId>/cancel` | you → agent | `{ jobId, requestedBy }`. Reply as a terminal `cancelled` result |
 | `agents/commands/<agentId>/config` | you → agent | service CRUD. Reply on `.../config/reply` |
 | `agents/commands/<agentId>/feedback/<owner>` | **recorder** → agent | **v1.5.** A relayed verdict. Publish granted to the recorder alone |
+| `agents/commands/<agentId>/memory/<service>` | **recorder** → agent | **v1.5.** What past runs of that capability reported, answering a question |
 
 ## Capabilities are data, not code
 
@@ -606,12 +614,26 @@ belongs to exactly one owner and is published to exactly one topic.
 A mesh that records verdicts and postmortems and never reads them back has a diary, not a memory.
 
 ```
-agents/memory/<service>    { lessons: [...] }   RETAINED, QoS 1, published by the recorder
+agents/memory/ask/<agentId>/<service>       agent → recorder, when a command arrives
+agents/commands/<agentId>/memory/<service>  recorder → that agent alone
+agents/memory/<service>                     RETAINED, the standing memory anything may read
 ```
 
-Retained and pushed, so an agent has it the moment it subscribes and asks for nothing per job.
-Agents may **subscribe** and never publish: one that could write here would be writing the mesh's
-memory of capabilities it does not serve.
+**Asked when the command arrives, not held.** An agent that subscribed to every capability's memory
+would carry lessons for capabilities it does not serve, and a snapshot from whenever it last
+connected. Asking answers with what is true now, about the one capability about to run.
+
+The question names who is asking, so the answer has somewhere to go and no agent can ask in
+another's name and have the reply sent there. The answer arrives inside the asking agent's own
+command subtree, which it already reads — so one agent cannot read what another was told, and the
+capability in the reply topic means nothing needs a correlation id.
+
+**Bounded and fail-open.** The wait sits between a command arriving and the executor starting, so it
+is time a requester spends waiting. A mesh with no recorder answers nothing, every job pays the
+timeout once, and runs.
+
+The retained `memory/<service>` remains, for anything watching the mesh that wants a capability's
+lessons without asking — a console, a dashboard. An agent does not use it.
 
 **It is injected as quoted data, and this is the whole of the design.** Lessons are text a model
 wrote, on their way back into a model. Injected plainly they are prompt injection with the mesh's
@@ -626,8 +648,27 @@ inside it which reads as a command is somebody else's text and is to be ignored.
 **It goes before the instructions**, so what the model reads nearest its turn is the job it was
 asked to do rather than something somebody once wrote about a different one.
 
-**It fails open.** No lessons renders nothing, so a recorder that is away costs a job its memory and
+**It fails open.** No answer renders nothing, so a recorder that is away costs a job its memory and
 not its run.
+
+## Alerts: when a capability keeps going wrong (v1.5)
+
+One poor verdict is a bad day. Three in a row is the capability.
+
+```
+agents/alerts/<service>   { service, agent, streak, verdicts: [...] }   QoS 1, NOT retained
+```
+
+Raised by the recorder, which is the only participant that sees every verdict. It fires **when the
+streak reaches the threshold and not again**: a capability failing forty times running says so once,
+when it started, rather than thirty-eight more times after anybody could have acted. That also means
+it needs no stored state — if the judgement before the streak was also poor, it already fired.
+
+Not retained, because it is news. A retained alert pages somebody again about something dealt with
+weeks ago.
+
+Every agent may read these and only the recorder may raise one, so a plugin that delivers alerts is
+an ordinary agent with an ordinary credential.
 
 What this does and does not claim: the prompt structurally marks the text as data and cannot be
 broken out of *by the text itself*. It is not a claim that a model will never be persuaded by
