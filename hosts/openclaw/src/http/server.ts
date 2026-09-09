@@ -133,11 +133,15 @@ export function createHttpHandler(deps: HttpDeps) {
 
     // ── Live stream ──
     if (p === `${base}/api/events`) {
+      // Tagged exactly as a broadcast is, so one event has one shape however it
+      // was produced — and `peers` is a named field rather than a bare list,
+      // because the tag is added by spreading and an array does not survive it.
+      const tag = (payload: object) => ({ mesh: mesh!.name, ...payload });
       const detach = sse.attach(res, [
-        ["status", mesh!.snapshot()],
-        ["profile", mesh!.registry.buildProfile()],
-        ["snapshot", { active: [...mesh!.jobs.active], history: mesh!.jobs.recent() }],
-        ["peers", mesh!.peers()],
+        ["status", tag(mesh!.snapshot())],
+        ["profile", tag(mesh!.registry.buildProfile())],
+        ["snapshot", tag({ active: [...mesh!.jobs.active], history: mesh!.jobs.recent() })],
+        ["peers", tag({ peers: mesh!.peers() })],
       ]);
       req.on("close", detach);
       req.on("error", detach);

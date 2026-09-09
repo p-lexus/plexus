@@ -984,7 +984,7 @@ t("cancelling a parent cancels what it delegated, and tells the peer", async () 
 
 const { createHttpHandler } = await import(dist("http/server.js"));
 
-function panelHarness(meshNames = ["agents"]) {
+function panelHarness(meshNames = ["agents"], sse = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-panel-"));
   fs.writeFileSync(path.join(dir, "index.html"), "<html>panel</html>");
   fs.writeFileSync(path.join(dir, "theme.css"), ":root{--ink:#dce5e2}");
@@ -994,7 +994,7 @@ function panelHarness(meshNames = ["agents"]) {
   const views = meshNames.map((name) => ({
     name, conf: cfg,
     jobs: createJobStore(() => {}),
-    dispatcher: {}, registry: {},
+    dispatcher: {}, registry: { buildProfile: () => ({ agentId: name }) },
     snapshot: () => ({ meshRoot: name }),
     profileWithBroker: () => ({ mesh: name }),
     peers: () => [],
@@ -1004,7 +1004,7 @@ function panelHarness(meshNames = ["agents"]) {
   const handle = createHttpHandler({
     cfg, logger: quietLogger,
     auth: { configured: false, authorized: () => true, sameOrigin: () => true },
-    sse: { add() {}, remove() {}, broadcast() {} },
+    sse: { add() {}, remove() {}, broadcast() {}, ...sse },
     vars: { value: () => "" },
     meshes: {
       names: () => meshNames,
@@ -1027,6 +1027,38 @@ async function fetchPath(handle, url) {
   await handle(req, res);
   return { code, type: head["Content-Type"], body: Buffer.concat(chunks.map(Buffer.from)).toString() };
 }
+
+t("the peers event carries a list, not a list spread into an object", async () => {
+  // The mesh tag is added by spreading, and an array IS an object: the first
+  // version of that turned [a, b] into {"0":a,"1":b,"mesh":…}. Nothing caught
+  // it, because the panel does not read this event yet — so it is asserted
+  // here rather than left for whoever wires the peers view.
+  let initial = null;
+  const h = panelHarness(["agents"], { attach: (_res, i) => { initial = i; return () => {}; } });
+  await fetchPath(h.handle, "/api/events");
+  const peers = Object.fromEntries(initial).peers;
+  assert.ok(Array.isArray(peers.peers), "a list of peers must still be a list");
+  assert.equal(peers.mesh, "agents", "and must say which mesh it is a list for");
+});
+
+t("every key the mesh resolver accepts is one openclaw config validate allows", () => {
+  // The schema is not documentation. additionalProperties is false, so a key
+  // missing from it makes the whole config invalid — and an invalid config
+  // stops the gateway starting at all. `meshes` shipped without one.
+  const schema = JSON.parse(fs.readFileSync(new URL("../openclaw.plugin.json", import.meta.url))).configSchema;
+  assert.equal(schema.additionalProperties, false, "if this is ever true, this test proves nothing");
+  assert.ok(schema.properties.meshes, "a config using meshes must survive validation");
+
+  const entry = schema.properties.meshes.items;
+  assert.equal(entry.additionalProperties, false);
+  for (const key of ["name", "offer", "broker", "root", "agentId", "delegation", "maxDepth"]) {
+    assert.ok(entry.properties[key], `a mesh entry accepts ${key}, so the schema has to allow it`);
+  }
+  // Whatever the top-level mesh block accepts, an entry overriding it accepts too.
+  for (const key of Object.keys(schema.properties.mesh.properties)) {
+    assert.ok(entry.properties[key], `mesh.${key} has no counterpart in a meshes entry`);
+  }
+});
 
 t("the panel on one mesh needs no ?mesh=, exactly as it never did", async () => {
   // Every panel and script written against a single-mesh agent has to keep

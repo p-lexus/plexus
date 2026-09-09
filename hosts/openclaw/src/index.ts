@@ -13,7 +13,10 @@
  *   plugin  → listeners  QoS 1, results retained
  *   plugin  → panel      Server-Sent Events
  *
- * This file wires the pieces together and owns the lifecycle. Behaviour lives
+ * An agent may be on more than one mesh, and each membership is its own
+ * connection — see mesh/instance.ts, which is one of them. This file owns what
+ * is above them: the tools, the singleton guard, the catalog and variables they
+ * share, the panel in front of all of them, and the lifecycle. Behaviour lives
  * in src/mesh/* and src/http/*.
  */
 
@@ -25,34 +28,13 @@ import type { Server } from "http";
 // @ts-expect-error - openclaw types resolve at runtime from the host
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 
-import { PROTOCOL_VERSION } from "./types.js";
-import type { Verdict } from "./types.js";
 import type { PluginConfig } from "./types.js";
 import { resolveConfig, resolveMeshes } from "./config.js";
 import { createMeshInstance } from "./mesh/instance.js";
 import type { MeshInstance } from "./mesh/instance.js";
 import { createLogger } from "./logger.js";
-import {
-  buildTopics, jobTopicPattern, parseJobTopic, ownerScope, jobPostmortemTopic,
-  memoryAskTopic, memoryReplyFilter, memoryReplyService, boxTopic,
-  registryPattern, parseRegistryTopic, registryProfileFilter, registryStatusFilter,
-  invokeFilter, invokeTopicOwner, feedbackFilter, feedbackTopicOwner,
-} from "./mesh/topics.js";
-import { normalizeJobPublish, publishRefusal } from "./mesh/payload.js";
-import { readFeedback, verdictFor } from "./mesh/feedback.js";
-import type { Said } from "./mesh/feedback.js";
-import { createLimiter, promptFor, signatureOf, triggerFor } from "./mesh/postmortem.js";
-import { renderLessons } from "./mesh/lessons.js";
-import { createRecall } from "./mesh/recall.js";
-import { reviewPromptFor, UNJUDGED } from "./mesh/review.js";
 import { createCatalog } from "./mesh/catalog.js";
 import { createVarStore } from "./mesh/vars.js";
-import { createJobStore } from "./mesh/jobs.js";
-import { createTransport } from "./mesh/transport.js";
-import { createDispatcher } from "./mesh/dispatch.js";
-import { createRegistry } from "./mesh/registry.js";
-import { createPeerRegistry } from "./mesh/peers.js";
-import { createAskService } from "./mesh/ask.js";
 import { createAuth } from "./http/auth.js";
 import { createSseHub } from "./http/sse.js";
 import { startHttpServer } from "./http/server.js";

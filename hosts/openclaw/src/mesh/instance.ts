@@ -17,8 +17,6 @@
  * has one of each of those no matter how many meshes it is on.
  */
 
-import type { Server } from "http";
-
 import { PROTOCOL_VERSION } from "../types.js";
 import type { Said } from "./feedback.js";
 import type { Logger, Verdict } from "../types.js";
@@ -113,17 +111,31 @@ export function offering(catalog: Catalog, offer: string[] | null): Catalog {
   };
 }
 
+/**
+ * Anything but a list.
+ *
+ * The mesh tag is added by spreading, and an array IS an object — so spreading
+ * one produces {"0":…,"1":…} and quietly stops being an array. This makes that
+ * a compile error rather than something the next reader has to remember.
+ */
+type NotAList<T> = T extends readonly unknown[] ? never : T;
+
 export function createMeshInstance(membership: Membership, shared: SharedDeps): MeshInstance {
   const { conf, name: meshName } = membership;
-  const { logger, pluginDir, vars, sse, auth } = shared;
-  const api = { runtime: shared.runtime };
+  const { logger, pluginDir, vars, sse, auth, runtime } = shared;
   const catalog = offering(shared.catalog, membership.offer);
 
   // Every broadcast says which mesh it is about. The panel shows several, and
   // an event that did not say would be attributed to whichever one the reader
   // happened to be looking at.
-  const broadcast = (kind: string, payload: any) =>
-    sse.broadcast(kind, payload && typeof payload === "object" ? { mesh: meshName, ...payload } : payload);
+  //
+  // Typed as an object rather than `any`, because the first version took `any`
+  // and spread it — and an array IS an object, so a list of peers went out as
+  // {"0":…,"1":…,"mesh":…} and stopped being an array. Nothing caught it: the
+  // panel does not read that event yet. A payload that is a list is given a
+  // name here instead, so the tag can never change what it is tagging.
+  const broadcast = <T extends object>(kind: string, payload: NotAList<T>) =>
+    sse.broadcast(kind, { mesh: meshName, ...(payload as object) });
 
   const topics = buildTopics(conf.mesh.root, conf.mesh.agentId);
   const jobTopicRe = jobTopicPattern(conf.mesh.root);
@@ -142,7 +154,7 @@ export function createMeshInstance(membership: Membership, shared: SharedDeps): 
     log: (m) => logger.info(m),
   });
   const transport = createTransport(conf, pluginDir, topics.status, logger);
-  const peers = createPeerRegistry(conf.mesh.agentId, logger, () => broadcast("peers", peers.list()));
+  const peers = createPeerRegistry(conf.mesh.agentId, logger, () => broadcast("peers", { peers: peers.list() }));
 
   const snapshot = () => ({
     connected: transport.connected,
@@ -160,6 +172,10 @@ export function createMeshInstance(membership: Membership, shared: SharedDeps): 
     activeJobs: [...jobs.active],
     agentId: conf.mesh.agentId,
     selfScope: ownerScope(conf.mesh.agentId),
+    // How this mesh is addressed — the segment ?mesh= takes. Not meshRoot:
+    // the two differ exactly when two meshes share a root, which is the case
+    // a name exists for.
+    mesh: meshName,
     meshRoot: conf.mesh.root,
     protocolVersion: PROTOCOL_VERSION,
       // Whether anything on this mesh records. The panel offers no verdict
@@ -215,7 +231,7 @@ export function createMeshInstance(membership: Membership, shared: SharedDeps): 
 
   const dispatcher = createDispatcher({
     cfg: conf, logger, catalog, jobs, vars,
-    runtime: api.runtime,
+    runtime,
     publish: transport.publish,
     peerSummary: () => peers.summary(),
     lessonsFor: (service) => recall.of(service),
@@ -236,14 +252,6 @@ export function createMeshInstance(membership: Membership, shared: SharedDeps): 
   });
   const explained = createLimiter();
 
-  /**
-   * Ask the executor to explain a job that went wrong.
-   *
-   * Runs outside the watchdog entirely: no job is created and no watch is
-   * registered, so nothing here can be re-dispatched or nudged. If the
-   * executor never publishes, nobody is left waiting — which is why the
-   * bridge does not chase this the way it chases a job.
-   */
   /**
    * Get a verdict out of this agent for work it asked another to do.
    *
@@ -272,7 +280,7 @@ export function createMeshInstance(membership: Membership, shared: SharedDeps): 
       if (refused) logger.info(`[feedback] no verdict for ${jobId}: ${refused}`);
     };
 
-    const sub = (api.runtime as any)?.subagent;
+    const sub = (runtime as any)?.subagent;
     if (typeof sub?.run !== "function") { floor(); return; }
 
     void sub.run({ sessionKey: `${conf.sessionKey}:review`, message: reviewPromptFor(rec, agent) })
@@ -282,6 +290,14 @@ export function createMeshInstance(membership: Membership, shared: SharedDeps): 
     grace.unref?.();
   }
 
+  /**
+   * Ask the executor to explain a job that went wrong.
+   *
+   * Runs outside the watchdog entirely: no job is created and no watch is
+   * registered, so nothing here can be re-dispatched or nudged. If the
+   * executor never publishes, nobody is left waiting — which is why the
+   * bridge does not chase this the way it chases a job.
+   */
   function explain(jobId: string): void {
     const job = jobs.find(jobId);
     const trigger = triggerFor(job);
@@ -298,7 +314,7 @@ export function createMeshInstance(membership: Membership, shared: SharedDeps): 
 
     const owner = job.owner ?? ownerScope(job.requestedBy);
     const topic = jobPostmortemTopic(conf.mesh.root, owner, jobId);
-    const sub = (api.runtime as any)?.subagent;
+    const sub = (runtime as any)?.subagent;
     if (typeof sub?.run !== "function") return;
 
     jobs.record({ jobId }, { type: "postmortem_requested" });
@@ -563,7 +579,7 @@ export function createMeshInstance(membership: Membership, shared: SharedDeps): 
     if (topic === topics.cancel) {
       const jobId = String(data?.jobId ?? "");
       if (jobId && dispatcher.cancel(jobId, data?.requestedBy)) {
-        api.runtime.system.enqueueSystemEvent(`🛑 Agent-mesh cancel for job ${jobId}.`, { sessionKey: conf.sessionKey });
+        runtime.system.enqueueSystemEvent(`🛑 Agent-mesh cancel for job ${jobId}.`, { sessionKey: conf.sessionKey });
       } else {
         dispatcher.publishEvent(jobId || "unknown", { type: "cancel_ignored" }, ownerScope(data?.requestedBy));
       }
