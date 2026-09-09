@@ -33,7 +33,7 @@ const { createVarStore, maskValue } = await import(dist("mesh/vars.js"));
 const { createAuth } = await import(dist("http/auth.js"));
 const { resolveConfig, resolveMeshes, perMeshFile, resolveEnvRef, DEFAULTS, deploymentDir } = await import(dist("config.js"));
 const { createCatalog } = await import(dist("mesh/catalog.js"));
-const { startMeshes, offering } = await import(dist("mesh/instance.js"));
+const { startMeshes, offering, createMeshInstance } = await import(dist("mesh/instance.js"));
 // Reaching across to a package deliberately: see the parity test below.
 const { perMeshFile: notifyPerMeshFile } = await import("plexus-notify");
 const { createRegistry } = await import(dist("mesh/registry.js"));
@@ -1123,6 +1123,59 @@ async function fetchPath(handle, url) {
   await handle(req, res);
   return { code, type: head["Content-Type"], body: Buffer.concat(chunks.map(Buffer.from)).toString() };
 }
+
+t("a real mesh instance answers everything the panel calls on it", async () => {
+  // This is the test that was missing when the panel shipped calling
+  // profileWithBroker() and peers() on an object that had neither: the harness
+  // below hand-built the shape the handler wanted, so it proved the handler
+  // worked against a fiction. Here the panel is driven against the object
+  // register() actually hands it.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-instance-"));
+  fs.writeFileSync(path.join(dir, "services.json"), JSON.stringify({ capabilities: [{ service: "code.review" }] }));
+  fs.writeFileSync(path.join(dir, "index.html"), "<html>panel</html>");
+
+  // A broker that is not there: the instance is built before it connects, and
+  // transport retries in the background. Nothing here needs it to answer.
+  const [membership] = resolveMeshes({
+    broker: { url: "mqtt://127.0.0.1:1" },
+    mesh: { root: "agents", agentId: "reviewer", servicesFile: path.join(dir, "services.json"),
+            historyFile: path.join(dir, "jobs.local.json") },
+    web: { dir },
+  }, dir);
+
+  const instance = createMeshInstance(membership, {
+    logger: quietLogger, runtime: {}, pluginDir: dir,
+    catalog: createCatalog(path.join(dir, "services.json"), quietLogger),
+    vars: createVarStore(path.join(dir, "mesh.local.json"), {}, quietLogger),
+    sse: { attach: () => () => {}, broadcast() {}, closeAll() {}, size: 0 },
+    auth: createAuth(""),
+  });
+
+  try {
+    // Exactly what index.ts passes, and exactly what the panel calls on it.
+    for (const method of ["snapshot", "profileWithBroker", "peers", "fileVerdict"]) {
+      assert.equal(typeof instance[method], "function", `the panel calls ${method}() on this`);
+    }
+    assert.ok(instance.profileWithBroker().broker, "the profile view needs the link's state");
+    assert.ok(Array.isArray(instance.peers()), "the peers view needs a list");
+
+    // And through the real handler, the way a browser reaches it.
+    const handle = createHttpHandler({
+      cfg: membership.conf, logger: quietLogger,
+      auth: { configured: false, authorized: () => true, sameOrigin: () => true },
+      sse: { attach: () => () => {}, broadcast() {}, closeAll() {} },
+      vars: { value: () => "" },
+      meshes: { names: () => [instance.name], pick: (n) => (n && n !== instance.name ? undefined : instance) },
+    });
+    for (const route of ["/api/profile", "/api/peers", "/api/status", "/api/jobs"]) {
+      const r = await fetchPath(handle, route);
+      assert.equal(r.code, 200, `${route} must not throw — an unhandled rejection here kills the gateway`);
+    }
+  } finally {
+    instance.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 t("the peers event carries a list, not a list spread into an object", async () => {
   // The mesh tag is added by spreading, and an array IS an object: the first

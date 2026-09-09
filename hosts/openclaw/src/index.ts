@@ -30,6 +30,7 @@ import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 
 import type { PluginConfig } from "./types.js";
 import { resolveConfig, resolveMeshes } from "./config.js";
+import type { Membership } from "./config.js";
 import { startMeshes } from "./mesh/instance.js";
 import type { MeshInstance } from "./mesh/instance.js";
 import { createLogger } from "./logger.js";
@@ -371,7 +372,7 @@ export default definePluginEntry({
     const sse = createSseHub();
     const auth = createAuth(shared0.web.auth);
 
-    let memberships;
+    let memberships: Membership[];
     try {
       memberships = resolveMeshes(cfg, pluginDir);
     } catch (e: any) {
@@ -386,7 +387,7 @@ export default definePluginEntry({
 
     // Every mesh, or none: a membership is live as soon as it is built, and the
     // shutdown that would stop it is registered further down.
-    let instances;
+    let instances: MeshInstance[];
     try {
       instances = startMeshes(memberships, {
         logger, runtime: api.runtime, pluginDir, catalog, vars, sse, auth,

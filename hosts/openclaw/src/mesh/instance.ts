@@ -20,7 +20,7 @@
 import { PROTOCOL_VERSION } from "../types.js";
 import type { Said } from "./feedback.js";
 import type { Logger, Verdict } from "../types.js";
-import type { Membership, ResolvedConfig } from "../config.js";
+import type { Membership } from "../config.js";
 import {
   buildTopics, jobTopicPattern, parseJobTopic, ownerScope, jobPostmortemTopic,
   memoryAskTopic, memoryReplyFilter, memoryReplyService, boxTopic,
@@ -42,6 +42,7 @@ import { createRegistry } from "./registry.js";
 import { createPeerRegistry } from "./peers.js";
 import { createAskService } from "./ask.js";
 import type { SseHub } from "../http/sse.js";
+import type { MeshView } from "../http/server.js";
 import type { Auth } from "../http/auth.js";
 
 /**
@@ -59,19 +60,22 @@ export interface SharedDeps {
   auth: Auth;
 }
 
-/** One mesh, wired and running. */
-export interface MeshInstance {
-  name: string;
-  conf: ResolvedConfig;
-  /** What the mesh tools operate through — see ActiveInstance in index.ts. */
+/**
+ * One mesh, wired and running.
+ *
+ * It **extends MeshView**, which is what the panel needs from a mesh, and that
+ * is load-bearing rather than tidy: the panel is handed these objects directly,
+ * so the two shapes have to agree. Declared this way the compiler checks it
+ * here, where the object is built — not at the call site, where one untyped
+ * `let` was enough to erase the check and ship a panel that threw on every
+ * request and took the gateway down with it.
+ */
+export interface MeshInstance extends MeshView {
+  /** What the mesh tools operate through — see ActiveMeshes in index.ts. */
   active: ActiveInstance;
-  snapshot(): any;
-  jobs: ReturnType<typeof createJobStore>;
-  dispatcher: ReturnType<typeof createDispatcher>;
-  registry: ReturnType<typeof createRegistry>;
-  peers: ReturnType<typeof createPeerRegistry>;
+  /** The live peer directory. `peers()` is the flat list the panel reads. */
+  peerRegistry: ReturnType<typeof createPeerRegistry>;
   transport: ReturnType<typeof createTransport>;
-  fileVerdict(agent: string, jobId: string, verdict: Verdict, said?: Said): string | null;
   stop(): void;
 }
 
@@ -752,7 +756,14 @@ export function createMeshInstance(membership: Membership, shared: SharedDeps): 
     jobs,
     dispatcher,
     registry,
-    peers,
+    peerRegistry: peers,
+    peers: () => peers.list(),
+    // The catalog plus what the connection is doing, which is what the panel's
+    // profile view is: one is this agent's, the other is this mesh's link.
+    profileWithBroker: () => ({
+      ...registry.buildProfile(),
+      broker: { connected: transport.connected, stats: transport.stats },
+    }),
     transport,
     fileVerdict,
     stop() {
