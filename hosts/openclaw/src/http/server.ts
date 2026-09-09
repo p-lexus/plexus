@@ -91,6 +91,19 @@ export function createHttpHandler(deps: HttpDeps) {
     sendJson(res, 403, { ok: false, error: "cross-origin request refused" });
 
   return async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+    try {
+      return await route(req, res);
+    } catch (e: any) {
+      // Answered here as well as at the server, because a route that throws
+      // must not depend on who called it to stay contained.
+      deps.logger.error(`panel request ${req.method} ${req.url} failed: ${e?.message ?? e}`);
+      if (res.headersSent) { try { res.end(); } catch { /* socket gone */ } }
+      else sendJson(res, 500, { ok: false, error: "the panel failed to answer that request" });
+      return true;
+    }
+  };
+
+  async function route(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
     const url = new URL(req.url ?? "/", "http://local");
     let p = url.pathname;
     // The panel is served twice: mounted under basePath inside the gateway, and
@@ -264,7 +277,27 @@ export function startHttpServer(deps: HttpDeps): { server: Server | null; handle
     deps.logger.info("web panel disabled (web.enabled=false)");
     return { server: null, handle };
   }
-  const server = createServer((req, res) => { void handle(req, res); });
+  // A throwing route must not be able to end the process.
+  //
+  // `void handle(...)` with nothing catching it makes any throw inside a route
+  // an unhandled rejection, and Node ends the process on those — so one bad
+  // panel request took the whole gateway down, and with it every other plugin
+  // the gateway was running. That is far too much blast radius for a console
+  // on loopback: the panel is a window onto the mesh, and a window that breaks
+  // should not burn the house down.
+  //
+  // Answered as a 500 where the response has not started, and simply closed
+  // where it has — an SSE stream has already sent its headers and cannot be
+  // turned back into an error.
+  const server = createServer((req, res) => {
+    void handle(req, res).catch((e: any) => {
+      deps.logger.error(`panel request ${req.method} ${req.url} failed: ${e?.message ?? e}`);
+      try {
+        if (res.headersSent) res.end();
+        else sendJson(res, 500, { ok: false, error: "the panel failed to answer that request" });
+      } catch { /* the socket is gone; nothing left to say */ }
+    });
+  });
   server.on("error", (e: any) => deps.logger.warn(`standalone UI port ${deps.cfg.web.port} failed: ${e.message}`));
   server.listen(deps.cfg.web.port, "127.0.0.1", () => {
     deps.logger.info(

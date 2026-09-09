@@ -1080,7 +1080,7 @@ t("cancelling a parent cancels what it delegated, and tells the peer", async () 
 
 const { createHttpHandler } = await import(dist("http/server.js"));
 
-function panelHarness(meshNames = ["agents"], sse = {}) {
+function panelHarness(meshNames = ["agents"], sse = {}, viewOverrides = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-panel-"));
   fs.writeFileSync(path.join(dir, "index.html"), "<html>panel</html>");
   fs.writeFileSync(path.join(dir, "theme.css"), ":root{--ink:#dce5e2}");
@@ -1095,6 +1095,7 @@ function panelHarness(meshNames = ["agents"], sse = {}) {
     profileWithBroker: () => ({ mesh: name }),
     peers: () => [],
     fileVerdict: () => null,
+    ...viewOverrides,
   }));
 
   const handle = createHttpHandler({
@@ -1123,6 +1124,25 @@ async function fetchPath(handle, url) {
   await handle(req, res);
   return { code, type: head["Content-Type"], body: Buffer.concat(chunks.map(Buffer.from)).toString() };
 }
+
+t("a throwing panel route answers 500 instead of ending the process", async () => {
+  // What actually took the gateway down was not only the missing method: the
+  // server ran routes as `void handle(req, res)` with nothing catching them, so
+  // any throw became an unhandled rejection and Node ended the process — taking
+  // every other plugin the gateway was running with it. A console on loopback
+  // must not have that blast radius.
+  const h = panelHarness(["agents"], {}, {
+    snapshot: () => { throw new Error("a mesh view went bad"); },
+  });
+
+  const r = await fetchPath(h.handle, "/api/status");
+  assert.equal(r.code, 500, "the route answers rather than throwing past the server");
+  assert.match(JSON.parse(r.body).error, /failed to answer/);
+
+  // And the next request is still served: nothing about this is terminal.
+  const ok = await fetchPath(h.handle, "/api/meshes");
+  assert.equal(ok.code, 200);
+});
 
 t("a real mesh instance answers everything the panel calls on it", async () => {
   // This is the test that was missing when the panel shipped calling
