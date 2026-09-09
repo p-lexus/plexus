@@ -20,7 +20,7 @@ import { aclFor, permits, topicMatches } from "plexus-agent/acl";
 import { get, testCondition, matches, render, plan, deliveryContext } from "plexus-notify/routes";
 import { expandEnv, redact, loadChannels } from "plexus-notify/channels";
 import { createHost, definePlugin } from "plexus-agent/plugin";
-import notifyPlugin from "plexus-notify";
+import notifyPlugin, { statePathFor } from "plexus-notify";
 
 let pass = 0, fail = 0;
 const queue = [];
@@ -584,6 +584,31 @@ t("an unknown channel type is rejected at load, not at delivery", () => {
 
 t("disabled channels are skipped", () => {
   assert.equal(loadChannels({ slack: { type: "slack", enabled: false } }).size, 0);
+});
+
+t("notify: one mesh keeps the state path it has always used", () => {
+  // Renaming it would come back to an empty log, find every retained result
+  // unfamiliar, and re-deliver the whole backlog — the failure the log exists
+  // to prevent.
+  assert.equal(statePathFor("./notify.state.json", {}), "./notify.state.json");
+  assert.equal(
+    statePathFor("./notify.state.json", { mesh: { name: "agents" }, meshes: ["agents"] }),
+    "./notify.state.json");
+});
+
+t("notify: several meshes each get their own delivery log", () => {
+  // A jobId is unique within a mesh and nowhere else, so a shared log would let
+  // one mesh suppress the other's deliveries as already sent.
+  const ctx = (name) => ({ mesh: { name }, meshes: ["acme/agents", "agents"] });
+  assert.equal(statePathFor("/var/lib/notify.state.json", ctx("acme/agents")),
+    "/var/lib/notify.state.acme-agents.json");
+  assert.equal(statePathFor("/var/lib/notify.state.json", ctx("agents")),
+    "/var/lib/notify.state.agents.json");
+
+  // A path with no extension still gets one log per mesh, and a dot in a
+  // directory name is not mistaken for one.
+  assert.equal(statePathFor("./state", ctx("agents")), "./state.agents");
+  assert.equal(statePathFor("./v1.2/state", ctx("agents")), "./v1.2/state.agents");
 });
 
 // ── end to end, if a broker is reachable ────────────────

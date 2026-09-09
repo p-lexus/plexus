@@ -50,6 +50,28 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * Keyed per route *and* channel: if Slack succeeds and GitHub is rate-limited,
  * the retry re-sends only the GitHub comment.
  */
+/**
+ * Where this instance's delivery log lives.
+ *
+ * The host sets a plugin up once per mesh, because a jobId is unique within a
+ * mesh and nowhere else — so two instances sharing one state file would each
+ * suppress the other's deliveries as already sent, and the second mesh would go
+ * quiet for reasons nothing reports.
+ *
+ * On one mesh the path is untouched, and that matters more than the tidiness of
+ * always suffixing it: a plugin that renamed its own state file would come back
+ * to an empty one, find every retained result unfamiliar, and re-deliver the
+ * whole backlog — which is the failure this log exists to prevent.
+ */
+export function statePathFor(path, ctx = {}) {
+  const meshes = ctx.meshes ?? [];
+  if (meshes.length < 2 || !ctx.mesh?.name) return path;
+  const slug = String(ctx.mesh.name).replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  const dot = path.lastIndexOf(".");
+  const cut = dot > path.lastIndexOf("/") ? dot : path.length;
+  return `${path.slice(0, cut)}.${slug}${path.slice(cut)}`;
+}
+
 class DeliveryLog {
   constructor(path, { rememberMs, maxRemembered }) {
     this.path = path;
@@ -122,7 +144,7 @@ export default definePlugin({
 
     const channels = loadChannels(cfg.channels);
     const routes = cfg.routes ?? [];
-    const deliveryLog = await new DeliveryLog(cfg.state, cfg).load();
+    const deliveryLog = await new DeliveryLog(statePathFor(cfg.state, ctx), cfg).load();
 
     // What was asked, remembered per job.
     //
