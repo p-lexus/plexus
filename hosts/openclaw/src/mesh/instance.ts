@@ -70,6 +70,7 @@ export interface MeshInstance {
   dispatcher: ReturnType<typeof createDispatcher>;
   registry: ReturnType<typeof createRegistry>;
   peers: ReturnType<typeof createPeerRegistry>;
+  profileWithBroker(): Record<string, unknown>;
   transport: ReturnType<typeof createTransport>;
   fileVerdict(agent: string, jobId: string, verdict: Verdict, said?: Said): string | null;
   stop(): void;
@@ -755,6 +756,14 @@ export function createMeshInstance(membership: Membership, shared: SharedDeps): 
     peers,
     transport,
     fileVerdict,
+    // The panel's profile view, with the connection stats beside it — moved
+    // here from index.ts when the wiring became per-mesh, and missed then:
+    // /api/profile called it on the instance and the instance did not have it,
+    // which took the gateway down on every panel request.
+    profileWithBroker: () => ({
+      ...registry.buildProfile(),
+      broker: { connected: transport.connected, stats: transport.stats },
+    }),
     stop() {
       stopWatchdog();
       stopCatalogWatch();

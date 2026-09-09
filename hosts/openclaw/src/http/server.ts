@@ -50,7 +50,8 @@ export interface MeshView {
   fileVerdict(agent: string, jobId: string, verdict: string, said?: Said): string | null;
   snapshot(): Record<string, unknown>;
   profileWithBroker(): Record<string, unknown>;
-  peers(): unknown[];
+  /** The peer registry; the routes call .list() for the plain array. */
+  peers: { list(): unknown[] };
 }
 
 export interface HttpDeps {
@@ -141,7 +142,7 @@ export function createHttpHandler(deps: HttpDeps) {
         ["status", tag(mesh!.snapshot())],
         ["profile", tag(mesh!.registry.buildProfile())],
         ["snapshot", tag({ active: [...mesh!.jobs.active], history: mesh!.jobs.recent() })],
-        ["peers", tag({ peers: mesh!.peers() })],
+        ["peers", tag({ peers: mesh!.peers.list() })],
       ]);
       req.on("close", detach);
       req.on("error", detach);
@@ -151,7 +152,7 @@ export function createHttpHandler(deps: HttpDeps) {
     // ── Read ──
     if (p === `${base}/api/profile`) { sendJson(res, 200, mesh!.profileWithBroker()); return true; }
     if (p === `${base}/api/status`) { sendJson(res, 200, mesh!.snapshot()); return true; }
-    if (p === `${base}/api/peers`) { sendJson(res, 200, { peers: mesh!.peers() }); return true; }
+    if (p === `${base}/api/peers`) { sendJson(res, 200, { peers: mesh!.peers.list() }); return true; }
     if (p === `${base}/api/jobs`) {
       sendJson(res, 200, { active: [...mesh!.jobs.active], history: mesh!.jobs.recent() });
       return true;

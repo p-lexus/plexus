@@ -1093,7 +1093,7 @@ function panelHarness(meshNames = ["agents"], sse = {}) {
     dispatcher: {}, registry: { buildProfile: () => ({ agentId: name }) },
     snapshot: () => ({ meshRoot: name }),
     profileWithBroker: () => ({ mesh: name }),
-    peers: () => [],
+    peers: { list: () => [] },
     fileVerdict: () => null,
   }));
 
