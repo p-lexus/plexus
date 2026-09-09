@@ -11,7 +11,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { REVIEW_GRACE_MS } from "./mesh/review.js";
-import type { PluginConfig } from "./types.js";
+import type { MeshEntry, PluginConfig } from "./types.js";
 
 export interface ResolvedConfig {
   broker: {
@@ -164,4 +164,102 @@ export function resolveConfig(cfg: Partial<PluginConfig>, pluginDir: string): Re
     },
     sessionKey: cfg.sessionKey ?? DEFAULTS.sessionKey,
   };
+}
+
+/**
+ * One mesh this agent belongs to.
+ *
+ * `conf` is an ordinary ResolvedConfig — the same shape a single-mesh
+ * deployment has always produced — so everything downstream of here (transport,
+ * dispatch, registry, recall) takes one membership and needs to know nothing
+ * about the others.
+ */
+export interface Membership {
+  /** A local handle, defaulting to the root. Never published. */
+  name: string;
+  /** The capabilities to advertise and serve here; null means the whole catalog. */
+  offer: string[] | null;
+  conf: ResolvedConfig;
+}
+
+/**
+ * Every mesh this agent joins, as its own resolved configuration.
+ *
+ * A mesh is a (broker, root) pair and each one gets its own connection. Not an
+ * optimisation left undone: MQTT carries one Last Will per connection and
+ * presence is a will, so one connection spanning two roots could announce its
+ * death on only one of them — and the other would keep a retained profile
+ * saying `online` while the mesh went on dispatching work to nobody.
+ *
+ * `mesh` and `broker` at the top level are the defaults for every entry, so the
+ * single-mesh config every deployment already has is read as a list of one and
+ * resolves exactly as it did.
+ */
+export function resolveMeshes(cfg: Partial<PluginConfig>, pluginDir: string): Membership[] {
+  const listed = Array.isArray(cfg.meshes) ? cfg.meshes : [];
+  const entries: MeshEntry[] = listed.length ? listed : [{}];
+
+  const seenMesh = new Map<string, number>();
+  const seenName = new Map<string, number>();
+
+  return entries.map((entry, i) => {
+    const { name, offer, broker, ...meshOverrides } = entry;
+    const merged: Partial<PluginConfig> = {
+      ...cfg,
+      broker: { ...cfg.broker, ...broker } as PluginConfig["broker"],
+      mesh: { ...cfg.mesh, ...meshOverrides },
+    };
+    const conf = resolveConfig(merged, pluginDir);
+
+    // The same mesh twice is a client-id collision arranged in advance: both
+    // memberships derive one id from one host, root and agentId, and the broker
+    // kicks each in turn for as long as they both run. Checked before the name,
+    // because two identical entries also share a name and the vaguer of the two
+    // errors would win.
+    const fingerprint = `${conf.broker.url} ${conf.mesh.root} ${conf.mesh.agentId}`;
+    if (seenMesh.has(fingerprint)) {
+      throw new Error(
+        `mesh ${conf.mesh.root} on ${conf.broker.url} is listed twice — two memberships of one mesh ` +
+        `share a client id and kick each other off the broker`);
+    }
+    seenMesh.set(fingerprint, i);
+
+    // A local handle. Two meshes can share a root — `agents` is the default, so
+    // a laptop's own mesh and a customer's are both called that more often than
+    // not — and the panel would then have two tabs with one name.
+    const label = String(name ?? conf.mesh.root);
+    if (seenName.has(label)) {
+      throw new Error(
+        `two meshes are both called "${label}" — give one of them a distinct \`name\`, which is how ` +
+        `the panel and the tools address it and never appears on the wire`);
+    }
+    seenName.set(label, i);
+
+    return {
+      name: label,
+      offer: offer ? [...offer] : null,
+      conf: {
+        ...conf,
+        mesh: {
+          ...conf.mesh,
+          // History is keyed by jobId, and a jobId is unique within a mesh and
+          // nowhere else — so one file would have two different jobs under one
+          // id. Untouched when there is a single mesh, because renaming it
+          // would empty the panel of everything that happened before the
+          // upgrade.
+          historyFile: entries.length > 1
+            ? perMeshFile(conf.mesh.historyFile, label)
+            : conf.mesh.historyFile,
+        },
+      },
+    };
+  });
+}
+
+/** `jobs.local.json` + `acme/agents` -> `jobs.local.acme-agents.json`. */
+export function perMeshFile(file: string, meshName: string): string {
+  const slug = meshName.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  const dot = file.lastIndexOf(".");
+  const cut = dot > Math.max(file.lastIndexOf("/"), file.lastIndexOf("\\")) ? dot : file.length;
+  return `${file.slice(0, cut)}.${slug}${file.slice(cut)}`;
 }

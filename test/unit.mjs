@@ -31,7 +31,7 @@ const { normalizeJobPublish, renderPrompt, unresolvedPlaceholders, publishRefusa
 const { createJobStore, MAX_HISTORY } = await import(dist("mesh/jobs.js"));
 const { createVarStore, maskValue } = await import(dist("mesh/vars.js"));
 const { createAuth } = await import(dist("http/auth.js"));
-const { resolveConfig, resolveEnvRef, DEFAULTS, deploymentDir } = await import(dist("config.js"));
+const { resolveConfig, resolveMeshes, resolveEnvRef, DEFAULTS, deploymentDir } = await import(dist("config.js"));
 const { createCatalog } = await import(dist("mesh/catalog.js"));
 const { createRegistry } = await import(dist("mesh/registry.js"));
 const { deriveClientId, deniedFilters, tls } = await import(dist("mesh/transport.js"));
@@ -273,6 +273,89 @@ t("v1.4: what is not an owner-scoped invoke topic is not read as one", () => {
   assert.equal(invokeTopicOwner(R, "reviewer", `${R}/commands/other/invoke/ci`), null,
     "another agent's invoke topic is not ours");
   assert.equal(invokeTopicOwner(R, "reviewer", `${R}/commands/reviewer/cancel`), null);
+});
+
+t("several meshes: a config with no list is one mesh, resolved as it always was", () => {
+  // Every deployment already has this config. It must come through untouched,
+  // history file included — a renamed one empties the panel of everything that
+  // happened before the upgrade.
+  const plugin = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-"));
+  const cfg = { broker: { url: "mqtt://x:1883" }, mesh: { root: "agents", agentId: "reviewer" } };
+  const [only, ...rest] = resolveMeshes(cfg, plugin);
+
+  assert.equal(rest.length, 0);
+  assert.equal(only.name, "agents", "the handle defaults to the root");
+  assert.equal(only.offer, null, "no offer means the whole catalog");
+  assert.deepEqual(only.conf, resolveConfig(cfg, plugin), "one mesh resolves exactly as it did");
+});
+
+t("several meshes: the top-level broker and mesh are defaults, not the whole story", () => {
+  const plugin = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-"));
+  const meshes = resolveMeshes({
+    broker: { url: "mqtts://box.acme:8883", username: "reviewer" },
+    mesh: { agentId: "reviewer", maxDepth: 2 },
+    meshes: [
+      { root: "acme/agents" },
+      { name: "home", root: "agents", broker: { url: "mqtt://localhost:1883" }, agentId: "rev" },
+    ],
+  }, plugin);
+
+  assert.deepEqual(meshes.map((m) => m.name), ["acme/agents", "home"]);
+  assert.equal(meshes[0].conf.broker.url, "mqtts://box.acme:8883");
+  assert.equal(meshes[0].conf.mesh.agentId, "reviewer");
+  assert.equal(meshes[1].conf.broker.url, "mqtt://localhost:1883", "a mesh may bring its own broker");
+  assert.equal(meshes[1].conf.mesh.agentId, "rev", "an id taken on one mesh need not be on another");
+  assert.equal(meshes[1].conf.broker.username, "reviewer", "and inherits what it did not override");
+  assert.equal(meshes[1].conf.mesh.maxDepth, 2);
+});
+
+t("several meshes: each keeps its own job history", () => {
+  // History is keyed by jobId, and a jobId is unique within a mesh and nowhere
+  // else — one file would hold two different jobs under one id.
+  const plugin = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-"));
+  const meshes = resolveMeshes({
+    broker: { url: "mqtt://x:1883" },
+    mesh: { historyFile: "/var/lib/jobs.local.json" },
+    meshes: [{ root: "acme/agents" }, { root: "agents" }],
+  }, plugin);
+
+  assert.equal(meshes[0].conf.mesh.historyFile, "/var/lib/jobs.local.acme-agents.json");
+  assert.equal(meshes[1].conf.mesh.historyFile, "/var/lib/jobs.local.agents.json");
+});
+
+t("several meshes: the same mesh twice is refused", () => {
+  // Both memberships derive one client id from one host, root and agentId, so
+  // the broker would kick each in turn for as long as they both ran. Checked
+  // before the name, or two identical entries report the vaguer of the two.
+  const plugin = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-"));
+  assert.throws(() => resolveMeshes({
+    broker: { url: "mqtt://x:1883" },
+    meshes: [{ root: "agents" }, { root: "agents" }],
+  }, plugin), /listed twice.*client id/s);
+});
+
+t("several meshes: one root on two brokers is allowed, and has to be named", () => {
+  // `agents` is the default root, so a laptop's own mesh and a customer's are
+  // both called that more often than not.
+  const plugin = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-"));
+  const two = { broker: { url: "mqtt://a:1883" }, meshes: [
+    { root: "agents" },
+    { root: "agents", broker: { url: "mqtt://b:1883" } },
+  ] };
+  assert.throws(() => resolveMeshes(two, plugin), /both called "agents".*distinct `name`/s);
+
+  const named = resolveMeshes({ ...two, meshes: [two.meshes[0], { ...two.meshes[1], name: "theirs" }] }, plugin);
+  assert.deepEqual(named.map((m) => m.name), ["agents", "theirs"]);
+});
+
+t("several meshes: an offer names what a mesh is told about", () => {
+  const plugin = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-"));
+  const meshes = resolveMeshes({
+    broker: { url: "mqtt://x:1883" },
+    meshes: [{ root: "acme/agents" }, { root: "agents", offer: ["code.review"] }],
+  }, plugin);
+  assert.equal(meshes[0].offer, null);
+  assert.deepEqual(meshes[1].offer, ["code.review"]);
 });
 
 t("v1.4 config: both forms are served by default, and there is no refusing mode", () => {
