@@ -125,10 +125,42 @@ export interface WebConfig {
   port?: number;
 }
 
+/**
+ * One mesh in a multi-mesh configuration.
+ *
+ * Everything `MeshConfig` carries, overriding whatever the top-level `mesh`
+ * block supplied as the default — including `agentId`, since an id that is
+ * taken on one mesh need not be on another — plus a broker of its own, because
+ * a mesh is a (broker, root) pair and the second mesh is usually not on the
+ * first one's broker.
+ */
+export interface MeshEntry extends MeshConfig {
+  /**
+   * A local handle for the panel and the mesh tools, defaulting to `root`.
+   * Never published: it exists because two meshes can share a root, and
+   * `agents` is the default.
+   */
+  name?: string;
+  /**
+   * Which of the catalog's capabilities to advertise and serve here. Absent
+   * means all of them. One left out is not served on this mesh either, so an
+   * invoke for it is refused as an unknown service rather than quietly run.
+   */
+  offer?: string[];
+  /** Overrides the top-level broker for this mesh alone. */
+  broker?: Partial<BrokerConfig>;
+}
+
 export interface PluginConfig {
   broker: BrokerConfig;
   sessionKey?: string;
   mesh?: MeshConfig;
+  /**
+   * The meshes this agent joins. Absent is one mesh, described by `broker` and
+   * `mesh` above — which is what every deployment already has, and it resolves
+   * exactly as it did.
+   */
+  meshes?: MeshEntry[];
   web?: WebConfig;
 }
 

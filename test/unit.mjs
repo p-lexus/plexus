@@ -31,8 +31,11 @@ const { normalizeJobPublish, renderPrompt, unresolvedPlaceholders, publishRefusa
 const { createJobStore, MAX_HISTORY } = await import(dist("mesh/jobs.js"));
 const { createVarStore, maskValue } = await import(dist("mesh/vars.js"));
 const { createAuth } = await import(dist("http/auth.js"));
-const { resolveConfig, resolveEnvRef, DEFAULTS, deploymentDir } = await import(dist("config.js"));
+const { resolveConfig, resolveMeshes, perMeshFile, resolveEnvRef, DEFAULTS, deploymentDir } = await import(dist("config.js"));
 const { createCatalog } = await import(dist("mesh/catalog.js"));
+const { startMeshes, offering } = await import(dist("mesh/instance.js"));
+// Reaching across to a package deliberately: see the parity test below.
+const { perMeshFile: notifyPerMeshFile } = await import("plexus-notify");
 const { createRegistry } = await import(dist("mesh/registry.js"));
 const { deriveClientId, deniedFilters, tls } = await import(dist("mesh/transport.js"));
 
@@ -273,6 +276,182 @@ t("v1.4: what is not an owner-scoped invoke topic is not read as one", () => {
   assert.equal(invokeTopicOwner(R, "reviewer", `${R}/commands/other/invoke/ci`), null,
     "another agent's invoke topic is not ours");
   assert.equal(invokeTopicOwner(R, "reviewer", `${R}/commands/reviewer/cancel`), null);
+});
+
+t("a nested root resolves to the most specific mesh, not to config order", () => {
+  // `agents` is the default root, so an agent on `agents` and `agents/staging`
+  // needs no unusual config — and with a plain prefix match every staging topic
+  // resolved to `agents` and would have been published down its connection.
+  const instances = [
+    { name: "wide", conf: { mesh: { root: "agents" } } },
+    { name: "staging", conf: { mesh: { root: "agents/staging" } } },
+  ];
+  const byLongestRoot = [...instances].sort((a, b) => b.conf.mesh.root.length - a.conf.mesh.root.length);
+  const forTopic = (topic) => byLongestRoot.find(
+    (i) => topic === i.conf.mesh.root || topic.startsWith(`${i.conf.mesh.root}/`));
+
+  assert.equal(forTopic("agents/staging/box").name, "staging");
+  assert.equal(forTopic("agents/staging/jobs/alice/j1/result").name, "staging");
+  assert.equal(forTopic("agents/box").name, "wide");
+  assert.equal(forTopic("agents/jobs/alice/j1/result").name, "wide");
+  assert.equal(forTopic("other/jobs/x"), undefined, "a topic on no mesh belongs to no mesh");
+});
+
+t("several meshes: the subagent session key is per mesh", () => {
+  // Review and postmortem runs are keyed on it, and it is the fallback dispatch
+  // target on a runtime with no subagent API — so two meshes sharing it would
+  // run those into one session.
+  const plugin = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-"));
+  const many = resolveMeshes({
+    broker: { url: "mqtt://x:1883" },
+    meshes: [{ root: "acme/agents" }, { root: "agents" }],
+  }, plugin);
+  assert.equal(many[0].conf.sessionKey, "agent:main:main:acme-agents");
+  assert.equal(many[1].conf.sessionKey, "agent:main:main:agents");
+
+  // Untouched on one mesh, on the same rule historyFile follows.
+  const one = resolveMeshes({ broker: { url: "mqtt://x:1883" } }, plugin);
+  assert.equal(one[0].conf.sessionKey, DEFAULTS.sessionKey);
+});
+
+t("an offer naming a capability the catalog lacks is reported, not swallowed", async () => {
+  // The library refuses this outright. Here the catalog is a file an operator
+  // edits while the agent runs, so a name absent now may arrive in a minute —
+  // reported rather than refused, but never silent: a typo otherwise reads
+  // exactly like a mesh meant to be quiet.
+  const said = [];
+  const base = { read: () => ({ capabilities: [{ service: "code.review" }] }) };
+  const narrowed = offering(base, ["code.review", "code.reviewe"], (m) => said.push(m.join(",")));
+
+  assert.deepEqual(narrowed.read().capabilities.map((c) => c.service), ["code.review"]);
+  assert.deepEqual(said, ["code.reviewe"]);
+  narrowed.read(); narrowed.read();
+  assert.equal(said.length, 1, "said once, not on every publish");
+});
+
+t("the two copies of perMeshFile answer the same question the same way", () => {
+  // There are two because a host plugin shares no code with the packages by
+  // design — the implementations agree on PROTOCOL.md and nothing else, which
+  // is the property that makes the specification worth something. So the
+  // duplication is deliberate and the drift is what has to be caught. It
+  // already happened once: notify's copy did not look for a backslash when
+  // deciding whether a dot was an extension or part of a directory name.
+  const cases = [
+    ["/var/lib/jobs.local.json", "acme/agents", "/var/lib/jobs.local.acme-agents.json"],
+    ["./notify.state.json", "agents", "./notify.state.agents.json"],
+    ["./state", "agents", "./state.agents"],
+    ["./v1.2/state", "agents", "./v1.2/state.agents"],
+    ["C:\\data\\v1.2\\state", "agents", "C:\\data\\v1.2\\state.agents"],
+    ["/x/jobs.json", "a b/c!", "/x/jobs.a-b-c.json"],
+  ];
+  for (const [file, mesh, want] of cases) {
+    assert.equal(perMeshFile(file, mesh), want, `config.ts: ${file} on ${mesh}`);
+    assert.equal(notifyPerMeshFile(file, mesh), want, `notify: ${file} on ${mesh}`);
+  }
+});
+
+t("every mesh is built, or none of them is left running", () => {
+  // A membership is live the moment it is built — transport dialling out,
+  // watchdog sweeping, catalog watch registered — and the shutdown that would
+  // stop it is registered only after the whole list succeeds. So a throw
+  // partway through used to leave the earlier ones running while the plugin
+  // reported itself inactive.
+  const stopped = [];
+  const make = (m) => {
+    if (m.name === "second") throw new Error("broker refused the credential");
+    return { name: m.name, stop: () => stopped.push(m.name) };
+  };
+  const list = [{ name: "first" }, { name: "second" }, { name: "third" }];
+  assert.throws(() => startMeshes(list, {}, make), /broker refused/);
+  assert.deepEqual(stopped, ["first"], "the one already built has to be stopped again");
+
+  stopped.length = 0;
+  const ok = startMeshes([{ name: "a" }, { name: "b" }], {}, make);
+  assert.deepEqual(ok.map((i) => i.name), ["a", "b"]);
+  assert.deepEqual(stopped, [], "nothing is stopped when every mesh is built");
+});
+
+t("several meshes: a config with no list is one mesh, resolved as it always was", () => {
+  // Every deployment already has this config. It must come through untouched,
+  // history file included — a renamed one empties the panel of everything that
+  // happened before the upgrade.
+  const plugin = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-"));
+  const cfg = { broker: { url: "mqtt://x:1883" }, mesh: { root: "agents", agentId: "reviewer" } };
+  const [only, ...rest] = resolveMeshes(cfg, plugin);
+
+  assert.equal(rest.length, 0);
+  assert.equal(only.name, "agents", "the handle defaults to the root");
+  assert.equal(only.offer, null, "no offer means the whole catalog");
+  assert.deepEqual(only.conf, resolveConfig(cfg, plugin), "one mesh resolves exactly as it did");
+});
+
+t("several meshes: the top-level broker and mesh are defaults, not the whole story", () => {
+  const plugin = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-"));
+  const meshes = resolveMeshes({
+    broker: { url: "mqtts://box.acme:8883", username: "reviewer" },
+    mesh: { agentId: "reviewer", maxDepth: 2 },
+    meshes: [
+      { root: "acme/agents" },
+      { name: "home", root: "agents", broker: { url: "mqtt://localhost:1883" }, agentId: "rev" },
+    ],
+  }, plugin);
+
+  assert.deepEqual(meshes.map((m) => m.name), ["acme/agents", "home"]);
+  assert.equal(meshes[0].conf.broker.url, "mqtts://box.acme:8883");
+  assert.equal(meshes[0].conf.mesh.agentId, "reviewer");
+  assert.equal(meshes[1].conf.broker.url, "mqtt://localhost:1883", "a mesh may bring its own broker");
+  assert.equal(meshes[1].conf.mesh.agentId, "rev", "an id taken on one mesh need not be on another");
+  assert.equal(meshes[1].conf.broker.username, "reviewer", "and inherits what it did not override");
+  assert.equal(meshes[1].conf.mesh.maxDepth, 2);
+});
+
+t("several meshes: each keeps its own job history", () => {
+  // History is keyed by jobId, and a jobId is unique within a mesh and nowhere
+  // else — one file would hold two different jobs under one id.
+  const plugin = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-"));
+  const meshes = resolveMeshes({
+    broker: { url: "mqtt://x:1883" },
+    mesh: { historyFile: "/var/lib/jobs.local.json" },
+    meshes: [{ root: "acme/agents" }, { root: "agents" }],
+  }, plugin);
+
+  assert.equal(meshes[0].conf.mesh.historyFile, "/var/lib/jobs.local.acme-agents.json");
+  assert.equal(meshes[1].conf.mesh.historyFile, "/var/lib/jobs.local.agents.json");
+});
+
+t("several meshes: the same mesh twice is refused", () => {
+  // Both memberships derive one client id from one host, root and agentId, so
+  // the broker would kick each in turn for as long as they both ran. Checked
+  // before the name, or two identical entries report the vaguer of the two.
+  const plugin = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-"));
+  assert.throws(() => resolveMeshes({
+    broker: { url: "mqtt://x:1883" },
+    meshes: [{ root: "agents" }, { root: "agents" }],
+  }, plugin), /listed twice.*client id/s);
+});
+
+t("several meshes: one root on two brokers is allowed, and has to be named", () => {
+  // `agents` is the default root, so a laptop's own mesh and a customer's are
+  // both called that more often than not.
+  const plugin = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-"));
+  const two = { broker: { url: "mqtt://a:1883" }, meshes: [
+    { root: "agents" },
+    { root: "agents", broker: { url: "mqtt://b:1883" } },
+  ] };
+  assert.throws(() => resolveMeshes(two, plugin), /both called "agents".*distinct `name`/s);
+
+  const named = resolveMeshes({ ...two, meshes: [two.meshes[0], { ...two.meshes[1], name: "theirs" }] }, plugin);
+  assert.deepEqual(named.map((m) => m.name), ["agents", "theirs"]);
+});
+
+t("several meshes: an offer names what a mesh is told about", () => {
+  const plugin = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-"));
+  const meshes = resolveMeshes({
+    broker: { url: "mqtt://x:1883" },
+    meshes: [{ root: "acme/agents" }, { root: "agents", offer: ["code.review"] }],
+  }, plugin);
+  assert.equal(meshes[0].offer, null);
+  assert.deepEqual(meshes[1].offer, ["code.review"]);
 });
 
 t("v1.4 config: both forms are served by default, and there is no refusing mode", () => {
@@ -901,19 +1080,34 @@ t("cancelling a parent cancels what it delegated, and tells the peer", async () 
 
 const { createHttpHandler } = await import(dist("http/server.js"));
 
-function panelHarness() {
+function panelHarness(meshNames = ["agents"], sse = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-panel-"));
   fs.writeFileSync(path.join(dir, "index.html"), "<html>panel</html>");
   fs.writeFileSync(path.join(dir, "theme.css"), ":root{--ink:#dce5e2}");
   const cfg = resolveConfig({ broker: { url: "mqtt://x:1883" }, web: { dir } }, "/p");
   cfg.web.dir = dir;
+
+  const views = meshNames.map((name) => ({
+    name, conf: cfg,
+    jobs: createJobStore(() => {}),
+    dispatcher: {}, registry: { buildProfile: () => ({ agentId: name }) },
+    snapshot: () => ({ meshRoot: name }),
+    profileWithBroker: () => ({ mesh: name }),
+    peers: () => [],
+    fileVerdict: () => null,
+  }));
+
   const handle = createHttpHandler({
     cfg, logger: quietLogger,
     auth: { configured: false, authorized: () => true, sameOrigin: () => true },
-    sse: { add() {}, remove() {}, broadcast() {} },
-    jobs: createJobStore(() => {}), vars: { value: () => "" },
-    dispatcher: {}, registry: {},
-    snapshot: () => ({}), profileWithBroker: () => ({}), peers: () => [],
+    sse: { add() {}, remove() {}, broadcast() {}, ...sse },
+    vars: { value: () => "" },
+    meshes: {
+      names: () => meshNames,
+      pick: (name) => (name
+        ? views.find((v) => v.name === name)
+        : views.length === 1 ? views[0] : undefined),
+    },
   });
   return { handle, base: cfg.web.basePath };
 }
@@ -929,6 +1123,67 @@ async function fetchPath(handle, url) {
   await handle(req, res);
   return { code, type: head["Content-Type"], body: Buffer.concat(chunks.map(Buffer.from)).toString() };
 }
+
+t("the peers event carries a list, not a list spread into an object", async () => {
+  // The mesh tag is added by spreading, and an array IS an object: the first
+  // version of that turned [a, b] into {"0":a,"1":b,"mesh":…}. Nothing caught
+  // it, because the panel does not read this event yet — so it is asserted
+  // here rather than left for whoever wires the peers view.
+  let initial = null;
+  const h = panelHarness(["agents"], { attach: (_res, i) => { initial = i; return () => {}; } });
+  await fetchPath(h.handle, "/api/events");
+  const peers = Object.fromEntries(initial).peers;
+  assert.ok(Array.isArray(peers.peers), "a list of peers must still be a list");
+  assert.equal(peers.mesh, "agents", "and must say which mesh it is a list for");
+});
+
+t("every key the mesh resolver accepts is one openclaw config validate allows", () => {
+  // The schema is not documentation. additionalProperties is false, so a key
+  // missing from it makes the whole config invalid — and an invalid config
+  // stops the gateway starting at all. `meshes` shipped without one.
+  const schema = JSON.parse(fs.readFileSync(new URL("../openclaw.plugin.json", import.meta.url))).configSchema;
+  assert.equal(schema.additionalProperties, false, "if this is ever true, this test proves nothing");
+  assert.ok(schema.properties.meshes, "a config using meshes must survive validation");
+
+  const entry = schema.properties.meshes.items;
+  assert.equal(entry.additionalProperties, false);
+  for (const key of ["name", "offer", "broker", "root", "agentId", "delegation", "maxDepth"]) {
+    assert.ok(entry.properties[key], `a mesh entry accepts ${key}, so the schema has to allow it`);
+  }
+  // Whatever the top-level mesh block accepts, an entry overriding it accepts too.
+  for (const key of Object.keys(schema.properties.mesh.properties)) {
+    assert.ok(entry.properties[key], `mesh.${key} has no counterpart in a meshes entry`);
+  }
+});
+
+t("the panel on one mesh needs no ?mesh=, exactly as it never did", async () => {
+  // Every panel and script written against a single-mesh agent has to keep
+  // working untouched, which is the whole reason the parameter is optional.
+  const h = panelHarness();
+  const r = await fetchPath(h.handle, "/api/status");
+  assert.equal(r.code, 200);
+  assert.deepEqual(JSON.parse(r.body), { meshRoot: "agents" });
+});
+
+t("on several meshes, an unnamed request is answered rather than guessed at", async () => {
+  // A jobId is unique within a mesh and nowhere else, so picking one would be
+  // a plausible-looking answer about the wrong mesh.
+  const h = panelHarness(["acme/agents", "agents"]);
+  const ambiguous = await fetchPath(h.handle, "/api/status");
+  assert.equal(ambiguous.code, 400);
+  assert.match(JSON.parse(ambiguous.body).error, /name a mesh.*acme\/agents, agents/);
+
+  const named = await fetchPath(h.handle, "/api/status?mesh=agents");
+  assert.equal(named.code, 200);
+  assert.deepEqual(JSON.parse(named.body), { meshRoot: "agents" });
+});
+
+t("the panel can ask which meshes there are", async () => {
+  const h = panelHarness(["acme/agents", "agents"]);
+  const r = await fetchPath(h.handle, "/api/meshes");
+  assert.equal(r.code, 200);
+  assert.deepEqual(JSON.parse(r.body).meshes, ["acme/agents", "agents"]);
+});
 
 t("the panel's stylesheet is served as CSS on the standalone port", async () => {
   const h = panelHarness();

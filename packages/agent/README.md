@@ -94,9 +94,58 @@ TypeScript definitions are hand-written and ship with the package.
 
 `watch` and `observeCommands` both swap a narrow subscription for a wide one. Until that completes, an overlapping filter can deliver the same message twice — MQTT 3.1.1 gives the client no way to tell which subscription caused a delivery, so the fix is to not overlap. Awaiting them means no message is ever seen twice.
 
+## More than one mesh
+
+A mesh is a **(broker, root) pair**. An agent can belong to several — your laptop's own mesh and the company's, or one customer's and another's — and `connectAll` is `connect` for that case:
+
+```js
+import { connectAll } from "plexus-agent";
+
+const meshes = await connectAll({
+  agentId: "reviewer",
+  capabilities: [{ service: "code.review" }, { service: "deploy.prod" }],
+  meshes: [
+    { root: "acme/agents", broker: "mqtts://box.acme:8883", username, password },
+    { name: "customer", root: "agents", broker: "mqtts://mesh.customer:8883", offer: ["code.review"] },
+  ],
+});
+
+meshes.serve("code.review", async (job, ctx) => ctx.askAny("schema.review", job.args));
+```
+
+**Each membership is its own connection.** Not an optimisation left undone: MQTT carries one Last Will per connection and presence *is* a will, so one connection spanning two roots could announce its death on only one of them — an agent killed outright would stay retained as `online` on every other mesh, and those meshes would go on sending it work.
+
+Every membership is an ordinary agent, indistinguishable on its broker from one that joined nothing else. Nothing changes on the wire, which is why joining a second mesh needs no agreement from the first.
+
+**Delegation does not cross a mesh**, and there is nowhere in this API to express it — no `ask`, `find`, `invoke` or `cancel` above a membership. Reaching a peer goes through `on(name)`:
+
+```js
+meshes.on("acme/agents").ask("schema.review", { migration });
+```
+
+A root is the boundary a broker's rules enforce, so an agent bridging two would be an unaudited gateway between them. And two meshes can each have a `dba` — an agentId is unique within a mesh and nowhere else — so a directory keyed by agentId would not merely allow the wrong one to be asked, it would pick it.
+
+| | |
+|---|---|
+| `connectAll(options)` | → `Promise<Meshes>`. Rejects if *any* mesh cannot be joined, closing the rest |
+| `meshes.on(name)` | That mesh's `Agent` — the only way to reach a peer |
+| `meshes.serve(service, handler, meta?)` | Offer it on every mesh whose `offer` admits it |
+| `meshes.all()` / `meshes.names()` | Every membership, in the order listed |
+| `meshes.peers()` | Every peer, each tagged with the mesh it is on |
+| `meshes.close()` | Withdraw from all of them |
+
+Per-mesh keys, on top of everything `connect` takes:
+
+| | |
+|---|---|
+| `name` | A local handle for `on()`, defaulting to `root`. Never published — it exists because two meshes can share a root, and `agents` is the default |
+| `offer` | The capabilities to advertise here. Absent means all of them. One left out is not *served* here either, so an invoke for it is refused as an unknown service |
+
+All or nothing: a mesh that will not open takes the others down with it. A half-joined agent serves one mesh while its operator believes it serves two, and the mesh it never reached shows no sign of it at all.
+
 ## Plugins
 
-An agent gains abilities by loading plugins rather than by growing code. A plugin gets a connected agent and adds capabilities to it:
+An agent gains abilities by loading plugins rather than by growing code. A plugin gets a connected agent and adds capabilities to it — and on a host that joined several meshes, it is set up once per mesh, because a plugin keys state by `jobId` and a `jobId` is unique within a mesh and nowhere else:
 
 ```js
 import { definePlugin } from "plexus-agent/plugin";

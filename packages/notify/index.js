@@ -27,7 +27,7 @@
  */
 
 import { definePlugin } from "plexus-agent/plugin";
-import { readFile, writeFile, rename } from "node:fs/promises";
+import { readFile, writeFile, rename, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { plan } from "./routes.js";
 import { loadChannels, redact } from "./channels.js";
@@ -50,6 +50,71 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * Keyed per route *and* channel: if Slack succeeds and GitHub is rate-limited,
  * the retry re-sends only the GitHub comment.
  */
+/**
+ * Where this instance's delivery log lives.
+ *
+ * The host sets a plugin up once per mesh, because a jobId is unique within a
+ * mesh and nowhere else — so two instances sharing one state file would each
+ * suppress the other's deliveries as already sent, and the second mesh would go
+ * quiet for reasons nothing reports.
+ *
+ * On one mesh the path is untouched, and that matters more than the tidiness of
+ * always suffixing it: a plugin that renamed its own state file would come back
+ * to an empty one, find every retained result unfamiliar, and re-deliver the
+ * whole backlog — which is the failure this log exists to prevent.
+ */
+/**
+ * Say so when a delivery log this plugin once wrote is about to be ignored.
+ *
+ * Only on the way down: a host that has stopped being multi-mesh reads the
+ * unsuffixed path again, and the suffixed one beside it is the history it
+ * actually has. Nothing here chooses that file — it belongs to a mesh this
+ * instance may no longer be serving — but a re-delivered backlog with no
+ * explanation is worse than one that was announced.
+ */
+export async function warnOfStrandedLog(chosen, configured, ctx = {}, log = () => {}) {
+  if (chosen !== configured || !ctx.mesh?.name) return false;
+  const stranded = perMeshFile(configured, ctx.mesh.name);
+  if (stranded === chosen) return false;
+  try {
+    await stat(stranded);
+  } catch {
+    return false;                      // nothing there: the ordinary case
+  }
+  log(`${stranded} holds what was already delivered on ${ctx.mesh.name}, and this agent is now ` +
+      `on one mesh so ${configured} is read instead. Anything retained will be delivered again ` +
+      `once. Rename it over ${configured} to keep that history.`);
+  return true;
+}
+
+export function statePathFor(path, ctx = {}) {
+  const meshes = ctx.meshes ?? [];
+  if (meshes.length < 2 || !ctx.mesh?.name) return path;
+  return perMeshFile(path, ctx.mesh.name);
+}
+
+/**
+ * `notify.state.json` + `acme/agents` -> `notify.state.acme-agents.json`.
+ *
+ * The second copy of this. The first is `perMeshFile` in
+ * hosts/openclaw/src/config.ts, and they cannot be one: a host plugin shares no
+ * code with the packages by design — the two implementations of this protocol
+ * agree on PROTOCOL.md and nothing else, which is the property that makes the
+ * specification worth anything.
+ *
+ * So the duplication is deliberate and the drift is what has to be caught. It
+ * already happened once: this copy did not look for a `\\` when deciding
+ * whether a dot was an extension or part of a directory name, so a Windows path
+ * was suffixed in the wrong place. `test/unit.mjs` runs both over one table of
+ * cases and fails if they ever answer differently.
+ */
+export function perMeshFile(file, meshName) {
+  const slug = String(meshName).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  const dot = file.lastIndexOf(".");
+  const cut = dot > Math.max(file.lastIndexOf("/"), file.lastIndexOf("\\")) ? dot : file.length;
+  return `${file.slice(0, cut)}.${slug}${file.slice(cut)}`;
+}
+
 class DeliveryLog {
   constructor(path, { rememberMs, maxRemembered }) {
     this.path = path;
@@ -122,7 +187,15 @@ export default definePlugin({
 
     const channels = loadChannels(cfg.channels);
     const routes = cfg.routes ?? [];
-    const deliveryLog = await new DeliveryLog(cfg.state, cfg).load();
+    const statePath = statePathFor(cfg.state, ctx);
+    // Going the other way — an agent that was on two meshes and is now on one —
+    // switches back to the unsuffixed path, which is a log this plugin has
+    // never written to. Everything retained then looks unfamiliar and the whole
+    // backlog goes out again, which is the one failure this log exists to
+    // prevent. It cannot be fixed by picking the other path (that one is a
+    // different mesh's history), so it is said out loud instead.
+    await warnOfStrandedLog(statePath, cfg.state, ctx, log);
+    const deliveryLog = await new DeliveryLog(statePath, cfg).load();
 
     // What was asked, remembered per job.
     //

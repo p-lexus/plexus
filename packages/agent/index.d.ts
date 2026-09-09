@@ -127,6 +127,64 @@ export interface Agent {
   close(): Promise<void>;
 }
 
+/**
+ * One mesh in a multi-mesh configuration.
+ *
+ * Everything `ConnectOptions` carries, overriding whatever `ConnectAllOptions`
+ * supplied as the default for every mesh — including `agentId`, since an id
+ * that is taken on one mesh need not be on another.
+ */
+export interface MeshOptions extends Partial<ConnectOptions> {
+  /**
+   * A local handle for `on()`, defaulting to `root`. Never published: it exists
+   * because two meshes can share a root — the default is `agents` — and the
+   * name is how they are told apart here.
+   */
+  name?: string;
+  /**
+   * The subset of the declared capabilities to advertise on this mesh. Absent
+   * means all of them. A capability left out is not served here either, so an
+   * invoke for it is refused as an unknown service.
+   */
+  offer?: string[];
+}
+
+export interface ConnectAllOptions extends Partial<ConnectOptions> {
+  agentId: string;
+  /** One entry per mesh. Omit for a single mesh described by the options themselves. */
+  meshes?: MeshOptions[];
+}
+
+/** A peer, and which mesh it is on. */
+export type TaggedPeer = AgentProfile & { mesh: string };
+
+/**
+ * Membership of several meshes at once.
+ *
+ * Deliberately without `ask`, `find`, `invoke` or `cancel`: delegation belongs
+ * to one mesh, so reaching a peer goes through `on(name)` where the mesh is
+ * named. See `connectAll`.
+ */
+export interface Meshes {
+  /** One mesh's agent, by `name` — or by root, when it was given no name. */
+  on(name: string): Agent | undefined;
+  /** Every membership's agent, in the order they were listed. */
+  all(): Agent[];
+  /** The names `on()` answers to. */
+  names(): string[];
+  /** Offer a capability on every mesh whose `offer` admits it. */
+  serve(service: string, handler: JobHandler, meta?: Partial<Capability>): Meshes;
+  /** Every peer on every mesh, each tagged with the mesh it is on. */
+  peers(): TaggedPeer[];
+  /** Withdraw from every mesh and disconnect. */
+  close(): Promise<void>;
+}
+
+export declare function connectAll(
+  options: ConnectAllOptions,
+  deps?: { connect?: (options: ConnectOptions) => Promise<Agent> },
+): Promise<Meshes>;
+
 export declare function connect(options: ConnectOptions): Promise<Agent>;
 export declare function deriveClientId(agentId: string, root: string): string;
 export declare function ownerScope(requestedBy?: string): string;

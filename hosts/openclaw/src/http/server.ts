@@ -32,13 +32,18 @@ const MIME: Record<string, string> = {
   ".ico": "image/x-icon",
 };
 
-export interface HttpDeps {
-  cfg: ResolvedConfig;
-  logger: Logger;
-  auth: Auth;
-  sse: SseHub;
+/**
+ * One mesh, as the panel needs it.
+ *
+ * Every route below acts on exactly one. An agent may be on several, and a job
+ * id is unique within a mesh and nowhere else — so a route that took a job id
+ * and no mesh would be a question with more than one answer.
+ */
+export interface MeshView {
+  name: string;
+  /** This mesh's own configuration, not the panel's. */
+  conf: ResolvedConfig;
   jobs: JobStore;
-  vars: VarStore;
   dispatcher: Dispatcher;
   registry: Registry;
   /** File a verdict on a delegated job. Returns why not, or null. */
@@ -46,6 +51,24 @@ export interface HttpDeps {
   snapshot(): Record<string, unknown>;
   profileWithBroker(): Record<string, unknown>;
   peers(): unknown[];
+}
+
+export interface HttpDeps {
+  /** Shared configuration: the panel's own settings. Never a mesh's. */
+  cfg: ResolvedConfig;
+  logger: Logger;
+  auth: Auth;
+  sse: SseHub;
+  vars: VarStore;
+  meshes: {
+    names(): string[];
+    /**
+     * The mesh a request is about. With one mesh the parameter is optional and
+     * everything behaves as it always did; with several, omitting it is
+     * ambiguous and answered as such rather than guessed.
+     */
+    pick(name?: string | null): MeshView | undefined;
+  };
 }
 
 const sendJson = (res: ServerResponse, code: number, obj: unknown) => {
@@ -60,7 +83,7 @@ async function readBody(req: IncomingMessage): Promise<any> {
 }
 
 export function createHttpHandler(deps: HttpDeps) {
-  const { cfg, auth, sse, jobs, vars, dispatcher, registry } = deps;
+  const { cfg, auth, sse, vars, meshes } = deps;
   const base = cfg.web.basePath;
   const webDir = cfg.web.dir;
 
@@ -88,13 +111,37 @@ export function createHttpHandler(deps: HttpDeps) {
       return true;
     }
 
+    // Which meshes there are. Answered before a mesh is resolved, because it is
+    // the question a panel asks in order to resolve one.
+    if (p === `${base}/api/meshes`) {
+      sendJson(res, 200, { meshes: meshes.names() });
+      return true;
+    }
+
+    // Every route below acts on one mesh. With a single mesh `?mesh=` is
+    // optional and nothing about these routes has changed; with several,
+    // leaving it out is ambiguous and is answered rather than guessed at.
+    const mesh = isApi ? meshes.pick(url.searchParams.get("mesh")) : undefined;
+    if (isApi && !mesh) {
+      sendJson(res, 400, {
+        ok: false,
+        error: `name a mesh with ?mesh= — this agent is on ${meshes.names().join(", ")}`,
+        meshes: meshes.names(),
+      });
+      return true;
+    }
+
     // ── Live stream ──
     if (p === `${base}/api/events`) {
+      // Tagged exactly as a broadcast is, so one event has one shape however it
+      // was produced — and `peers` is a named field rather than a bare list,
+      // because the tag is added by spreading and an array does not survive it.
+      const tag = (payload: object) => ({ ...payload, mesh: mesh!.name });
       const detach = sse.attach(res, [
-        ["status", deps.snapshot()],
-        ["profile", registry.buildProfile()],
-        ["snapshot", { active: [...jobs.active], history: jobs.recent() }],
-        ["peers", deps.peers()],
+        ["status", tag(mesh!.snapshot())],
+        ["profile", tag(mesh!.registry.buildProfile())],
+        ["snapshot", tag({ active: [...mesh!.jobs.active], history: mesh!.jobs.recent() })],
+        ["peers", tag({ peers: mesh!.peers() })],
       ]);
       req.on("close", detach);
       req.on("error", detach);
@@ -102,11 +149,11 @@ export function createHttpHandler(deps: HttpDeps) {
     }
 
     // ── Read ──
-    if (p === `${base}/api/profile`) { sendJson(res, 200, deps.profileWithBroker()); return true; }
-    if (p === `${base}/api/status`) { sendJson(res, 200, deps.snapshot()); return true; }
-    if (p === `${base}/api/peers`) { sendJson(res, 200, { peers: deps.peers() }); return true; }
+    if (p === `${base}/api/profile`) { sendJson(res, 200, mesh!.profileWithBroker()); return true; }
+    if (p === `${base}/api/status`) { sendJson(res, 200, mesh!.snapshot()); return true; }
+    if (p === `${base}/api/peers`) { sendJson(res, 200, { peers: mesh!.peers() }); return true; }
     if (p === `${base}/api/jobs`) {
-      sendJson(res, 200, { active: [...jobs.active], history: jobs.recent() });
+      sendJson(res, 200, { active: [...mesh!.jobs.active], history: mesh!.jobs.recent() });
       return true;
     }
 
@@ -147,7 +194,7 @@ export function createHttpHandler(deps: HttpDeps) {
         }
         const err = removing ? vars.remove(name) : vars.set(name, String(body.value));
         if (err) { sendJson(res, 500, { ok: false, error: err }); return true; }
-        sse.broadcast("status", deps.snapshot());
+        sse.broadcast("status", { ...mesh!.snapshot(), mesh: mesh!.name });
         sendJson(res, 200, { ok: true, name, removed: removing });
         return true;
       }
@@ -157,11 +204,11 @@ export function createHttpHandler(deps: HttpDeps) {
     if (p === `${base}/api/invoke` && req.method === "POST") {
       if (!auth.sameOrigin(req)) { refuseCrossOrigin(res); return true; }
       const body = await readBody(req);
-      const r = dispatcher.dispatch(
+      const r = mesh!.dispatcher.dispatch(
         { jobId: body.jobId, service: body.service, args: body.args, requestedBy: body.requestedBy },
         // The panel is an authenticated local operator surface and supplies its
         // own identity rather than relying on the required-owner check.
-        { defaultOwner: "web-ui", clientUsername: cfg.mesh.verifyOwner ? "web-ui" : undefined },
+        { defaultOwner: "web-ui", clientUsername: mesh!.conf.mesh.verifyOwner ? "web-ui" : undefined },
       );
       sendJson(res, r.ok ? 200 : 400, r);
       return true;
@@ -170,7 +217,7 @@ export function createHttpHandler(deps: HttpDeps) {
     if (p === `${base}/api/cancel` && req.method === "POST") {
       if (!auth.sameOrigin(req)) { refuseCrossOrigin(res); return true; }
       const body = await readBody(req);
-      const ok = dispatcher.cancel(String(body.jobId ?? ""), body.requestedBy ?? "web-ui");
+      const ok = mesh!.dispatcher.cancel(String(body.jobId ?? ""), body.requestedBy ?? "web-ui");
       sendJson(res, ok ? 200 : 404, { ok, jobId: body.jobId });
       return true;
     }
@@ -178,7 +225,7 @@ export function createHttpHandler(deps: HttpDeps) {
     if (p === `${base}/api/feedback` && req.method === "POST") {
       if (!auth.sameOrigin(req)) { refuseCrossOrigin(res); return true; }
       const body = await readBody(req);
-      const refused = deps.fileVerdict(
+      const refused = mesh!.fileVerdict(
         String(body.agent ?? ""), String(body.jobId ?? ""), String(body.verdict ?? ""),
         { reason: body.reason, details: body.details, lesson: body.lesson });
       sendJson(res, refused ? 400 : 200, refused ? { ok: false, error: refused } : { ok: true, jobId: body.jobId });
@@ -188,7 +235,7 @@ export function createHttpHandler(deps: HttpDeps) {
     if (p === `${base}/api/config` && req.method === "POST") {
       if (!auth.sameOrigin(req)) { refuseCrossOrigin(res); return true; }
       const body = await readBody(req);
-      const r = registry.runConfigAction(body);
+      const r = mesh!.registry.runConfigAction(body);
       sendJson(res, r.ok ? 200 : 400, r);
       return true;
     }

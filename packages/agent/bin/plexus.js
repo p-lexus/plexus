@@ -44,6 +44,17 @@ if (has("help") || command === "help") {
         "plexus-notify": { "channels": {…}, "routes": […] }
       } }
 
+  For more than one mesh, list them. Everything above is the default for each,
+  and every plugin is set up once per mesh:
+
+    { "agentId": "reviewer",
+      "meshes": [
+        { "root": "acme/agents", "broker": "mqtts://box.acme:8883" },
+        { "root": "agents", "broker": "mqtt://localhost:1883",
+          "offer": ["code.review"] }
+      ],
+      "plugins": {…} }
+
   Use \${VAR} anywhere a secret would otherwise sit in the file.
 `);
   process.exit(0);
