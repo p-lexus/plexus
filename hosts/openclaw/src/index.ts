@@ -28,7 +28,9 @@ import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { PROTOCOL_VERSION } from "./types.js";
 import type { Verdict } from "./types.js";
 import type { PluginConfig } from "./types.js";
-import { resolveConfig } from "./config.js";
+import { resolveConfig, resolveMeshes } from "./config.js";
+import { createMeshInstance } from "./mesh/instance.js";
+import type { MeshInstance } from "./mesh/instance.js";
 import { createLogger } from "./logger.js";
 import {
   buildTopics, jobTopicPattern, parseJobTopic, ownerScope, jobPostmortemTopic,
@@ -91,18 +93,27 @@ const GUARD = Symbol.for("mqtt-bridge.active");
  */
 const ACTIVE_SLOT = Symbol.for("mqtt-bridge.instance");
 
-interface ActiveInstance {
-  publishCounted(topic: string, payload: string, opts?: { qos?: 0 | 1 | 2; retain?: boolean }): void;
-  normalize(topic: string, payload: string, retain?: boolean): { payload: string; retain: boolean };
-  /** Why this publish must not go out, or null if it may. */
-  refuse(topic: string): string | null;
-  ask(req: { agent: string; service: string; args?: any; parentJobId?: string }): Promise<any>;
-  peers(): any[];
-  providersOf(service: string): any[];
-  /** File a verdict on a delegated job. Returns why it was refused, or null. */
-  fileVerdict(agent: string, jobId: string, verdict: string, said?: Said): string | null;
-  delegationMode: string;
+/**
+ * Every mesh this agent is on, and how a tool finds the right one.
+ *
+ * The tools are registered in every agent session and resolve through this at
+ * call time. With one mesh every lookup below answers it and nothing about a
+ * tool call has changed; with several, which mesh a call is for is derived —
+ * from the topic, or from the job the executor is running — rather than left to
+ * the model, because a model that picked wrong would be delegating a job across
+ * the boundary a broker's rules exist to enforce.
+ */
+interface ActiveMeshes {
+  /** The mesh a topic belongs to. A topic names its root, so nothing is guessed. */
+  forTopic(topic: string): MeshInstance | undefined;
+  /** A mesh by name, or the only one when there is only one. */
+  byName(name?: string): MeshInstance | undefined;
+  /** The mesh running a job, when this agent has a record of it. */
+  forJob(jobId: string): MeshInstance | undefined;
+  names(): string[];
+  instances(): MeshInstance[];
 }
+
 const MODULE_SLOT = Symbol.for("mqtt-bridge.module");
 const DISPOSE_SLOT = Symbol.for("mqtt-bridge.dispose");
 
@@ -129,11 +140,59 @@ export default definePluginEntry({
     const transportAllowed = !mode || mode === "full";
 
     const globalAny = globalThis as Record<symbol, unknown>;
-    const active = () => globalAny[ACTIVE_SLOT] as ActiveInstance | undefined;
+    const meshes = () => globalAny[ACTIVE_SLOT] as ActiveMeshes | undefined;
     const notReady = (what: string) => ({
       content: [{ type: "text" as const, text: `${what}: the mesh bridge is not connected yet.` }],
       isError: true,
     });
+
+    /**
+     * Which mesh a tool call is for.
+     *
+     * Derived, never taken on trust. A job that arrived on one mesh may only
+     * delegate on that mesh — a root is the boundary a broker's rules enforce,
+     * and two meshes can each have a `dba`, so picking the wrong one is not a
+     * refused call but a job quietly done by the wrong agent.
+     *
+     * So the job decides, on the same rule v1.4 applies to an invoke's owner:
+     * where the executor names the job it is running, that job's mesh wins, and
+     * a `mesh` argument disagreeing with it is refused rather than reconciled.
+     * The argument is only consulted where there is nothing better, and where
+     * there is one mesh there is no question to answer.
+     */
+    function meshFor(
+      what: string,
+      params: { mesh?: string; parentJobId?: string },
+    ): { mesh: MeshInstance } | { error: string } {
+      const all = meshes();
+      if (!all) return { error: `${what}: the mesh bridge is not connected yet.` };
+      const names = all.names();
+
+      const byJob = params.parentJobId ? all.forJob(params.parentJobId) : undefined;
+      const named = params.mesh ? all.byName(params.mesh) : undefined;
+
+      if (params.mesh && !named) {
+        return { error: `${what}: there is no mesh called "${params.mesh}" here — this agent is on ${names.join(", ")}.` };
+      }
+      if (byJob && named && byJob !== named) {
+        return { error:
+          `${what}: job ${params.parentJobId} is running on ${byJob.name}, and this asks for ${named.name}. ` +
+          `Work does not move between meshes — refused rather than sent to the wrong one.` };
+      }
+      const picked = byJob ?? named ?? all.byName();
+      if (!picked) {
+        return { error:
+          `${what}: this agent is on ${names.join(", ")}, so name one — pass mesh, or pass parentJobId ` +
+          `and the job's own mesh is used.` };
+      }
+      return { mesh: picked };
+    }
+
+    /** A tool's `mesh` argument, described the same way wherever it appears. */
+    const meshParam = Type.Optional(Type.String({
+      description: "Which mesh, when this agent is on more than one. Omitted, the job you name in " +
+        "parentJobId decides, and a single-mesh agent needs neither.",
+    }));
 
     // ── Tools ──────────────────────────────────────────
     // Registered on EVERY registration, before the singleton guard below, so
@@ -150,16 +209,24 @@ export default definePluginEntry({
         retain: Type.Optional(Type.Boolean({ description: "Retain. Default false; forced true on job result topics." })),
       }),
       async execute(_id: string, params: { payload: string; topic: string; retain?: boolean }) {
-        const inst = active();
-        if (!inst) return notReady("mqtt_publish");
-        const refusal = inst.refuse(params.topic);
+        const all = meshes();
+        if (!all) return notReady("mqtt_publish");
+        // A topic begins with its mesh root, so which connection carries it is
+        // a fact about the string rather than a decision anybody makes.
+        const inst = all.forTopic(params.topic);
+        if (!inst) {
+          return { content: [{ type: "text" as const, text:
+            `Refused: ${params.topic} is not on any mesh this agent is on (${all.names().join(", ")}). ` +
+            `A topic starts with its mesh root.` }], isError: true };
+        }
+        const refusal = inst.active.refuse(params.topic);
         if (refusal) {
           logger.info(`mqtt_publish refused: ${refusal}`);
           return { content: [{ type: "text" as const, text: `Refused: ${refusal}.` }], isError: true };
         }
         try {
-          const { payload, retain } = inst.normalize(params.topic, params.payload, params.retain);
-          inst.publishCounted(params.topic, payload, { qos: 1, retain });
+          const { payload, retain } = inst.active.normalize(params.topic, params.payload, params.retain);
+          inst.active.publishCounted(params.topic, payload, { qos: 1, retain });
           return { content: [{ type: "text" as const, text: `Published to ${params.topic}${retain ? " (retained)" : ""}` }] };
         } catch (err: any) {
           return { content: [{ type: "text" as const, text: `Failed: ${err.message}` }], isError: true };
@@ -174,15 +241,20 @@ export default definePluginEntry({
         "which agent to ask when a job needs expertise you do not have.",
       parameters: Type.Object({
         service: Type.Optional(Type.String({ description: "Only show agents offering this capability." })),
+        parentJobId: Type.Optional(Type.String({
+          description: "The job you are currently executing. Its mesh is the one you can reach.",
+        })),
+        mesh: meshParam,
       }),
-      async execute(_id: string, params: { service?: string }) {
-        const inst = active();
-        if (!inst) return notReady("mesh_peers");
-        const list = params.service ? inst.providersOf(params.service) : inst.peers();
+      async execute(_id: string, params: { service?: string; mesh?: string; parentJobId?: string }) {
+        const picked = meshFor("mesh_peers", params);
+        if ("error" in picked) return { content: [{ type: "text" as const, text: picked.error }], isError: true };
+        const inst = picked.mesh;
+        const list = params.service ? inst.active.providersOf(params.service) : inst.active.peers();
         if (!list.length) {
           return { content: [{ type: "text" as const, text: params.service
-            ? `No agent on this mesh offers "${params.service}".`
-            : "No other agents have published a profile to this mesh." }] };
+            ? `No agent on ${inst.name} offers "${params.service}".`
+            : `No other agents have published a profile to ${inst.name}.` }] };
         }
         const text = list.map((p: any) =>
           `${p.agentId}${p.online ? "" : " (offline)"} — ${p.displayName ?? "no name"}\n` +
@@ -202,13 +274,18 @@ export default definePluginEntry({
         service: Type.String({ description: "Capability that peer offers, e.g. schema.review" }),
         args: Type.Optional(Type.Any({ description: "Arguments matching that capability's requestSchema." })),
         parentJobId: Type.Optional(Type.String({
-          description: "The job you are currently executing. Pass it so the chain can be traced and cancelled as one request.",
+          description: "The job you are currently executing. Pass it so the chain can be traced and " +
+            "cancelled as one request — and so the peer is looked for on that job's own mesh.",
         })),
+        mesh: meshParam,
       }),
-      async execute(_id: string, params: { agent: string; service: string; args?: any; parentJobId?: string }) {
-        const inst = active();
-        if (!inst) return notReady("mesh_ask");
-        const mode = inst.delegationMode;
+      async execute(_id: string, params: {
+        agent: string; service: string; args?: any; parentJobId?: string; mesh?: string;
+      }) {
+        const picked = meshFor("mesh_ask", params);
+        if ("error" in picked) return { content: [{ type: "text" as const, text: picked.error }], isError: true };
+        const inst = picked.mesh;
+        const mode = inst.active.delegationMode;
         if (mode !== "both" && mode !== "dynamic") {
           return {
             content: [{ type: "text" as const, text: mode === "declared"
@@ -217,7 +294,7 @@ export default definePluginEntry({
             isError: true,
           };
         }
-        const outcome = await inst.ask({
+        const outcome = await inst.active.ask({
           agent: params.agent, service: params.service,
           args: params.args ?? {}, parentJobId: params.parentJobId,
         });
@@ -243,6 +320,7 @@ export default definePluginEntry({
         jobId: Type.String({ description: "The job id mesh_ask returned." }),
         verdict: Type.String({ description: "good | bad | unusable" }),
         agent: Type.Optional(Type.String({ description: "The peer you asked. Checked against the job." })),
+        mesh: meshParam,
           reason: Type.String({ description: "Why, specifically. One or two sentences." }),
           details: Type.Optional(Type.String({
             description: "What actually happened — what you asked for, what came back, what you " +
@@ -252,12 +330,14 @@ export default definePluginEntry({
               "too: \"keep checking the rate limit\" is a lesson, \"nice one\" is not." }),
       }),
         async execute(_id: string, params: {
-          jobId: string; verdict: string; agent?: string;
+          jobId: string; verdict: string; agent?: string; mesh?: string;
           reason: string; details?: string; lesson: string;
         }) {
-        const inst = active();
-        if (!inst) return notReady("mesh_feedback");
-        const refused = inst.fileVerdict(params.agent ?? "", params.jobId, params.verdict,
+        // The job being judged is the one that names the mesh: a verdict belongs
+        // to the mesh the work was done on, and there is nowhere else to file it.
+        const picked = meshFor("mesh_feedback", { mesh: params.mesh, parentJobId: params.jobId });
+        if ("error" in picked) return { content: [{ type: "text" as const, text: picked.error }], isError: true };
+        const refused = picked.mesh.active.fileVerdict(params.agent ?? "", params.jobId, params.verdict,
           { reason: params.reason, details: params.details, lesson: params.lesson });
         if (refused) {
           return { content: [{ type: "text" as const, text: `mesh_feedback refused: ${refused}` }], isError: true };
@@ -296,588 +376,78 @@ export default definePluginEntry({
 
     // ── Wiring ─────────────────────────────────────────
 
-    const conf = resolveConfig(cfg, pluginDir);
-    const topics = buildTopics(conf.mesh.root, conf.mesh.agentId);
-    const jobTopicRe = jobTopicPattern(conf.mesh.root);
-    // How much job traffic the broker lets us see. "mesh" is the whole root:
-    // the panel's history, and — because a broker echoes a publish back to a
-    // subscriber, even the one that sent it — our own executors' results.
-    // A generated agent ACL refuses that filter, so `scoped` is the fallback:
-    // our own owner scope only, with our executors' publishes observed locally
-    // instead of heard back. See onSubscribeDenied.
-    let jobFeed: "mesh" | "scoped" = "mesh";
-    const refusedFilters: string[] = [];
-    const registryRe = registryPattern(conf.mesh.root);
-
+    // What every mesh shares. An agent has one catalog, one set of deployment
+    // variables and one panel however many meshes it is on: the capabilities
+    // are the agent's, and `offer` decides which of them each mesh is told
+    // about rather than giving each mesh a catalog of its own to drift.
+    const shared0 = resolveConfig(cfg, pluginDir);
     const catalog = createCatalog(
-      conf.mesh.servicesFile, logger, path.join(pluginDir, "services.example.json"),
+      shared0.mesh.servicesFile, logger, path.join(pluginDir, "services.example.json"),
     );
-    const vars = createVarStore(conf.mesh.secretsFile, conf.mesh.promptVars, logger);
+    const vars = createVarStore(shared0.mesh.secretsFile, shared0.mesh.promptVars, logger);
     const sse = createSseHub();
-    const auth = createAuth(conf.web.auth);
-    const jobs = createJobStore((rec) => sse.broadcast("job", rec), {
-      file: conf.mesh.historyFile,
-      log: (m) => logger.info(m),
-    });
-    const transport = createTransport(conf, pluginDir, topics.status, logger);
-    const peers = createPeerRegistry(conf.mesh.agentId, logger, () => sse.broadcast("peers", peers.list()));
+    const auth = createAuth(shared0.web.auth);
 
-    const snapshot = () => ({
-      connected: transport.connected,
-      uptimeMs: transport.stats.connectedAt ? Date.now() - transport.stats.connectedAt : 0,
-      rx: transport.stats.rx,
-      tx: transport.stats.tx,
-      reconnects: transport.stats.reconnects,
-      reconnectsLastHour: transport.recentReconnects(),
-      lastError: transport.stats.lastError,
-      lastErrorAt: transport.stats.lastErrorAt || undefined,
-      // Whether the link is healthy NOW, rather than whether anything went
-      // wrong in the last hour. The panel warns on this, so a recovered link
-      // stops warning instead of carrying its worst hour around.
-      settled: transport.settled(),
-      activeJobs: [...jobs.active],
-      agentId: conf.mesh.agentId,
-      selfScope: ownerScope(conf.mesh.agentId),
-      meshRoot: conf.mesh.root,
-      protocolVersion: PROTOCOL_VERSION,
-        // Whether anything on this mesh records. The panel offers no verdict
-        // where nothing keeps one, and an operator asking why the feedback
-        // cycle is quiet reads the answer here.
-        recorder: recall.heard,
-      session: { ...transport.session },
-      ownerPolicy: ownerPolicy(),
-      // What the broker allows, as opposed to what was asked for. A mesh whose
-      // ACLs have narrowed us should say so somewhere an operator looks.
-      jobFeed,
-      refusedFilters: [...refusedFilters],
-      // Names and SOURCES only. The panel flags unbound ${VAR} references;
-      // values are deployment secrets and never reach a browser.
-      promptVars: vars.describe().map(({ name, source }) => ({ name, source })),
-      secretsAuth: auth.configured,
-      peers: peers.size,
-      maxDepth: conf.mesh.maxDepth,
-      delegation: conf.mesh.delegation,
-    });
-
-    /**
-     * What this deployment enforces about who a requester is — reported, not
-     * decided here. The agent serves both invoke forms and refuses neither;
-     * whether anyone is stopped is the broker's business.
-     *
-     * `verified` therefore does not come from anything this agent does. It
-     * comes from whoever configured the broker's rules and stated so, which is
-     * what `plexus-server add-agent --owner-in-topic` writes into the config it
-     * generates. Inferring it here — from a refused subscription, say — would
-     * mean advertising a guarantee nobody actually made: a broker can scope job
-     * topics without scoping invokes, and the difference is exactly the one
-     * this field exists to report.
-     */
-    const ownerPolicy = () => ({
-      required: conf.mesh.requireOwner,
-      topic: conf.mesh.ownerInTopic,
-      verified: conf.mesh.verifyOwner || conf.mesh.ownerEnforced,
-    });
-
-    const registry = createRegistry({
-      agentId: conf.mesh.agentId,
-      profileTopic: topics.profile,
-      requireOwner: conf.mesh.requireOwner,
-      verifyOwner: conf.mesh.verifyOwner,
-      ownerPolicy,
-      catalog,
-      logger,
-      connected: () => transport.connected,
-      publish: transport.publish,
-      onPublished: (profile) => sse.broadcast("profile", profile),
-    });
-
-    const dispatcher = createDispatcher({
-      cfg: conf, logger, catalog, jobs, vars,
-      runtime: api.runtime,
-      publish: transport.publish,
-      peerSummary: () => peers.summary(),
-      lessonsFor: (service) => recall.of(service),
-      onCancel: (jobId, requestedBy) => ask.cancelChildren(jobId, requestedBy ?? conf.mesh.agentId),
-      // Late-bound: the ask service needs the dispatcher's lineage lookup, so
-      // the two are mutually dependent and neither can be built first.
-      performAsk: (req) => ask.ask(req),
-    });
-
-    // Asked when a command arrives, rather than held. See mesh/recall.ts.
-    const recall = createRecall({
-      meshRoot: conf.mesh.root,
-      agentId: conf.mesh.agentId,
-      timeoutMs: conf.mesh.recallTimeoutMs,
-      logger,
-      publish: transport.publish,
-      askTopic: (service) => memoryAskTopic(conf.mesh.root, conf.mesh.agentId, service),
-    });
-    const explained = createLimiter();
-
-    /**
-     * Ask the executor to explain a job that went wrong.
-     *
-     * Runs outside the watchdog entirely: no job is created and no watch is
-     * registered, so nothing here can be re-dispatched or nudged. If the
-     * executor never publishes, nobody is left waiting — which is why the
-     * bridge does not chase this the way it chases a job.
-     */
-    /**
-     * Get a verdict out of this agent for work it asked another to do.
-     *
-     * Enforced rather than offered: an executor that has moved on will never
-     * come back to judge, and a capability nobody judges repeats its mistakes.
-     * The floor verdict is the guarantee — a delegation cannot end in silence,
-     * and what it records is "delivered, unexamined" rather than praise nobody
-     * gave.
-     */
-    function review(agent: string, jobId: string): void {
-      if (!recall.heard) return;
-      const rec = jobs.find(jobId);
-      if (!rec) return;
-
-      const me = ownerScope(conf.mesh.agentId);
-      const judged = () => !!jobs.find(jobId)?.feedback?.some((f) => f.by === me);
-      if (judged()) return;
-
-      const floor = () => {
-        if (judged()) return;
-        const refused = fileVerdict(agent, jobId, UNJUDGED.verdict, {
-          reason: UNJUDGED.reason,
-          details: `Asked ${agent} for ${rec.service ?? "a capability"} as job ${jobId}. ` +
-            `It answered and nothing here judged the answer within ${conf.mesh.reviewGraceMs}ms.`,
-        });
-        if (refused) logger.info(`[feedback] no verdict for ${jobId}: ${refused}`);
-      };
-
-      const sub = (api.runtime as any)?.subagent;
-      if (typeof sub?.run !== "function") { floor(); return; }
-
-      void sub.run({ sessionKey: `${conf.sessionKey}:review`, message: reviewPromptFor(rec, agent) })
-        .catch((e: any) => logger.info(`[feedback] could not review ${jobId}: ${e?.message ?? e}`));
-
-      const grace = setTimeout(floor, conf.mesh.reviewGraceMs);
-      grace.unref?.();
+    let memberships;
+    try {
+      memberships = resolveMeshes(cfg, pluginDir);
+    } catch (e: any) {
+      // A mesh list that cannot work is worth refusing here rather than at the
+      // third reconnect, and refusing loudly: the gateway keeps info from
+      // plugins and drops warn, so this is the level an operator can read.
+      logger.info(`[mesh] ${e.message} — plugin inactive.`);
+      delete globalAny[GUARD];
+      delete globalAny[MODULE_SLOT];
+      return;
     }
 
-    function explain(jobId: string): void {
-      const job = jobs.find(jobId);
-      const trigger = triggerFor(job);
-      if (!job || !trigger) return;
-      // A postmortem costs an executor run to write and exists for a recorder
-      // to keep. Where nothing answers there is no recorder: it would be paid
-      // for, published to a topic the broker most likely refuses without
-      // saying so, and read by nobody.
-      if (!recall.heard) return;
-      if (!explained.take(signatureOf(job, trigger), Date.now())) {
-        logger.info(`[postmortem] ${job.service ?? "unknown"} has already explained this failure recently`);
-        return;
-      }
+    const instances = memberships.map((m) => createMeshInstance(m, {
+      logger, runtime: api.runtime, pluginDir, catalog, vars, sse, auth,
+    }));
+    const byMesh = new Map(instances.map((i) => [i.name, i]));
 
-      const owner = job.owner ?? ownerScope(job.requestedBy);
-      const topic = jobPostmortemTopic(conf.mesh.root, owner, jobId);
-      const sub = (api.runtime as any)?.subagent;
-      if (typeof sub?.run !== "function") return;
-
-      jobs.record({ jobId }, { type: "postmortem_requested" });
-      void sub.run({ sessionKey: `${conf.sessionKey}:postmortem`, message: promptFor(job, trigger, topic) })
-        .catch((e: any) => logger.info(`[postmortem] could not start for ${jobId}: ${e?.message ?? e}`));
-    }
-
-    /** File a verdict on a job this agent delegated. Returns why not, or null. */
-    function fileVerdict(agent: string, jobId: string, verdict: Verdict, said?: Said): string | null {
-      const rec = jobs.find(jobId);
-      const me = ownerScope(conf.mesh.agentId);
-
-      if (!rec?.delegated) return `job ${jobId} is not one this agent delegated`;
-      if (agent && rec.delegatedTo && rec.delegatedTo !== agent) {
-        return `job ${jobId} was delegated to ${rec.delegatedTo}, not ${agent}`;
-      }
-      if (rec.feedback?.some((f) => f.by === me)) {
-        return `a verdict on job ${jobId} has already been filed`;
-      }
-      // A verdict reaches the agent it judges only by way of a recorder: it is
-      // filed on one topic and delivered on another, and no agent may publish
-      // the delivering one. Without a box it goes nowhere.
-      if (!recall.heard) {
-        return "nothing records verdicts on this mesh — the feedback cycle needs a Plexus box";
-      }
-
-      const out = verdictFor(conf.mesh.root, rec.delegatedTo ?? agent, me, jobId, verdict, said);
-      if (!out) return `"${verdict}" is not a verdict — expected good, bad or unusable`;
-
-      transport.publish(out.topic, JSON.stringify(out.payload), { qos: 1 });
-      // Recorded here because the relay returns on a topic this agent cannot read.
-      // The payload is the authority on what was said: it is what the recorder
-      // will keep, already trimmed to the caps.
-      const { jobId: _id, verdict: _v, ts: _ts, ...said_ } = out.payload as any;
-      jobs.recordFeedback(jobId, { verdict, ...said_, by: me, ts: Date.now() });
-      return null;
-    }
-
-    const ask = createAskService({
-      selfAgentId: conf.mesh.agentId,
-      meshRoot: conf.mesh.root,
-      maxDepth: conf.mesh.maxDepth,
-      timeoutMs: conf.mesh.askTimeoutMs,
-      logger,
-      publish: transport.publish,
-      peer: (id) => peers.get(id),
-      // Read from the peer's retained profile, so what we publish follows what
-      // it says it serves rather than what this deployment happens to prefer.
-      peerOwnerTopicMode: (id) => (peers.get(id) as any)?.ownerPolicy?.topic,
-      lineageOf: (jobId) => dispatcher.lineageOf(jobId),
-      fileVerdict: (agent, jobId, verdict, reason) => {
-        const refused = fileVerdict(agent, jobId, verdict, reason);
-        if (refused) logger.info(`[feedback] not filed for ${jobId}: ${refused}`);
-      },
-      onAnswered: (agent, jobId) => review(agent, jobId),
-      onDelegated: (info) => {
-        // Recorded locally so a delegated job is visible in our console even
-        // though a peer is doing the work.
-        jobs.record(
-          { jobId: info.jobId, service: info.service, state: "started",
-            owner: ownerScope(conf.mesh.agentId), requestedBy: conf.mesh.agentId,
-            delegated: true, delegatedTo: info.agent,
-            parentJobId: info.parentJobId, rootJobId: info.rootJobId, depth: info.depth },
-          { type: "delegated", note: `asked ${info.agent} for ${info.service}` },
-        );
-      },
-    });
-
-    const { server } = startHttpServer({
-      cfg: conf, logger, auth, sse, jobs, vars, dispatcher, registry,
-      fileVerdict: (agent, jobId, verdict, said) =>
-        fileVerdict(agent, jobId, verdict as Verdict, said),
-      snapshot,
-      peers: () => peers.list(),
-      profileWithBroker: () => ({
-        ...registry.buildProfile(),
-        broker: { connected: transport.connected, stats: transport.stats },
-      }),
-    });
-
-    // ── Inbound message routing ────────────────────────
-
-    /**
-     * Job traffic: milestones and results, including our executors' own.
-     *
-     * Called for every message that arrives, and — when the broker refuses the
-     * mesh-wide filter — for our own publishes too, so that a job's bookkeeping
-     * never depends on hearing ourselves come back. Returns whether the topic
-     * was job traffic.
-     */
-    /** When a message says it happened, or now if it does not say. */
-    function stamped(data: any): number | undefined {
-      const t = Date.parse(String(data?.ts ?? ""));
-      return Number.isNaN(t) ? undefined : t;
-    }
-
-    function recordJobTraffic(topic: string, raw: string, data: any): boolean {
-      const parsed = parseJobTopic(jobTopicRe, topic);
-      if (!parsed) return false;
-      const { owner, jobId, kind } = parsed;
-
-      // A cancelled job is terminal — suppress late executor publishes so the
-      // client's view matches the cancel_acknowledged contract.
-      if (jobs.cancelled.has(jobId)) return true;
-
-      if (kind === "postmortem") {
-        jobs.record({ jobId, postmortem: { summary: data?.summary, lesson: data?.lesson, ts: stamped(data) ?? Date.now() } },
-          { type: "postmortem", note: data?.lesson ?? data?.summary, at: stamped(data) });
-        return true;
-      }
-
-      if (kind === "events") {
-        const type = String(data?.type ?? "message");
-        const note = data?.note ?? data?.stage ?? data?.error ?? (data ? undefined : raw.slice(0, 120));
-        jobs.record(
-          { jobId, lastEvent: type, requestedBy: data?.owner, owner },
-          // When it happened, from the payload — not when it arrived. The
-          // bridge hears its own publishes, so this is the second copy of an
-          // event it already recorded, and only the timestamp tells the store
-          // they are the same one.
-          { type, note: note ? String(note).slice(0, 240) : undefined, at: stamped(data) },
-        );
-        // Any publish proves it is alive; a publish that CLAIMS the job is
-        // finished starts a clock, because an executor that announces the end
-        // and publishes no result is the failure the watchdog cannot see.
-        dispatcher.markAgentActivity(jobId, { type, note: note ? String(note) : undefined });
-      } else {
-        jobs.record(
-          { jobId, result: data, state: data?.type === "error" ? "error" : "done", requestedBy: data?.owner, owner },
-          // A result is RETAINED, so the broker replays it on every
-          // resubscribe — once per gateway restart, forever. Carrying its own
-          // timestamp is what stops one finished job collecting seven
-          // identical endings spread across days it did not run on.
-          { type: String(data?.type ?? "result"),
-            note: data?.error ? String(data.error).slice(0, 240) : undefined,
-            at: stamped(data) },
-        );
-        jobs.active.delete(jobId);
-        dispatcher.forget(jobId);              // terminal — stop watching
-        explain(jobId);
-        // If we asked a peer for this, hand the answer back to the waiting
-        // executor. This is the return path that makes delegation possible.
-        ask.settle(jobId, data);
-      }
-      return true;
-    }
-
-    /**
-     * Our own publish, observed locally.
-     *
-     * Only used when the broker refuses the mesh-wide job filter. Topics inside
-     * our own scope are skipped: those we are still subscribed to, so the
-     * broker delivers them back and recording here as well would double every
-     * entry in the timeline.
-     */
-    function observeOwnPublish(topic: string, payload: string): void {
-      if (jobFeed !== "scoped") return;
-      if (topic.startsWith(`${conf.mesh.root}/jobs/${ownerScope(conf.mesh.agentId)}/`)) return;
-      let data: any = null;
-      try { data = JSON.parse(payload); } catch { /* plaintext is allowed */ }
-      recordJobTraffic(topic, payload, data);
-    }
-
-    function onMessage(topic: string, raw: string, data: any): void {
-      logger.info(`received on ${topic}: ${raw.slice(0, 300)}`);
-
-      const answered = memoryReplyService(conf.mesh.root, conf.mesh.agentId, topic);
-      if (answered !== null) {
-        recall.settle(answered, renderLessons(Array.isArray(data?.lessons) ? data.lessons : [], answered));
-        return;
-      }
-
-      // Peer registry: who else is on the mesh and what they can do.
-      const reg = parseRegistryTopic(registryRe, topic);
-      if (reg) {
-        if (reg.kind === "profile") peers.onProfile(reg.agentId, data);
-        else peers.onStatus(reg.agentId, data);
-        return;
-      }
-
-      // v1.6. A box saying it is here, or its will saying it is gone. This is
-      // the only thing that turns the feedback cycle on, and an empty payload
-      // is how a retained announcement is withdrawn — so it reads as absence.
-      if (topic === boxTopic(conf.mesh.root)) {
-        const there = String(raw ?? "").trim() !== "";
-        recall.present(there);
-        logger.info(there
-          ? "[memory] a box records this mesh — verdicts, postmortems and lessons are on"
-          : "[memory] no box on this mesh — verdicts, postmortems and lessons are off");
-        return;
-      }
-
-      if (recordJobTraffic(topic, raw, data)) return;
-
-      // v1.4: an invoke whose topic carries the owner. The segment is passed on
-      // exactly as it arrived — the dispatcher decides whether it is acceptable,
-      // because that decision is the protocol's, not the router's.
-      const topicOwner = invokeTopicOwner(conf.mesh.root, conf.mesh.agentId, topic);
-      if (topicOwner !== null) {
-        dispatcher.dispatch(
-          { jobId: data?.jobId, service: data?.service, args: data?.args, requestedBy: data?.requestedBy,
-            parentJobId: data?.parentJobId, rootJobId: data?.rootJobId, depth: data?.depth },
-          { topicOwner },
-        );
-        return;
-      }
-
-      // v1.5: what the work was worth, from whoever asked for it. Same shape as
-      // the invoke topic, so the owner is the one the broker matched and the
-      // router hands it on untouched — the decision is the protocol's.
-      const judge = feedbackTopicOwner(conf.mesh.root, conf.mesh.agentId, topic);
-      if (judge !== null) {
-        const jobId = String(data?.jobId ?? "").trim();
-        const decision = readFeedback(judge, data, jobId ? jobs.find(jobId) : undefined, Date.now());
-
-        if (!decision.feedback) {
-          logger.info(`[feedback] refused from ${judge}: ${decision.reason}`);
-          // Told to the sender, in the scope it published from — a verdict
-          // that silently vanishes is worse than none, because the requester
-          // believes the mesh knows something it does not.
-          if (jobId) {
-            dispatcher.publishEvent(
-              jobId, { type: "feedback_refused", note: decision.reason }, ownerScope(judge));
-          }
-          return;
-        }
-
-        const { verdict, reason } = decision.feedback;
-        jobs.recordFeedback(jobId, decision.feedback);
-        // On the job's own timeline as well as in the record, so it reaches
-        // anyone watching the mesh — the box included — without a new
-        // subscription anywhere.
-        dispatcher.publishEvent(
-          jobId,
-          { type: "feedback", verdict, ...(reason ? { note: reason } : {}) },
-          ownerScope(judge),
-        );
-        logger.info(`[feedback] ${judge} judged job ${jobId} ${verdict}${reason ? `: ${reason}` : ""}`);
-        explain(jobId);
-        return;
-      }
-
-      if (topic === topics.config) {
-        transport.publish(`${topics.config}/reply`, JSON.stringify(registry.runConfigAction(data)), { qos: 1 });
-        return;
-      }
-
-      if (topic === topics.query) {
-        const svc = catalog.read();
-        const out = data?.jobId
-          ? {
-              jobId: data.jobId,
-              state: jobs.active.has(data.jobId) ? "active"
-                : jobs.cancelled.has(data.jobId) ? "cancelled"
-                  : "unknown-or-finished",
-            }
-          : {
-              agentId: conf.mesh.agentId,
-              protocolVersion: PROTOCOL_VERSION,
-              ownerPolicy: ownerPolicy(),
-      // What the broker allows, as opposed to what was asked for. A mesh whose
-      // ACLs have narrowed us should say so somewhere an operator looks.
-      jobFeed,
-      refusedFilters: [...refusedFilters],
-              services: svc.capabilities.map((c) => ({
-                service: c.service, description: c.description, requestSchema: c.requestSchema,
-              })),
-            };
-        transport.publish(`${topics.query}/reply`, JSON.stringify(out), { qos: 1 });
-        return;
-      }
-
-      if (topic === topics.cancel) {
-        const jobId = String(data?.jobId ?? "");
-        if (jobId && dispatcher.cancel(jobId, data?.requestedBy)) {
-          api.runtime.system.enqueueSystemEvent(`🛑 Agent-mesh cancel for job ${jobId}.`, { sessionKey: conf.sessionKey });
-        } else {
-          dispatcher.publishEvent(jobId || "unknown", { type: "cancel_ignored" }, ownerScope(data?.requestedBy));
-        }
-        return;
-      }
-
-      if (topic === topics.invoke && data) {
-        dispatcher.dispatch(
-          { jobId: data.jobId, service: data.service, args: data.args, requestedBy: data.requestedBy,
-            parentJobId: data.parentJobId, rootJobId: data.rootJobId, depth: data.depth },
-          // Populated by an EMQX rule-engine enrichment when verifyOwner is on.
-          { clientUsername: data.client_username ?? data.clientUsername },
-        );
-      }
-    }
-
-    // ── Start ──────────────────────────────────────────
-
-    transport.subscribe({
-      [topics.invoke]: { qos: 1 },
-      // v1.4. Separate from commands/<id>/# so that a broker refusing it is
-      // reported as itself rather than taking every command topic with it.
-      ...(conf.mesh.ownerInTopic === "off"
-        ? {}
-        : { [invokeFilter(conf.mesh.root, conf.mesh.agentId)]: { qos: 1 as const } }),
-      // v1.5. Written by the mesh's recorder and by nothing else — a broker
-      // that grants publish here to anyone but the recorder has given away the
-      // guarantee. Separate from the other command topics for the same reason
-      // the invoke filter is: a refusal here should be reported as itself.
-      [feedbackFilter(conf.mesh.root, conf.mesh.agentId)]: { qos: 1 },
-      [topics.query]: { qos: 1 },
-      [topics.cancel]: { qos: 1 },
-      [topics.config]: { qos: 1 },
-      [`${conf.mesh.root}/jobs/#`]: { qos: 1 },   // history for the panel
-      // v1.5. Where answers about a capability's lessons come back. Under this
-      // agent's own commands subtree, so an ACL already grants it and no reply
-      // for another agent can arrive here.
-      [memoryReplyFilter(conf.mesh.root, conf.mesh.agentId)]: { qos: 1 },
-      // v1.6. Whether this mesh has a box. Retained, so the answer is here
-      // before the first job is — and absent on a bare broker, which is how
-      // the agent knows to publish none of the cycle.
-      [boxTopic(conf.mesh.root)]: { qos: 1 },
-      // Retained, so subscribing reveals the whole mesh immediately.
-      [registryProfileFilter(conf.mesh.root)]: { qos: 1 },
-      [registryStatusFilter(conf.mesh.root)]: { qos: 1 },
-    });
-
-    transport.start({
-      onConnect() {
-        transport.publish(topics.status,
-          JSON.stringify({ status: "online", timestamp: new Date().toISOString() }),
-          { qos: 1, retain: true });
-        registry.publishProfile();
-        logger.info(`connected (MQTT ${conf.broker.protocolVersion === 5 ? "5" : "3.1.1"}) — commands, jobs and peer registry subscribed`);
-        sse.broadcast("status", snapshot());
-      },
-      onMessage,
-      onStateChange: () => sse.broadcast("status", snapshot()),
-
-      onSubscribeDenied(filters) {
-        for (const f of filters) if (!refusedFilters.includes(f)) refusedFilters.push(f);
-        // logger.info, deliberately: the gateway keeps info from plugins and
-        // drops warn and error, so a warning here would be a warning nobody
-        // can read.
-        logger.info(
-          `[acl] broker refused ${filters.length} subscription(s): ${filters.join(", ")} — ` +
-          `this is expected on a broker with per-agent ACLs, and is not a connection fault`,
-        );
-
-        const firehose = `${conf.mesh.root}/jobs/#`;
-        if (filters.includes(firehose) && jobFeed === "mesh") {
-          // An agent ACL grants jobs/<agentId>/# and nothing wider. Take it:
-          // it carries the answers to what we delegated, which is the one part
-          // of the firehose the mesh cannot work without.
-          jobFeed = "scoped";
-          transport.subscribe({ [`${conf.mesh.root}/jobs/${ownerScope(conf.mesh.agentId)}/#`]: { qos: 1 } });
-          logger.info(
-            `[acl] job history is now local: subscribed ${conf.mesh.root}/jobs/` +
-            `${ownerScope(conf.mesh.agentId)}/# instead. Jobs this agent serves are recorded as it ` +
-            `publishes them, so the panel keeps its own history; other owners' traffic is no longer visible`,
-          );
-        }
-        sse.broadcast("status", snapshot());
-      },
-    });
-
-    // Publish this registration as the live instance so the tools — registered
-    // in every session — operate on the one transport that actually exists.
+    // The tools reach whichever mesh the work is on through this. Registered in
+    // every session, so they resolve at call time rather than closing over one
+    // registration's state.
     globalAny[ACTIVE_SLOT] = {
-      publishCounted: (topic: string, payload: string, opts?: { qos?: 0 | 1 | 2; retain?: boolean }) => {
-        transport.publishCounted(topic, payload, opts);
-        observeOwnPublish(topic, payload);
+      /** Which mesh a topic belongs to. A topic names its root, so nothing has to be guessed. */
+      forTopic(topic: string) {
+        return instances.find((i) => topic === i.conf.mesh.root || topic.startsWith(`${i.conf.mesh.root}/`));
       },
-      normalize: (topic: string, payload: string, retain?: boolean) =>
-        normalizeJobPublish(jobTopicRe, topic, payload, retain),
-      refuse: (topic: string) => {
-        const parsed = parseJobTopic(jobTopicRe, topic);
-        if (!parsed) return null;
-        return publishRefusal(parsed.kind, {
-          cancelled: jobs.cancelled.has(parsed.jobId),
-          finished: Boolean(jobs.find(parsed.jobId)?.finishedAt),
-        }, parsed.jobId);
+      byName(name?: string) {
+        if (name) return byMesh.get(name);
+        return instances.length === 1 ? instances[0] : undefined;
       },
-      ask: (req: any) => ask.ask(req),
-      peers: () => peers.list(),
-      providersOf: (service: string) => peers.providersOf(service),
-      fileVerdict: (agent: string, jobId: string, verdict: string, said?: Said) =>
-        fileVerdict(agent, jobId, verdict as Verdict, said),
-      delegationMode: conf.mesh.delegation,
+      names: () => instances.map((i) => i.name),
+      /** The mesh a job is running on, when it is one this agent has a record of. */
+      forJob(jobId: string) {
+        return instances.find((i) => i.jobs.find(jobId));
+      },
+      instances: () => instances,
     };
 
-    const stopWatchdog = dispatcher.startWatchdog();
-    const stopCatalogWatch = catalog.watch(() => registry.publishProfile());
+    const { server } = startHttpServer({
+      cfg: shared0, logger, auth, sse, vars,
+      meshes: {
+        names: () => instances.map((i) => i.name),
+        pick: (name) => {
+          if (name) return instances.find((i) => i.name === name);
+          // One mesh needs no naming, and that is not a convenience: every
+          // panel and script written against a single-mesh agent keeps working
+          // exactly as it did.
+          return instances.length === 1 ? instances[0] : undefined;
+        },
+      },
+    });
 
     // ── Shutdown ───────────────────────────────────────
 
     const shutdown = () => {
-      stopWatchdog();
-      stopCatalogWatch();
+      for (const instance of instances) {
+        try { instance.stop(); } catch (e: any) { logger.error(`stopping ${instance.name} failed: ${e.message}`); }
+      }
       sse.closeAll();
       try { (server as Server | null)?.close(); } catch { /* noop */ }
-      transport.publish(topics.status,
-        JSON.stringify({ status: "offline", reason: "shutdown", timestamp: new Date().toISOString() }),
-        { qos: 1, retain: true });
-      transport.end();
       delete globalAny[GUARD];
       delete globalAny[MODULE_SLOT];
       delete globalAny[ACTIVE_SLOT];

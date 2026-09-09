@@ -984,19 +984,34 @@ t("cancelling a parent cancels what it delegated, and tells the peer", async () 
 
 const { createHttpHandler } = await import(dist("http/server.js"));
 
-function panelHarness() {
+function panelHarness(meshNames = ["agents"]) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-panel-"));
   fs.writeFileSync(path.join(dir, "index.html"), "<html>panel</html>");
   fs.writeFileSync(path.join(dir, "theme.css"), ":root{--ink:#dce5e2}");
   const cfg = resolveConfig({ broker: { url: "mqtt://x:1883" }, web: { dir } }, "/p");
   cfg.web.dir = dir;
+
+  const views = meshNames.map((name) => ({
+    name, conf: cfg,
+    jobs: createJobStore(() => {}),
+    dispatcher: {}, registry: {},
+    snapshot: () => ({ meshRoot: name }),
+    profileWithBroker: () => ({ mesh: name }),
+    peers: () => [],
+    fileVerdict: () => null,
+  }));
+
   const handle = createHttpHandler({
     cfg, logger: quietLogger,
     auth: { configured: false, authorized: () => true, sameOrigin: () => true },
     sse: { add() {}, remove() {}, broadcast() {} },
-    jobs: createJobStore(() => {}), vars: { value: () => "" },
-    dispatcher: {}, registry: {},
-    snapshot: () => ({}), profileWithBroker: () => ({}), peers: () => [],
+    vars: { value: () => "" },
+    meshes: {
+      names: () => meshNames,
+      pick: (name) => (name
+        ? views.find((v) => v.name === name)
+        : views.length === 1 ? views[0] : undefined),
+    },
   });
   return { handle, base: cfg.web.basePath };
 }
@@ -1012,6 +1027,35 @@ async function fetchPath(handle, url) {
   await handle(req, res);
   return { code, type: head["Content-Type"], body: Buffer.concat(chunks.map(Buffer.from)).toString() };
 }
+
+t("the panel on one mesh needs no ?mesh=, exactly as it never did", async () => {
+  // Every panel and script written against a single-mesh agent has to keep
+  // working untouched, which is the whole reason the parameter is optional.
+  const h = panelHarness();
+  const r = await fetchPath(h.handle, "/api/status");
+  assert.equal(r.code, 200);
+  assert.deepEqual(JSON.parse(r.body), { meshRoot: "agents" });
+});
+
+t("on several meshes, an unnamed request is answered rather than guessed at", async () => {
+  // A jobId is unique within a mesh and nowhere else, so picking one would be
+  // a plausible-looking answer about the wrong mesh.
+  const h = panelHarness(["acme/agents", "agents"]);
+  const ambiguous = await fetchPath(h.handle, "/api/status");
+  assert.equal(ambiguous.code, 400);
+  assert.match(JSON.parse(ambiguous.body).error, /name a mesh.*acme\/agents, agents/);
+
+  const named = await fetchPath(h.handle, "/api/status?mesh=agents");
+  assert.equal(named.code, 200);
+  assert.deepEqual(JSON.parse(named.body), { meshRoot: "agents" });
+});
+
+t("the panel can ask which meshes there are", async () => {
+  const h = panelHarness(["acme/agents", "agents"]);
+  const r = await fetchPath(h.handle, "/api/meshes");
+  assert.equal(r.code, 200);
+  assert.deepEqual(JSON.parse(r.body).meshes, ["acme/agents", "agents"]);
+});
 
 t("the panel's stylesheet is served as CSS on the standalone port", async () => {
   const h = panelHarness();
