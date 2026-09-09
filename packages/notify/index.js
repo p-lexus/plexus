@@ -66,10 +66,29 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export function statePathFor(path, ctx = {}) {
   const meshes = ctx.meshes ?? [];
   if (meshes.length < 2 || !ctx.mesh?.name) return path;
-  const slug = String(ctx.mesh.name).replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
-  const dot = path.lastIndexOf(".");
-  const cut = dot > path.lastIndexOf("/") ? dot : path.length;
-  return `${path.slice(0, cut)}.${slug}${path.slice(cut)}`;
+  return perMeshFile(path, ctx.mesh.name);
+}
+
+/**
+ * `notify.state.json` + `acme/agents` -> `notify.state.acme-agents.json`.
+ *
+ * The second copy of this. The first is `perMeshFile` in
+ * hosts/openclaw/src/config.ts, and they cannot be one: a host plugin shares no
+ * code with the packages by design — the two implementations of this protocol
+ * agree on PROTOCOL.md and nothing else, which is the property that makes the
+ * specification worth anything.
+ *
+ * So the duplication is deliberate and the drift is what has to be caught. It
+ * already happened once: this copy did not look for a `\\` when deciding
+ * whether a dot was an extension or part of a directory name, so a Windows path
+ * was suffixed in the wrong place. `test/unit.mjs` runs both over one table of
+ * cases and fails if they ever answer differently.
+ */
+export function perMeshFile(file, meshName) {
+  const slug = String(meshName).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  const dot = file.lastIndexOf(".");
+  const cut = dot > Math.max(file.lastIndexOf("/"), file.lastIndexOf("\\")) ? dot : file.length;
+  return `${file.slice(0, cut)}.${slug}${file.slice(cut)}`;
 }
 
 class DeliveryLog {

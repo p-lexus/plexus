@@ -136,7 +136,7 @@ export function createHttpHandler(deps: HttpDeps) {
       // Tagged exactly as a broadcast is, so one event has one shape however it
       // was produced — and `peers` is a named field rather than a bare list,
       // because the tag is added by spreading and an array does not survive it.
-      const tag = (payload: object) => ({ mesh: mesh!.name, ...payload });
+      const tag = (payload: object) => ({ ...payload, mesh: mesh!.name });
       const detach = sse.attach(res, [
         ["status", tag(mesh!.snapshot())],
         ["profile", tag(mesh!.registry.buildProfile())],

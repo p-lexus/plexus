@@ -1009,7 +1009,10 @@ export async function connectAll(options = {}, deps = {}) {
      * agent to ask out of — that goes through `on(name)`.
      */
     peers() {
-      return memberships.flatMap((m) => m.agent.peers().map((p) => ({ mesh: m.name, ...p })));
+      // The tag last, so it wins. A profile is a payload off the wire and they
+      // grow fields: one carrying its own `mesh` would otherwise replace the
+      // local handle with whatever a peer chose to call itself.
+      return memberships.flatMap((m) => m.agent.peers().map((p) => ({ ...p, mesh: m.name })));
     },
 
     /** Withdraw from every mesh and disconnect. */

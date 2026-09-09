@@ -30,7 +30,7 @@ import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 
 import type { PluginConfig } from "./types.js";
 import { resolveConfig, resolveMeshes } from "./config.js";
-import { createMeshInstance } from "./mesh/instance.js";
+import { startMeshes } from "./mesh/instance.js";
 import type { MeshInstance } from "./mesh/instance.js";
 import { createLogger } from "./logger.js";
 import { createCatalog } from "./mesh/catalog.js";
@@ -383,9 +383,20 @@ export default definePluginEntry({
       return;
     }
 
-    const instances = memberships.map((m) => createMeshInstance(m, {
-      logger, runtime: api.runtime, pluginDir, catalog, vars, sse, auth,
-    }));
+    // Every mesh, or none: a membership is live as soon as it is built, and the
+    // shutdown that would stop it is registered further down.
+    let instances;
+    try {
+      instances = startMeshes(memberships, {
+        logger, runtime: api.runtime, pluginDir, catalog, vars, sse, auth,
+      });
+    } catch (e: any) {
+      logger.info(`[mesh] could not join every mesh: ${e.message} — plugin inactive.`);
+      sse.closeAll();
+      delete globalAny[GUARD];
+      delete globalAny[MODULE_SLOT];
+      return;
+    }
     const byMesh = new Map(instances.map((i) => [i.name, i]));
 
     // The tools reach whichever mesh the work is on through this. Registered in

@@ -243,6 +243,19 @@ t("several meshes: there is no way to ask across one", async () => {
   assert.equal(typeof meshes.on("agents").ask, "function", "the mesh's own agent still has it");
 });
 
+t("several meshes: the mesh tag wins over anything a profile carries", async () => {
+  // A profile is a payload off the wire and payloads grow fields. Tagged first,
+  // a peer calling itself something would replace the local handle with its own
+  // idea of which mesh it is on.
+  const meshes = await connectAll({
+    agentId: "reviewer",
+    meshes: [{ name: "ours", root: "acme/agents", broker: "mqtt://a:1883" }],
+  }, {
+    connect: async (o) => fakeAgent(o, [{ agentId: "dba", mesh: "somewhere-else" }]),
+  });
+  assert.equal(meshes.peers()[0].mesh, "ours", "the tag is the local handle, not the peer's claim");
+});
+
 t("several meshes: peers carry the mesh they are on", async () => {
   // An agentId is unique within a mesh and nowhere else, so an untagged list
   // would put two different `dba`s under one name and let the wrong one be

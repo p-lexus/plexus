@@ -112,6 +112,37 @@ export function offering(catalog: Catalog, offer: string[] | null): Catalog {
 }
 
 /**
+ * Build every membership, or none of them.
+ *
+ * A membership is live the moment it is built: it has a transport dialling out,
+ * a watchdog sweeping and a catalog watch registered. So a throw partway
+ * through the list used to leave the earlier ones running while the plugin
+ * reported itself inactive — nothing held a reference to stop them, because the
+ * shutdown that would have is registered after this returns.
+ *
+ * Rolled back in reverse, for the same reason the plugin host tears plugins
+ * down in reverse: the last one built is the least likely to be depended upon.
+ *
+ * `make` is injected so this can be tested without a broker.
+ */
+export function startMeshes(
+  memberships: Membership[],
+  shared: SharedDeps,
+  make: (m: Membership, s: SharedDeps) => MeshInstance = createMeshInstance,
+): MeshInstance[] {
+  const started: MeshInstance[] = [];
+  try {
+    for (const m of memberships) started.push(make(m, shared));
+    return started;
+  } catch (err) {
+    for (const instance of [...started].reverse()) {
+      try { instance.stop(); } catch { /* already failing; the first error is the one that matters */ }
+    }
+    throw err;
+  }
+}
+
+/**
  * Anything but a list.
  *
  * The mesh tag is added by spreading, and an array IS an object — so spreading
@@ -135,7 +166,7 @@ export function createMeshInstance(membership: Membership, shared: SharedDeps): 
   // panel does not read that event yet. A payload that is a list is given a
   // name here instead, so the tag can never change what it is tagging.
   const broadcast = <T extends object>(kind: string, payload: NotAList<T>) =>
-    sse.broadcast(kind, { mesh: meshName, ...(payload as object) });
+    sse.broadcast(kind, { ...(payload as object), mesh: meshName });
 
   const topics = buildTopics(conf.mesh.root, conf.mesh.agentId);
   const jobTopicRe = jobTopicPattern(conf.mesh.root);
@@ -564,10 +595,6 @@ export function createMeshInstance(membership: Membership, shared: SharedDeps): 
             agentId: conf.mesh.agentId,
             protocolVersion: PROTOCOL_VERSION,
             ownerPolicy: ownerPolicy(),
-    // What the broker allows, as opposed to what was asked for. A mesh whose
-    // ACLs have narrowed us should say so somewhere an operator looks.
-    jobFeed,
-    refusedFilters: [...refusedFilters],
             services: svc.capabilities.map((c) => ({
               service: c.service, description: c.description, requestSchema: c.requestSchema,
             })),

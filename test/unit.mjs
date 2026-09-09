@@ -31,8 +31,11 @@ const { normalizeJobPublish, renderPrompt, unresolvedPlaceholders, publishRefusa
 const { createJobStore, MAX_HISTORY } = await import(dist("mesh/jobs.js"));
 const { createVarStore, maskValue } = await import(dist("mesh/vars.js"));
 const { createAuth } = await import(dist("http/auth.js"));
-const { resolveConfig, resolveMeshes, resolveEnvRef, DEFAULTS, deploymentDir } = await import(dist("config.js"));
+const { resolveConfig, resolveMeshes, perMeshFile, resolveEnvRef, DEFAULTS, deploymentDir } = await import(dist("config.js"));
 const { createCatalog } = await import(dist("mesh/catalog.js"));
+const { startMeshes } = await import(dist("mesh/instance.js"));
+// Reaching across to a package deliberately: see the parity test below.
+const { perMeshFile: notifyPerMeshFile } = await import("plexus-notify");
 const { createRegistry } = await import(dist("mesh/registry.js"));
 const { deriveClientId, deniedFilters, tls } = await import(dist("mesh/transport.js"));
 
@@ -273,6 +276,48 @@ t("v1.4: what is not an owner-scoped invoke topic is not read as one", () => {
   assert.equal(invokeTopicOwner(R, "reviewer", `${R}/commands/other/invoke/ci`), null,
     "another agent's invoke topic is not ours");
   assert.equal(invokeTopicOwner(R, "reviewer", `${R}/commands/reviewer/cancel`), null);
+});
+
+t("the two copies of perMeshFile answer the same question the same way", () => {
+  // There are two because a host plugin shares no code with the packages by
+  // design — the implementations agree on PROTOCOL.md and nothing else, which
+  // is the property that makes the specification worth something. So the
+  // duplication is deliberate and the drift is what has to be caught. It
+  // already happened once: notify's copy did not look for a backslash when
+  // deciding whether a dot was an extension or part of a directory name.
+  const cases = [
+    ["/var/lib/jobs.local.json", "acme/agents", "/var/lib/jobs.local.acme-agents.json"],
+    ["./notify.state.json", "agents", "./notify.state.agents.json"],
+    ["./state", "agents", "./state.agents"],
+    ["./v1.2/state", "agents", "./v1.2/state.agents"],
+    ["C:\\data\\v1.2\\state", "agents", "C:\\data\\v1.2\\state.agents"],
+    ["/x/jobs.json", "a b/c!", "/x/jobs.a-b-c.json"],
+  ];
+  for (const [file, mesh, want] of cases) {
+    assert.equal(perMeshFile(file, mesh), want, `config.ts: ${file} on ${mesh}`);
+    assert.equal(notifyPerMeshFile(file, mesh), want, `notify: ${file} on ${mesh}`);
+  }
+});
+
+t("every mesh is built, or none of them is left running", () => {
+  // A membership is live the moment it is built — transport dialling out,
+  // watchdog sweeping, catalog watch registered — and the shutdown that would
+  // stop it is registered only after the whole list succeeds. So a throw
+  // partway through used to leave the earlier ones running while the plugin
+  // reported itself inactive.
+  const stopped = [];
+  const make = (m) => {
+    if (m.name === "second") throw new Error("broker refused the credential");
+    return { name: m.name, stop: () => stopped.push(m.name) };
+  };
+  const list = [{ name: "first" }, { name: "second" }, { name: "third" }];
+  assert.throws(() => startMeshes(list, {}, make), /broker refused/);
+  assert.deepEqual(stopped, ["first"], "the one already built has to be stopped again");
+
+  stopped.length = 0;
+  const ok = startMeshes([{ name: "a" }, { name: "b" }], {}, make);
+  assert.deepEqual(ok.map((i) => i.name), ["a", "b"]);
+  assert.deepEqual(stopped, [], "nothing is stopped when every mesh is built");
 });
 
 t("several meshes: a config with no list is one mesh, resolved as it always was", () => {
