@@ -1125,6 +1125,34 @@ async function fetchPath(handle, url) {
   return { code, type: head["Content-Type"], body: Buffer.concat(chunks.map(Buffer.from)).toString() };
 }
 
+t("an SSE attach that throws closes the stream instead of ending the process", async () => {
+  // The one path with headersSent semantics, and the only route the loop above
+  // does not reach. A stream has already sent its headers by the time a
+  // throwing member is touched, so it cannot be turned back into a 500 — the
+  // guard has to close it instead, and must not throw doing so.
+  let ended = false;
+  const h = panelHarness(["agents"], {
+    // attach() writes the head, then reads the initial payloads — so this
+    // throws after the response has started, which is the case being pinned.
+    attach: (_res, initial) => { for (const [, data] of initial) JSON.stringify(data); return () => {}; },
+  }, {
+    peers: { list: () => { throw new Error("the peer registry went bad mid-stream"); }, size: 0 },
+  });
+
+  const req = Object.assign(Readable.from([]), { url: "/api/events", method: "GET", headers: {}, on() {} });
+  const res = {
+    headersSent: true,                       // the stream is already open
+    writeHead() { return res; },
+    end() { ended = true; },
+    setHeader() {},
+  };
+
+  // The point of the assertion: this resolves rather than rejecting. An
+  // unhandled rejection here is what ended the gateway.
+  await h.handle(req, res);
+  assert.equal(ended, true, "a stream that cannot be answered is closed, not left open");
+});
+
 t("a throwing panel route answers 500 instead of ending the process", async () => {
   // What actually took the gateway down was not only the missing method: the
   // server ran routes as `void handle(req, res)` with nothing catching them, so

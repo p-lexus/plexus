@@ -42,7 +42,7 @@ import { createRegistry } from "./registry.js";
 import { createPeerRegistry } from "./peers.js";
 import { createAskService } from "./ask.js";
 import type { SseHub } from "../http/sse.js";
-import type { MeshView } from "../http/server.js";
+import type { MeshView } from "./view.js";
 import type { Auth } from "../http/auth.js";
 
 /**
@@ -63,7 +63,7 @@ export interface SharedDeps {
 /**
  * One mesh, wired and running.
  *
- * It **extends MeshView**, which is what the panel needs from a mesh, and that
+ * It **extends MeshView** — what the panel needs from a mesh — and that
  * is load-bearing rather than tidy: register() hands these objects straight to
  * the panel, so the two shapes have to agree. Declared this way the compiler
  * checks it here, where the object is built.

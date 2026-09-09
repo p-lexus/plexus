@@ -32,27 +32,8 @@ const MIME: Record<string, string> = {
   ".ico": "image/x-icon",
 };
 
-/**
- * One mesh, as the panel needs it.
- *
- * Every route below acts on exactly one. An agent may be on several, and a job
- * id is unique within a mesh and nowhere else — so a route that took a job id
- * and no mesh would be a question with more than one answer.
- */
-export interface MeshView {
-  name: string;
-  /** This mesh's own configuration, not the panel's. */
-  conf: ResolvedConfig;
-  jobs: JobStore;
-  dispatcher: Dispatcher;
-  registry: Registry;
-  /** File a verdict on a delegated job. Returns why not, or null. */
-  fileVerdict(agent: string, jobId: string, verdict: string, said?: Said): string | null;
-  snapshot(): Record<string, unknown>;
-  profileWithBroker(): Record<string, unknown>;
-  /** The peer registry; the routes call .list() for the plain array. */
-  peers: { list(): unknown[] };
-}
+export type { MeshView } from "../mesh/view.js";
+import type { MeshView } from "../mesh/view.js";
 
 export interface HttpDeps {
   /** Shared configuration: the panel's own settings. Never a mesh's. */
@@ -98,8 +79,14 @@ export function createHttpHandler(deps: HttpDeps) {
       // Answered here as well as at the server, because a route that throws
       // must not depend on who called it to stay contained.
       deps.logger.error(`panel request ${req.method} ${req.url} failed: ${e?.message ?? e}`);
-      if (res.headersSent) { try { res.end(); } catch { /* socket gone */ } }
-      else sendJson(res, 500, { ok: false, error: "the panel failed to answer that request" });
+      // Both branches guarded, and symmetrically: a socket that died mid-
+      // response makes the reply itself throw, and a throw from inside the
+      // catch re-rejects — which is the failure this whole guard exists to
+      // stop, arrived at one layer further in.
+      try {
+        if (res.headersSent) res.end();
+        else sendJson(res, 500, { ok: false, error: "the panel failed to answer that request" });
+      } catch { /* the socket is gone; nothing left to say */ }
       return true;
     }
   };
