@@ -832,4 +832,191 @@ export async function connect(options = {}) {
   return agent;
 }
 
-export default { connect, ownerScope, topics, deriveClientId, PROTOCOL_VERSION, VERDICTS };
+// ── several meshes ──────────────────────────────────────────────────────────
+
+/**
+ * Normalise the `meshes` list, and fold the single-mesh form into it.
+ *
+ * `connectAll({ broker, agentId })` with no list is one membership, so the two
+ * forms are the same function and a config that grows a second mesh does not
+ * change shape.
+ */
+function normalizeMeshes(meshes, shared) {
+  const listed = Array.isArray(meshes) ? meshes : meshes ? [meshes] : [];
+  const entries = listed.length ? listed : shared.broker ? [{}] : [];
+
+  const { capabilities: declared = [], meshes: _listed, ...base } = shared;
+  const seenName = new Map();
+  const seenMesh = new Map();
+
+  return entries.map((entry, i) => {
+    const { name, offer, ...overrides } = entry ?? {};
+    const options = { ...base, ...overrides };
+    const root = options.root ?? DEFAULTS.root;
+
+    // The same mesh twice is the client-id collision this library detects and
+    // reports elsewhere, arranged in advance: both memberships derive the same
+    // id from the same host, root and agentId, and the broker kicks each in
+    // turn for as long as they both run.
+    const fingerprint = `${options.broker} ${root} ${options.agentId ?? ""}`;
+    if (seenMesh.has(fingerprint)) {
+      throw new Error(
+        `plexus-agent: ${root} on ${options.broker} is listed twice — two memberships of one mesh ` +
+        `share a client id and kick each other off the broker`);
+    }
+    seenMesh.set(fingerprint, i);
+
+    // A local handle, never on the wire. Two meshes can share a root — the
+    // default is `agents`, so a laptop's own mesh and a customer's are both
+    // called that more often than not — and `on("agents")` would then be a
+    // question with two answers.
+    const label = String(name ?? root);
+    if (seenName.has(label)) {
+      throw new Error(
+        `plexus-agent: two meshes are both called "${label}" — give one of them a distinct \`name\`, ` +
+        `which is how connectAll addresses it and never appears on the wire`);
+    }
+    seenName.set(label, i);
+
+    // `offer` narrows what this mesh is told about. Declared capabilities are
+    // checked against it now, because the failure otherwise is a mesh that
+    // advertises nothing and says nothing about why — a typo in a capability
+    // name reads exactly like a mesh that is meant to be quiet. Nothing is
+    // checked when none were declared: `serve()` supplies them later, and
+    // refusing here would refuse a correct config.
+    if (offer && declared.length) {
+      for (const service of offer) {
+        if (!declared.some((c) => c.service === service)) {
+          throw new Error(
+            `plexus-agent: mesh "${label}" offers "${service}", which this agent does not declare — ` +
+            `it has ${declared.map((c) => c.service).join(", ") || "no capabilities"}`);
+        }
+      }
+    }
+
+    return {
+      name: label,
+      offer: offer ? [...offer] : null,
+      options: {
+        ...options,
+        capabilities: offer ? declared.filter((c) => offer.includes(c.service)) : declared,
+      },
+    };
+  });
+}
+
+/**
+ * Join several meshes at once, as one agent.
+ *
+ *   const meshes = await connectAll({
+ *     agentId: "reviewer",
+ *     capabilities: [{ service: "code.review" }, { service: "deploy.prod" }],
+ *     meshes: [
+ *       { root: "acme/agents", broker: "mqtts://box.acme:8883", username, password },
+ *       { root: "agents", broker: "mqtt://localhost:1883", offer: ["code.review"] },
+ *     ],
+ *   });
+ *
+ *   meshes.on("acme/agents").ask("schema.review", { migration });
+ *
+ * **A mesh is a (broker, root) pair, and each membership is its own
+ * connection.** That is not an optimisation left undone. MQTT carries one Last
+ * Will per connection and presence is a will, so a single connection spanning
+ * two roots could announce its death on only one of them — an agent killed
+ * outright would stay retained as `online` on every other mesh, and those
+ * meshes would go on dispatching work to it. Publishing presence any other way
+ * is the heartbeat the protocol exists in order not to need.
+ *
+ * Every membership is an ordinary agent, indistinguishable on its broker from
+ * one that joined nothing else. Nothing here changes what goes on the wire,
+ * which is why joining a second mesh needs no agreement from the first.
+ *
+ * @param {object} options            Everything `connect` takes, as the default for every mesh.
+ * @param {Array}  [options.meshes]   Per-mesh entries. Each may override any of those, and may add
+ *                                    `name` — a local handle, defaulting to the root — and
+ *                                    `offer`, the subset of capabilities to advertise there.
+ * @param {object} [deps]             `{ connect }` — an injection point for tests.
+ * @returns {Promise<object>}
+ */
+export async function connectAll(options = {}, deps = {}) {
+  const connectOne = deps.connect ?? connect;
+  const list = normalizeMeshes(options.meshes, options);
+  if (!list.length) {
+    throw new Error(
+      "plexus-agent: connectAll needs at least one mesh — pass `meshes: [...]`, or a `broker` for a single one");
+  }
+
+  const settled = await Promise.allSettled(list.map((m) => connectOne(m.options)));
+  const opened = settled.flatMap((s) => (s.status === "fulfilled" ? [s.value] : []));
+  const failure = settled.find((s) => s.status === "rejected");
+  if (failure) {
+    // All or nothing. A half-joined agent serves one mesh while its operator
+    // believes it serves two, and the mesh it never reached shows no sign of it
+    // at all — the silent degradation this project designs against, arrived at
+    // by giving up early.
+    await Promise.all(opened.map((a) => a.close().catch(() => {})));
+    throw failure.reason;
+  }
+
+  const memberships = list.map((m, i) => ({ ...m, agent: opened[i] }));
+  const byName = new Map(memberships.map((m) => [m.name, m]));
+  const offers = (m, service) => !m.offer || m.offer.includes(service);
+  const names = () => memberships.map((m) => m.name);
+
+  return {
+    /**
+     * One mesh's agent, by name — its `name`, or its root when it has none.
+     *
+     * This is the only way to reach a peer, and that is deliberate. There is no
+     * ask(), find(), invoke() or cancel() here, because delegation belongs to
+     * one mesh: a job that arrived on `acme/agents` may ask only peers on
+     * `acme/agents`. A root is the boundary a broker's rules enforce, so an
+     * agent bridging two would be an unaudited gateway between them — and two
+     * meshes can each have a `dba`, so a flat directory keyed by agentId would
+     * not merely allow the wrong one to be asked, it would pick it.
+     */
+    on(name) { return byName.get(name)?.agent; },
+
+    /** Every membership's agent, in the order they were listed. */
+    all() { return memberships.map((m) => m.agent); },
+
+    /** The names `on()` answers to. */
+    names,
+
+    /**
+     * Offer a capability on every mesh that will have it.
+     *
+     * A mesh with an `offer` list takes only what that list names, so one
+     * handler is registered once and still stays off the meshes it has no
+     * business on.
+     */
+    serve(service, handler, meta) {
+      const on = memberships.filter((m) => offers(m, service));
+      if (!on.length) {
+        throw new Error(
+          `plexus-agent: no mesh here offers "${service}" — each of ${names().join(", ")} lists an ` +
+          `\`offer\` without it, so serving it would advertise it nowhere`);
+      }
+      for (const m of on) m.agent.serve(service, handler, meta);
+      return this;
+    },
+
+    /**
+     * Every peer on every mesh, each tagged with the mesh it is on.
+     *
+     * Tagged rather than flattened, because an agentId is unique within a mesh
+     * and nowhere else. Right for a dashboard; still not somewhere to pick an
+     * agent to ask out of — that goes through `on(name)`.
+     */
+    peers() {
+      return memberships.flatMap((m) => m.agent.peers().map((p) => ({ mesh: m.name, ...p })));
+    },
+
+    /** Withdraw from every mesh and disconnect. */
+    async close() {
+      await Promise.all(memberships.map((m) => m.agent.close()));
+    },
+  };
+}
+
+export default { connect, connectAll, ownerScope, topics, deriveClientId, PROTOCOL_VERSION, VERDICTS };

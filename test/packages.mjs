@@ -15,7 +15,7 @@ import { readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { ownerScope, topics, deriveClientId, PROTOCOL_VERSION, connect } from "plexus-agent";
+import { ownerScope, topics, deriveClientId, PROTOCOL_VERSION, connect, connectAll } from "plexus-agent";
 import { aclFor, permits, topicMatches } from "plexus-agent/acl";
 import { get, testCondition, matches, render, plan, deliveryContext } from "plexus-notify/routes";
 import { expandEnv, redact, loadChannels } from "plexus-notify/channels";
@@ -69,6 +69,195 @@ t("v1.5: the feedback topic builders put the judge where an ACL can see it", () 
     "acme/agents/commands/reviewer/feedback/ci");
   assert.equal(topics.feedbackFilter("acme/agents", "reviewer"),
     "acme/agents/commands/reviewer/feedback/+");
+});
+
+// ── plexus-agent: several meshes ────────────────────────
+// Every refusal below happens before a single connection is opened, so none of
+// these needs a broker. That is the point: a mesh list that cannot work is
+// worth refusing at the config rather than at the third reconnect.
+
+/** Enough of an agent for connectAll to compose, with no broker behind it. */
+const fakeAgent = (options, peers = []) => ({
+  root: options.root ?? "agents",
+  agentId: options.agentId,
+  capabilities: () => options.capabilities ?? [],
+  peers: () => peers,
+  serve() { return this; },
+  ask: async () => ({}),
+  close: async () => {},
+});
+
+t("several meshes: the same mesh listed twice is refused", async () => {
+  // Both memberships derive one client id from one host, root and agentId, so
+  // the broker would kick each in turn for as long as they both ran.
+  await assert.rejects(
+    () => connectAll({
+      agentId: "reviewer",
+      meshes: [
+        { root: "agents", broker: "mqtt://localhost:1883" },
+        { root: "agents", broker: "mqtt://localhost:1883" },
+      ],
+    }),
+    /listed twice.*client id/s,
+  );
+});
+
+t("several meshes: one root on two brokers is allowed, and has to be named", async () => {
+  // `agents` is the default root, so a laptop's own mesh and a customer's are
+  // both called that more often than not. Two brokers is two meshes — what
+  // cannot stand is two answers to on("agents").
+  await assert.rejects(
+    () => connectAll({
+      agentId: "reviewer",
+      meshes: [
+        { root: "agents", broker: "mqtt://localhost:1883" },
+        { root: "agents", broker: "mqtt://elsewhere:1883" },
+      ],
+    }),
+    /both called "agents".*distinct `name`/s,
+  );
+
+  const opened = [];
+  const meshes = await connectAll({
+    agentId: "reviewer",
+    meshes: [
+      { name: "home", root: "agents", broker: "mqtt://localhost:1883" },
+      { name: "customer", root: "agents", broker: "mqtt://elsewhere:1883" },
+    ],
+  }, { connect: async (o) => { opened.push(o.broker); return fakeAgent(o); } });
+
+  assert.deepEqual(meshes.names(), ["home", "customer"]);
+  assert.deepEqual(opened, ["mqtt://localhost:1883", "mqtt://elsewhere:1883"],
+    "each membership opens its own connection, to its own broker");
+});
+
+t("several meshes: offering a capability this agent does not have is refused", async () => {
+  // A typo here reads exactly like a mesh meant to be quiet: it would advertise
+  // nothing, serve nothing, and say nothing about why.
+  await assert.rejects(
+    () => connectAll({
+      agentId: "reviewer",
+      capabilities: [{ service: "code.review" }],
+      meshes: [{ root: "agents", broker: "mqtt://localhost:1883", offer: ["code.reviewe"] }],
+    }),
+    /offers "code\.reviewe".*does not declare.*code\.review/s,
+  );
+});
+
+t("several meshes: an offer is not checked when nothing was declared", async () => {
+  // serve() supplies the capabilities later, so refusing here would refuse a
+  // correct config.
+  const meshes = await connectAll({
+    agentId: "reviewer",
+    meshes: [{ root: "agents", broker: "mqtt://localhost:1883", offer: ["arrives.later"] }],
+  }, { connect: async (o) => fakeAgent(o) });
+  assert.deepEqual(meshes.names(), ["agents"]);
+});
+
+t("several meshes: only the offered capabilities reach a mesh", async () => {
+  const declared = [{ service: "code.review" }, { service: "deploy.prod" }];
+  const got = {};
+  await connectAll({
+    agentId: "reviewer",
+    capabilities: declared,
+    meshes: [
+      { name: "ours", root: "acme/agents", broker: "mqtt://a:1883" },
+      { name: "theirs", root: "agents", broker: "mqtt://b:1883", offer: ["code.review"] },
+    ],
+  }, {
+    connect: async (o) => { got[o.root] = (o.capabilities ?? []).map((c) => c.service); return fakeAgent(o); },
+  });
+
+  assert.deepEqual(got["acme/agents"], ["code.review", "deploy.prod"], "no offer means all of them");
+  assert.deepEqual(got["agents"], ["code.review"],
+    "deploy.prod must not be advertised on a mesh that was not offered it");
+});
+
+t("several meshes: serve reaches every mesh that will have the capability", async () => {
+  const servedOn = [];
+  const meshes = await connectAll({
+    agentId: "reviewer",
+    capabilities: [{ service: "code.review" }, { service: "deploy.prod" }],
+    meshes: [
+      { name: "ours", root: "acme/agents", broker: "mqtt://a:1883" },
+      { name: "theirs", root: "agents", broker: "mqtt://b:1883", offer: ["code.review"] },
+    ],
+  }, {
+    connect: async (o) => ({
+      ...fakeAgent(o),
+      serve(service) { servedOn.push(`${o.root}:${service}`); return this; },
+    }),
+  });
+
+  meshes.serve("code.review", () => ({}));
+  meshes.serve("deploy.prod", () => ({}));
+  assert.deepEqual(servedOn.sort(), ["acme/agents:code.review", "acme/agents:deploy.prod", "agents:code.review"]);
+
+  // A mesh with no `offer` takes everything, so this only bites where every
+  // mesh named an offer without it — and there, serving would advertise the
+  // capability nowhere at all, silently.
+  const narrowed = await connectAll({
+    agentId: "reviewer",
+    meshes: [
+      { name: "ours", root: "acme/agents", broker: "mqtt://a:1883", offer: ["code.review"] },
+      { name: "theirs", root: "agents", broker: "mqtt://b:1883", offer: ["code.review"] },
+    ],
+  }, { connect: async (o) => fakeAgent(o) });
+  assert.throws(() => narrowed.serve("nothing.takes.this", () => ({})), /no mesh here offers/);
+});
+
+t("several meshes: a mesh that will not open takes the others down with it", async () => {
+  // Half-joined is the silent degradation this project designs against: the
+  // agent serves one mesh while its operator believes it serves two, and the
+  // mesh it never reached shows no sign of it at all.
+  const closed = [];
+  await assert.rejects(
+    () => connectAll({
+      agentId: "reviewer",
+      meshes: [
+        { name: "up", root: "a", broker: "mqtt://localhost:1883" },
+        { name: "down", root: "b", broker: "mqtt://unreachable:1883" },
+      ],
+    }, {
+      connect: async (o) => {
+        if (o.root === "b") throw new Error("cannot reach mqtt://unreachable:1883");
+        return { ...fakeAgent(o), close: async () => { closed.push(o.root); } };
+      },
+    }),
+    /cannot reach/,
+  );
+  assert.deepEqual(closed, ["a"], "the mesh that did open must be closed again, not left joined");
+});
+
+t("several meshes: there is no way to ask across one", async () => {
+  // Delegation belongs to one mesh, and the API says so by having nowhere to
+  // express the alternative: reaching a peer goes through on(name).
+  const meshes = await connectAll({
+    agentId: "reviewer",
+    meshes: [{ root: "agents", broker: "mqtt://localhost:1883" }],
+  }, { connect: async (o) => fakeAgent(o) });
+
+  for (const absent of ["ask", "invoke", "find", "cancel", "waitForPeer"]) {
+    assert.equal(meshes[absent], undefined, `connectAll must not expose ${absent}() above a mesh`);
+  }
+  assert.equal(typeof meshes.on("agents").ask, "function", "the mesh's own agent still has it");
+});
+
+t("several meshes: peers carry the mesh they are on", async () => {
+  // An agentId is unique within a mesh and nowhere else, so an untagged list
+  // would put two different `dba`s under one name and let the wrong one be
+  // picked.
+  const meshes = await connectAll({
+    agentId: "reviewer",
+    meshes: [
+      { name: "ours", root: "acme/agents", broker: "mqtt://a:1883" },
+      { name: "theirs", root: "agents", broker: "mqtt://b:1883" },
+    ],
+  }, {
+    connect: async (o) => fakeAgent(o, [{ agentId: "dba", capabilities: [{ service: "schema.review" }] }]),
+  });
+
+  assert.deepEqual(meshes.peers().map((p) => `${p.mesh}/${p.agentId}`), ["ours/dba", "theirs/dba"]);
 });
 
 // ── plexus-agent: broker rules ──────────────────────────
@@ -484,6 +673,98 @@ if (!reachable) {
     assert.equal(res.type, "error");
     assert.match(res.error, /unknown service/);
     await Promise.all([c.close(), a.close()]);
+  });
+
+  t("end to end: a job asks the mesh it arrived on, never the other one", async () => {
+    // Two meshes, each with an agent called `dba`. An agentId is unique within
+    // a mesh and nowhere else, so this is the case a merged peer directory gets
+    // wrong — and it gets it wrong silently, by picking one.
+    const meshA = `${root}-ma`, meshB = `${root}-mb`;
+    const dbaA = await connect({ broker: brokerUrl, root: meshA, agentId: "dba" });
+    const dbaB = await connect({ broker: brokerUrl, root: meshB, agentId: "dba" });
+    dbaA.serve("schema.review", () => ({ answeredBy: "A" }));
+    dbaB.serve("schema.review", () => ({ answeredBy: "B" }));
+
+    const reviewer = await connectAll({
+      agentId: "reviewer",
+      capabilities: [{ service: "code.review" }],
+      meshes: [
+        { name: "A", root: meshA, broker: brokerUrl },
+        { name: "B", root: meshB, broker: brokerUrl },
+      ],
+    });
+    // One handler, on both meshes. Which `dba` it reaches is decided by the
+    // mesh the job arrived on, not by anything the handler says.
+    reviewer.serve("code.review", async (job, ctx) => ctx.askAny("schema.review", {}));
+    for (const name of reviewer.names()) await reviewer.on(name).waitForPeer("schema.review", 5000);
+
+    const alice = await connect({ broker: brokerUrl, root: meshA, agentId: "alice", durable: false });
+    const bob = await connect({ broker: brokerUrl, root: meshB, agentId: "bob", durable: false });
+    await alice.waitForPeer("code.review", 5000);
+    await bob.waitForPeer("code.review", 5000);
+
+    assert.equal((await alice.invoke("reviewer", "code.review", {})).answeredBy, "A");
+    assert.equal((await bob.invoke("reviewer", "code.review", {})).answeredBy, "B");
+
+    await Promise.all([alice.close(), bob.close(), reviewer.close(), dbaA.close(), dbaB.close()]);
+  });
+
+  t("end to end: an agent that dies goes offline on every mesh it joined", async () => {
+    // One connection per mesh is not an optimisation left undone. MQTT carries
+    // one will per connection, so a single connection spanning two roots could
+    // announce its death on only one of them — and the other would keep a
+    // retained profile saying `online` and go on being sent work.
+    const meshA = `${root}-wa`, meshB = `${root}-wb`;
+    const ghost = await connectAll({
+      agentId: "ghost",
+      capabilities: [{ service: "haunt" }],
+      meshes: [
+        { name: "A", root: meshA, broker: brokerUrl },
+        { name: "B", root: meshB, broker: brokerUrl },
+      ],
+    });
+    const watchA = await connect({ broker: brokerUrl, root: meshA, agentId: "watch-a", durable: false });
+    const watchB = await connect({ broker: brokerUrl, root: meshB, agentId: "watch-b", durable: false });
+    await watchA.waitForPeer("haunt", 5000);
+    await watchB.waitForPeer("haunt", 5000);
+
+    // Not close(), which withdraws the profile politely. This is the process
+    // being killed, which is the case a will exists for.
+    for (const agent of ghost.all()) agent.client.end(true);
+    await new Promise((r) => setTimeout(r, 900));
+
+    assert.equal(watchA.find("haunt"), null, "the broker must publish the will on the first mesh");
+    assert.equal(watchB.find("haunt"), null, "and on the second, which one shared connection could not do");
+    await Promise.all([watchA.close(), watchB.close()]);
+  });
+
+  t("end to end: a capability left out of a mesh's offer is not served there", async () => {
+    const meshA = `${root}-oa`, meshB = `${root}-ob`;
+    const reviewer = await connectAll({
+      agentId: "reviewer",
+      capabilities: [{ service: "code.review" }, { service: "deploy.prod" }],
+      meshes: [
+        { name: "ours", root: meshA, broker: brokerUrl },
+        { name: "theirs", root: meshB, broker: brokerUrl, offer: ["code.review"] },
+      ],
+    });
+    reviewer.serve("code.review", () => ({ ok: true }));
+    reviewer.serve("deploy.prod", () => ({ deployed: true }));
+
+    const outsider = await connect({ broker: brokerUrl, root: meshB, agentId: "outsider", durable: false });
+    await outsider.waitForPeer("code.review", 5000);
+
+    const profile = outsider.peers().find((p) => p.agentId === "reviewer");
+    assert.deepEqual(profile.capabilities.map((c) => c.service), ["code.review"],
+      "deploy.prod must not be advertised on a mesh that was not offered it");
+
+    // Withheld rather than merely unadvertised: it is not served here either,
+    // so asking for it anyway is refused like any unknown service.
+    const refused = await outsider.invoke("reviewer", "deploy.prod", {}, { timeoutMs: 8000 });
+    assert.equal(refused.type, "error");
+    assert.match(refused.error, /unknown service/);
+
+    await Promise.all([outsider.close(), reviewer.close()]);
   });
 
   t("end to end v1.4: an invoke carrying its owner in the topic is served", async () => {
