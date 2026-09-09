@@ -198,7 +198,8 @@ export default definePluginEntry({
         const inst = all.forTopic(params.topic);
         if (!inst) {
           return { content: [{ type: "text" as const, text:
-            `Refused: ${params.topic} is not on any mesh this agent is on (${all.names().join(", ")}). ` +
+            `Refused: ${params.topic} is not on any mesh this agent is on ` +
+            `(${all.instances().map((i) => `${i.name} (${i.conf.mesh.root})`).join(", ")}). ` +
             `A topic starts with its mesh root.` }], isError: true };
         }
         const refusal = inst.active.refuse(params.topic);
@@ -398,14 +399,25 @@ export default definePluginEntry({
       return;
     }
     const byMesh = new Map(instances.map((i) => [i.name, i]));
+    // Resolved most-specific-first; see forTopic.
+    const byLongestRoot = [...instances].sort((a, b) => b.conf.mesh.root.length - a.conf.mesh.root.length);
 
     // The tools reach whichever mesh the work is on through this. Registered in
     // every session, so they resolve at call time rather than closing over one
     // registration's state.
     globalAny[ACTIVE_SLOT] = {
-      /** Which mesh a topic belongs to. A topic names its root, so nothing has to be guessed. */
+      /**
+       * Which mesh a topic belongs to.
+       *
+       * A topic names its root — but one root can be a prefix of another, and
+       * `agents` is the default, so an agent on `agents` and `agents/staging`
+       * had every staging topic resolve to `agents` on config order alone and
+       * publish it down the wrong connection. Longest root first: the most
+       * specific root that matches is the one that owns the topic, which is
+       * the same rule MQTT itself uses to read a topic left to right.
+       */
       forTopic(topic: string) {
-        return instances.find((i) => topic === i.conf.mesh.root || topic.startsWith(`${i.conf.mesh.root}/`));
+        return byLongestRoot.find((i) => topic === i.conf.mesh.root || topic.startsWith(`${i.conf.mesh.root}/`));
       },
       byName(name?: string) {
         if (name) return byMesh.get(name);

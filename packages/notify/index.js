@@ -27,7 +27,7 @@
  */
 
 import { definePlugin } from "plexus-agent/plugin";
-import { readFile, writeFile, rename } from "node:fs/promises";
+import { readFile, writeFile, rename, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { plan } from "./routes.js";
 import { loadChannels, redact } from "./channels.js";
@@ -63,6 +63,30 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * to an empty one, find every retained result unfamiliar, and re-deliver the
  * whole backlog — which is the failure this log exists to prevent.
  */
+/**
+ * Say so when a delivery log this plugin once wrote is about to be ignored.
+ *
+ * Only on the way down: a host that has stopped being multi-mesh reads the
+ * unsuffixed path again, and the suffixed one beside it is the history it
+ * actually has. Nothing here chooses that file — it belongs to a mesh this
+ * instance may no longer be serving — but a re-delivered backlog with no
+ * explanation is worse than one that was announced.
+ */
+export async function warnOfStrandedLog(chosen, configured, ctx = {}, log = () => {}) {
+  if (chosen !== configured || !ctx.mesh?.name) return false;
+  const stranded = perMeshFile(configured, ctx.mesh.name);
+  if (stranded === chosen) return false;
+  try {
+    await stat(stranded);
+  } catch {
+    return false;                      // nothing there: the ordinary case
+  }
+  log(`${stranded} holds what was already delivered on ${ctx.mesh.name}, and this agent is now ` +
+      `on one mesh so ${configured} is read instead. Anything retained will be delivered again ` +
+      `once. Rename it over ${configured} to keep that history.`);
+  return true;
+}
+
 export function statePathFor(path, ctx = {}) {
   const meshes = ctx.meshes ?? [];
   if (meshes.length < 2 || !ctx.mesh?.name) return path;
@@ -163,7 +187,15 @@ export default definePlugin({
 
     const channels = loadChannels(cfg.channels);
     const routes = cfg.routes ?? [];
-    const deliveryLog = await new DeliveryLog(statePathFor(cfg.state, ctx), cfg).load();
+    const statePath = statePathFor(cfg.state, ctx);
+    // Going the other way — an agent that was on two meshes and is now on one —
+    // switches back to the unsuffixed path, which is a log this plugin has
+    // never written to. Everything retained then looks unfamiliar and the whole
+    // backlog goes out again, which is the one failure this log exists to
+    // prevent. It cannot be fixed by picking the other path (that one is a
+    // different mesh's history), so it is said out loud instead.
+    await warnOfStrandedLog(statePath, cfg.state, ctx, log);
+    const deliveryLog = await new DeliveryLog(statePath, cfg).load();
 
     // What was asked, remembered per job.
     //

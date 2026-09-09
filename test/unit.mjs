@@ -33,7 +33,7 @@ const { createVarStore, maskValue } = await import(dist("mesh/vars.js"));
 const { createAuth } = await import(dist("http/auth.js"));
 const { resolveConfig, resolveMeshes, perMeshFile, resolveEnvRef, DEFAULTS, deploymentDir } = await import(dist("config.js"));
 const { createCatalog } = await import(dist("mesh/catalog.js"));
-const { startMeshes } = await import(dist("mesh/instance.js"));
+const { startMeshes, offering } = await import(dist("mesh/instance.js"));
 // Reaching across to a package deliberately: see the parity test below.
 const { perMeshFile: notifyPerMeshFile } = await import("plexus-notify");
 const { createRegistry } = await import(dist("mesh/registry.js"));
@@ -276,6 +276,57 @@ t("v1.4: what is not an owner-scoped invoke topic is not read as one", () => {
   assert.equal(invokeTopicOwner(R, "reviewer", `${R}/commands/other/invoke/ci`), null,
     "another agent's invoke topic is not ours");
   assert.equal(invokeTopicOwner(R, "reviewer", `${R}/commands/reviewer/cancel`), null);
+});
+
+t("a nested root resolves to the most specific mesh, not to config order", () => {
+  // `agents` is the default root, so an agent on `agents` and `agents/staging`
+  // needs no unusual config — and with a plain prefix match every staging topic
+  // resolved to `agents` and would have been published down its connection.
+  const instances = [
+    { name: "wide", conf: { mesh: { root: "agents" } } },
+    { name: "staging", conf: { mesh: { root: "agents/staging" } } },
+  ];
+  const byLongestRoot = [...instances].sort((a, b) => b.conf.mesh.root.length - a.conf.mesh.root.length);
+  const forTopic = (topic) => byLongestRoot.find(
+    (i) => topic === i.conf.mesh.root || topic.startsWith(`${i.conf.mesh.root}/`));
+
+  assert.equal(forTopic("agents/staging/box").name, "staging");
+  assert.equal(forTopic("agents/staging/jobs/alice/j1/result").name, "staging");
+  assert.equal(forTopic("agents/box").name, "wide");
+  assert.equal(forTopic("agents/jobs/alice/j1/result").name, "wide");
+  assert.equal(forTopic("other/jobs/x"), undefined, "a topic on no mesh belongs to no mesh");
+});
+
+t("several meshes: the subagent session key is per mesh", () => {
+  // Review and postmortem runs are keyed on it, and it is the fallback dispatch
+  // target on a runtime with no subagent API — so two meshes sharing it would
+  // run those into one session.
+  const plugin = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-"));
+  const many = resolveMeshes({
+    broker: { url: "mqtt://x:1883" },
+    meshes: [{ root: "acme/agents" }, { root: "agents" }],
+  }, plugin);
+  assert.equal(many[0].conf.sessionKey, "agent:main:main:acme-agents");
+  assert.equal(many[1].conf.sessionKey, "agent:main:main:agents");
+
+  // Untouched on one mesh, on the same rule historyFile follows.
+  const one = resolveMeshes({ broker: { url: "mqtt://x:1883" } }, plugin);
+  assert.equal(one[0].conf.sessionKey, DEFAULTS.sessionKey);
+});
+
+t("an offer naming a capability the catalog lacks is reported, not swallowed", async () => {
+  // The library refuses this outright. Here the catalog is a file an operator
+  // edits while the agent runs, so a name absent now may arrive in a minute —
+  // reported rather than refused, but never silent: a typo otherwise reads
+  // exactly like a mesh meant to be quiet.
+  const said = [];
+  const base = { read: () => ({ capabilities: [{ service: "code.review" }] }) };
+  const narrowed = offering(base, ["code.review", "code.reviewe"], (m) => said.push(m.join(",")));
+
+  assert.deepEqual(narrowed.read().capabilities.map((c) => c.service), ["code.review"]);
+  assert.deepEqual(said, ["code.reviewe"]);
+  narrowed.read(); narrowed.read();
+  assert.equal(said.length, 1, "said once, not on every publish");
 });
 
 t("the two copies of perMeshFile answer the same question the same way", () => {

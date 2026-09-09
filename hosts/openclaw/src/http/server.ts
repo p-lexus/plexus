@@ -194,7 +194,7 @@ export function createHttpHandler(deps: HttpDeps) {
         }
         const err = removing ? vars.remove(name) : vars.set(name, String(body.value));
         if (err) { sendJson(res, 500, { ok: false, error: err }); return true; }
-        sse.broadcast("status", { mesh: mesh!.name, ...mesh!.snapshot() });
+        sse.broadcast("status", { ...mesh!.snapshot(), mesh: mesh!.name });
         sendJson(res, 200, { ok: true, name, removed: removing });
         return true;
       }

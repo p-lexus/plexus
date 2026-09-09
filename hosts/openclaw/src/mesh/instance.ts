@@ -99,14 +99,33 @@ export interface ActiveInstance {
  * Writes are not filtered. There is one catalog and the panel edits it; a mesh
  * gets a narrower view of it, not a copy of its own to drift.
  */
-export function offering(catalog: Catalog, offer: string[] | null): Catalog {
+export function offering(
+  catalog: Catalog,
+  offer: string[] | null,
+  onMissing: (services: string[]) => void = () => {},
+): Catalog {
   if (!offer) return catalog;
   const allowed = new Set(offer);
+  let reported = "";
   return {
     ...catalog,
     read: () => {
       const svc = catalog.read();
-      return { ...svc, capabilities: (svc.capabilities ?? []).filter((c) => allowed.has(c.service)) };
+      const capabilities = (svc.capabilities ?? []).filter((c) => allowed.has(c.service));
+
+      // An offer naming a capability the catalog does not have advertises
+      // nothing and says nothing about why — a typo reads exactly like a mesh
+      // meant to be quiet. connectAll refuses this outright; here the catalog
+      // is a file an operator edits while the agent runs, so a name that is
+      // absent now may arrive in a minute. Reported rather than refused, and
+      // only when the answer changes, because this is read on every publish.
+      const missing = offer.filter((s) => !(svc.capabilities ?? []).some((c) => c.service === s));
+      const seen = missing.join(",");
+      if (seen !== reported) {
+        reported = seen;
+        if (missing.length) onMissing(missing);
+      }
+      return { ...svc, capabilities };
     },
   };
 }
@@ -154,7 +173,10 @@ type NotAList<T> = T extends readonly unknown[] ? never : T;
 export function createMeshInstance(membership: Membership, shared: SharedDeps): MeshInstance {
   const { conf, name: meshName } = membership;
   const { logger, pluginDir, vars, sse, auth, runtime } = shared;
-  const catalog = offering(shared.catalog, membership.offer);
+  const catalog = offering(shared.catalog, membership.offer, (missing) =>
+    logger.info(
+      `[mesh] ${meshName} offers ${missing.join(", ")}, which the catalog does not have — ` +
+      `nothing is advertised for ${missing.length > 1 ? "them" : "it"} on this mesh`));
 
   // Every broadcast says which mesh it is about. The panel shows several, and
   // an event that did not say would be attributed to whichever one the reader

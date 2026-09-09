@@ -11,7 +11,7 @@
 
 import assert from "node:assert/strict";
 import net from "node:net";
-import { readFile, rm } from "node:fs/promises";
+import { readFile, rm, writeFile, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -20,7 +20,7 @@ import { aclFor, permits, topicMatches } from "plexus-agent/acl";
 import { get, testCondition, matches, render, plan, deliveryContext } from "plexus-notify/routes";
 import { expandEnv, redact, loadChannels } from "plexus-notify/channels";
 import { createHost, definePlugin } from "plexus-agent/plugin";
-import notifyPlugin, { statePathFor } from "plexus-notify";
+import notifyPlugin, { statePathFor, warnOfStrandedLog } from "plexus-notify";
 
 let pass = 0, fail = 0;
 const queue = [];
@@ -597,6 +597,31 @@ t("an unknown channel type is rejected at load, not at delivery", () => {
 
 t("disabled channels are skipped", () => {
   assert.equal(loadChannels({ slack: { type: "slack", enabled: false } }).size, 0);
+});
+
+t("notify: dropping back to one mesh says the old delivery log is being left behind", async () => {
+  // The bomb only goes off on the way down. An agent that was on two meshes and
+  // is now on one reads the unsuffixed path — a log this plugin never wrote —
+  // finds every retained result unfamiliar, and delivers the whole backlog
+  // again. Nothing can pick the other file for it (that history belongs to a
+  // mesh it may no longer serve), so it has to be said out loud.
+  const dir = await mkdtemp(join(tmpdir(), "notify-downgrade-"));
+  const configured = join(dir, "notify.state.json");
+  const single = { mesh: { name: "acme/agents" }, meshes: ["acme/agents"] };
+
+  assert.equal(await warnOfStrandedLog(configured, configured, single, () => {}), false,
+    "with no stranded log there is nothing to say");
+
+  await writeFile(join(dir, "notify.state.acme-agents.json"), "{}");
+  const said = [];
+  assert.equal(await warnOfStrandedLog(configured, configured, single, (m) => said.push(m)), true);
+  assert.match(said[0], /acme-agents.*delivered again once/s);
+
+  // On two meshes the suffixed path IS the one in use, so there is nothing stranded.
+  const many = { mesh: { name: "acme/agents" }, meshes: ["acme/agents", "agents"] };
+  const chosen = statePathFor(configured, many);
+  assert.equal(await warnOfStrandedLog(chosen, configured, many, () => {}), false);
+  await rm(dir, { recursive: true, force: true });
 });
 
 t("notify: one mesh keeps the state path it has always used", () => {

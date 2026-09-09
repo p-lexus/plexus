@@ -240,6 +240,15 @@ export function resolveMeshes(cfg: Partial<PluginConfig>, pluginDir: string): Me
       offer: offer ? [...offer] : null,
       conf: {
         ...conf,
+        // The subagent sessions a mesh starts for a review or a postmortem are
+        // keyed on this, so two meshes sharing it would run those into one
+        // session — and it is also the fallback dispatch target on a runtime
+        // with no subagent API, where sharing it would put two meshes' jobs in
+        // one place. Suffixed on the same rule as historyFile, and for the same
+        // reason: untouched when there is one mesh.
+        sessionKey: entries.length > 1
+          ? `${conf.sessionKey}:${slugOf(label)}`
+          : conf.sessionKey,
         mesh: {
           ...conf.mesh,
           // History is keyed by jobId, and a jobId is unique within a mesh and
@@ -256,9 +265,14 @@ export function resolveMeshes(cfg: Partial<PluginConfig>, pluginDir: string): Me
   });
 }
 
+/** A mesh name as it can appear in a file name or a session key. */
+function slugOf(meshName: string): string {
+  return meshName.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
 /** `jobs.local.json` + `acme/agents` -> `jobs.local.acme-agents.json`. */
 export function perMeshFile(file: string, meshName: string): string {
-  const slug = meshName.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  const slug = slugOf(meshName);
   const dot = file.lastIndexOf(".");
   const cut = dot > Math.max(file.lastIndexOf("/"), file.lastIndexOf("\\")) ? dot : file.length;
   return `${file.slice(0, cut)}.${slug}${file.slice(cut)}`;
