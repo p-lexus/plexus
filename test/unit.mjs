@@ -33,7 +33,7 @@ const { createVarStore, maskValue } = await import(dist("mesh/vars.js"));
 const { createAuth } = await import(dist("http/auth.js"));
 const { resolveConfig, resolveMeshes, perMeshFile, resolveEnvRef, DEFAULTS, deploymentDir } = await import(dist("config.js"));
 const { createCatalog } = await import(dist("mesh/catalog.js"));
-const { startMeshes, offering } = await import(dist("mesh/instance.js"));
+const { startMeshes, offering, createMeshInstance } = await import(dist("mesh/instance.js"));
 // Reaching across to a package deliberately: see the parity test below.
 const { perMeshFile: notifyPerMeshFile } = await import("plexus-notify");
 const { createRegistry } = await import(dist("mesh/registry.js"));
@@ -1080,7 +1080,7 @@ t("cancelling a parent cancels what it delegated, and tells the peer", async () 
 
 const { createHttpHandler } = await import(dist("http/server.js"));
 
-function panelHarness(meshNames = ["agents"], sse = {}) {
+function panelHarness(meshNames = ["agents"], sse = {}, viewOverrides = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-panel-"));
   fs.writeFileSync(path.join(dir, "index.html"), "<html>panel</html>");
   fs.writeFileSync(path.join(dir, "theme.css"), ":root{--ink:#dce5e2}");
@@ -1093,8 +1093,9 @@ function panelHarness(meshNames = ["agents"], sse = {}) {
     dispatcher: {}, registry: { buildProfile: () => ({ agentId: name }) },
     snapshot: () => ({ meshRoot: name }),
     profileWithBroker: () => ({ mesh: name }),
-    peers: () => [],
+    peers: { list: () => [], size: 0 },
     fileVerdict: () => null,
+    ...viewOverrides,
   }));
 
   const handle = createHttpHandler({
@@ -1123,6 +1124,110 @@ async function fetchPath(handle, url) {
   await handle(req, res);
   return { code, type: head["Content-Type"], body: Buffer.concat(chunks.map(Buffer.from)).toString() };
 }
+
+t("an SSE attach that throws closes the stream instead of ending the process", async () => {
+  // The one path with headersSent semantics, and the only route the loop above
+  // does not reach. A stream has already sent its headers by the time a
+  // throwing member is touched, so it cannot be turned back into a 500 — the
+  // guard has to close it instead, and must not throw doing so.
+  let ended = false;
+  const h = panelHarness(["agents"], {
+    // attach() writes the head, then reads the initial payloads — so this
+    // throws after the response has started, which is the case being pinned.
+    attach: (_res, initial) => { for (const [, data] of initial) JSON.stringify(data); return () => {}; },
+  }, {
+    peers: { list: () => { throw new Error("the peer registry went bad mid-stream"); }, size: 0 },
+  });
+
+  const req = Object.assign(Readable.from([]), { url: "/api/events", method: "GET", headers: {}, on() {} });
+  const res = {
+    headersSent: true,                       // the stream is already open
+    writeHead() { return res; },
+    end() { ended = true; },
+    setHeader() {},
+  };
+
+  // The point of the assertion: this resolves rather than rejecting. An
+  // unhandled rejection here is what ended the gateway.
+  await h.handle(req, res);
+  assert.equal(ended, true, "a stream that cannot be answered is closed, not left open");
+});
+
+t("a throwing panel route answers 500 instead of ending the process", async () => {
+  // What actually took the gateway down was not only the missing method: the
+  // server ran routes as `void handle(req, res)` with nothing catching them, so
+  // any throw became an unhandled rejection and Node ended the process — taking
+  // every other plugin the gateway was running with it. A console on loopback
+  // must not have that blast radius.
+  const h = panelHarness(["agents"], {}, {
+    snapshot: () => { throw new Error("a mesh view went bad"); },
+  });
+
+  const r = await fetchPath(h.handle, "/api/status");
+  assert.equal(r.code, 500, "the route answers rather than throwing past the server");
+  assert.match(JSON.parse(r.body).error, /failed to answer/);
+
+  // And the next request is still served: nothing about this is terminal.
+  const ok = await fetchPath(h.handle, "/api/meshes");
+  assert.equal(ok.code, 200);
+});
+
+t("a real mesh instance answers everything the panel calls on it", async () => {
+  // This is the test that was missing when the panel shipped calling
+  // profileWithBroker() and peers() on an object that had neither: the harness
+  // below hand-built the shape the handler wanted, so it proved the handler
+  // worked against a fiction. Here the panel is driven against the object
+  // register() actually hands it.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "plexus-instance-"));
+  fs.writeFileSync(path.join(dir, "services.json"), JSON.stringify({ capabilities: [{ service: "code.review" }] }));
+  fs.writeFileSync(path.join(dir, "index.html"), "<html>panel</html>");
+
+  // A broker that is not there: the instance is built before it connects, and
+  // transport retries in the background. Nothing here needs it to answer.
+  const [membership] = resolveMeshes({
+    broker: { url: "mqtt://127.0.0.1:1" },
+    mesh: { root: "agents", agentId: "reviewer", servicesFile: path.join(dir, "services.json"),
+            historyFile: path.join(dir, "jobs.local.json") },
+    web: { dir },
+  }, dir);
+
+  const instance = createMeshInstance(membership, {
+    logger: quietLogger, runtime: {}, pluginDir: dir,
+    catalog: createCatalog(path.join(dir, "services.json"), quietLogger),
+    vars: createVarStore(path.join(dir, "mesh.local.json"), {}, quietLogger),
+    sse: { attach: () => () => {}, broadcast() {}, closeAll() {}, size: 0 },
+    auth: createAuth(""),
+  });
+
+  try {
+    // Exactly what index.ts passes, and exactly what the panel calls on it.
+    for (const method of ["snapshot", "profileWithBroker", "fileVerdict"]) {
+      assert.equal(typeof instance[method], "function", `the panel calls ${method}() on this`);
+    }
+    assert.ok(instance.profileWithBroker().broker, "the profile view needs the link's state");
+    // `peers` is the registry, not a function: the routes call .list(), and
+    // snapshot() reads .size off the same object.
+    assert.equal(typeof instance.peers.list, "function", "the peers routes call peers.list()");
+    assert.ok(Array.isArray(instance.peers.list()), "the peers view needs a list");
+    assert.equal(typeof instance.peers.size, "number", "snapshot() reads peers.size");
+
+    // And through the real handler, the way a browser reaches it.
+    const handle = createHttpHandler({
+      cfg: membership.conf, logger: quietLogger,
+      auth: { configured: false, authorized: () => true, sameOrigin: () => true },
+      sse: { attach: () => () => {}, broadcast() {}, closeAll() {} },
+      vars: { value: () => "" },
+      meshes: { names: () => [instance.name], pick: (n) => (n && n !== instance.name ? undefined : instance) },
+    });
+    for (const route of ["/api/profile", "/api/peers", "/api/status", "/api/jobs"]) {
+      const r = await fetchPath(handle, route);
+      assert.equal(r.code, 200, `${route} must not throw — an unhandled rejection here kills the gateway`);
+    }
+  } finally {
+    instance.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 t("the peers event carries a list, not a list spread into an object", async () => {
   // The mesh tag is added by spreading, and an array IS an object: the first

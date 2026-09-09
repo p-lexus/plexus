@@ -32,26 +32,8 @@ const MIME: Record<string, string> = {
   ".ico": "image/x-icon",
 };
 
-/**
- * One mesh, as the panel needs it.
- *
- * Every route below acts on exactly one. An agent may be on several, and a job
- * id is unique within a mesh and nowhere else — so a route that took a job id
- * and no mesh would be a question with more than one answer.
- */
-export interface MeshView {
-  name: string;
-  /** This mesh's own configuration, not the panel's. */
-  conf: ResolvedConfig;
-  jobs: JobStore;
-  dispatcher: Dispatcher;
-  registry: Registry;
-  /** File a verdict on a delegated job. Returns why not, or null. */
-  fileVerdict(agent: string, jobId: string, verdict: string, said?: Said): string | null;
-  snapshot(): Record<string, unknown>;
-  profileWithBroker(): Record<string, unknown>;
-  peers(): unknown[];
-}
+export type { MeshView } from "../mesh/view.js";
+import type { MeshView } from "../mesh/view.js";
 
 export interface HttpDeps {
   /** Shared configuration: the panel's own settings. Never a mesh's. */
@@ -91,6 +73,25 @@ export function createHttpHandler(deps: HttpDeps) {
     sendJson(res, 403, { ok: false, error: "cross-origin request refused" });
 
   return async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+    try {
+      return await route(req, res);
+    } catch (e: any) {
+      // Answered here as well as at the server, because a route that throws
+      // must not depend on who called it to stay contained.
+      deps.logger.error(`panel request ${req.method} ${req.url} failed: ${e?.message ?? e}`);
+      // Both branches guarded, and symmetrically: a socket that died mid-
+      // response makes the reply itself throw, and a throw from inside the
+      // catch re-rejects — which is the failure this whole guard exists to
+      // stop, arrived at one layer further in.
+      try {
+        if (res.headersSent) res.end();
+        else sendJson(res, 500, { ok: false, error: "the panel failed to answer that request" });
+      } catch { /* the socket is gone; nothing left to say */ }
+      return true;
+    }
+  };
+
+  async function route(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
     const url = new URL(req.url ?? "/", "http://local");
     let p = url.pathname;
     // The panel is served twice: mounted under basePath inside the gateway, and
@@ -141,7 +142,7 @@ export function createHttpHandler(deps: HttpDeps) {
         ["status", tag(mesh!.snapshot())],
         ["profile", tag(mesh!.registry.buildProfile())],
         ["snapshot", tag({ active: [...mesh!.jobs.active], history: mesh!.jobs.recent() })],
-        ["peers", tag({ peers: mesh!.peers() })],
+        ["peers", tag({ peers: mesh!.peers.list() })],
       ]);
       req.on("close", detach);
       req.on("error", detach);
@@ -151,7 +152,7 @@ export function createHttpHandler(deps: HttpDeps) {
     // ── Read ──
     if (p === `${base}/api/profile`) { sendJson(res, 200, mesh!.profileWithBroker()); return true; }
     if (p === `${base}/api/status`) { sendJson(res, 200, mesh!.snapshot()); return true; }
-    if (p === `${base}/api/peers`) { sendJson(res, 200, { peers: mesh!.peers() }); return true; }
+    if (p === `${base}/api/peers`) { sendJson(res, 200, { peers: mesh!.peers.list() }); return true; }
     if (p === `${base}/api/jobs`) {
       sendJson(res, 200, { active: [...mesh!.jobs.active], history: mesh!.jobs.recent() });
       return true;
@@ -264,7 +265,27 @@ export function startHttpServer(deps: HttpDeps): { server: Server | null; handle
     deps.logger.info("web panel disabled (web.enabled=false)");
     return { server: null, handle };
   }
-  const server = createServer((req, res) => { void handle(req, res); });
+  // A throwing route must not be able to end the process.
+  //
+  // `void handle(...)` with nothing catching it makes any throw inside a route
+  // an unhandled rejection, and Node ends the process on those — so one bad
+  // panel request took the whole gateway down, and with it every other plugin
+  // the gateway was running. That is far too much blast radius for a console
+  // on loopback: the panel is a window onto the mesh, and a window that breaks
+  // should not burn the house down.
+  //
+  // Answered as a 500 where the response has not started, and simply closed
+  // where it has — an SSE stream has already sent its headers and cannot be
+  // turned back into an error.
+  const server = createServer((req, res) => {
+    void handle(req, res).catch((e: any) => {
+      deps.logger.error(`panel request ${req.method} ${req.url} failed: ${e?.message ?? e}`);
+      try {
+        if (res.headersSent) res.end();
+        else sendJson(res, 500, { ok: false, error: "the panel failed to answer that request" });
+      } catch { /* the socket is gone; nothing left to say */ }
+    });
+  });
   server.on("error", (e: any) => deps.logger.warn(`standalone UI port ${deps.cfg.web.port} failed: ${e.message}`));
   server.listen(deps.cfg.web.port, "127.0.0.1", () => {
     deps.logger.info(
