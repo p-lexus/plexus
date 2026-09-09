@@ -33,7 +33,7 @@ const { createVarStore, maskValue } = await import(dist("mesh/vars.js"));
 const { createAuth } = await import(dist("http/auth.js"));
 const { resolveConfig, resolveMeshes, perMeshFile, resolveEnvRef, DEFAULTS, deploymentDir } = await import(dist("config.js"));
 const { createCatalog } = await import(dist("mesh/catalog.js"));
-const { startMeshes, offering } = await import(dist("mesh/instance.js"));
+const { startMeshes, offering, createMeshInstance } = await import(dist("mesh/instance.js"));
 // Reaching across to a package deliberately: see the parity test below.
 const { perMeshFile: notifyPerMeshFile } = await import("plexus-notify");
 const { createRegistry } = await import(dist("mesh/registry.js"));
@@ -1093,7 +1093,7 @@ function panelHarness(meshNames = ["agents"], sse = {}, viewOverrides = {}) {
     dispatcher: {}, registry: { buildProfile: () => ({ agentId: name }) },
     snapshot: () => ({ meshRoot: name }),
     profileWithBroker: () => ({ mesh: name }),
-    peers: { list: () => [] },
+    peers: { list: () => [], size: 0 },
     fileVerdict: () => null,
     ...viewOverrides,
   }));
@@ -1173,11 +1173,15 @@ t("a real mesh instance answers everything the panel calls on it", async () => {
 
   try {
     // Exactly what index.ts passes, and exactly what the panel calls on it.
-    for (const method of ["snapshot", "profileWithBroker", "peers", "fileVerdict"]) {
+    for (const method of ["snapshot", "profileWithBroker", "fileVerdict"]) {
       assert.equal(typeof instance[method], "function", `the panel calls ${method}() on this`);
     }
     assert.ok(instance.profileWithBroker().broker, "the profile view needs the link's state");
-    assert.ok(Array.isArray(instance.peers()), "the peers view needs a list");
+    // `peers` is the registry, not a function: the routes call .list(), and
+    // snapshot() reads .size off the same object.
+    assert.equal(typeof instance.peers.list, "function", "the peers routes call peers.list()");
+    assert.ok(Array.isArray(instance.peers.list()), "the peers view needs a list");
+    assert.equal(typeof instance.peers.size, "number", "snapshot() reads peers.size");
 
     // And through the real handler, the way a browser reaches it.
     const handle = createHttpHandler({

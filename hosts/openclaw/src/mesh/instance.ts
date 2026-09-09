@@ -42,6 +42,7 @@ import { createRegistry } from "./registry.js";
 import { createPeerRegistry } from "./peers.js";
 import { createAskService } from "./ask.js";
 import type { SseHub } from "../http/sse.js";
+import type { MeshView } from "../http/server.js";
 import type { Auth } from "../http/auth.js";
 
 /**
@@ -59,20 +60,26 @@ export interface SharedDeps {
   auth: Auth;
 }
 
-/** One mesh, wired and running. */
-export interface MeshInstance {
-  name: string;
-  conf: ResolvedConfig;
-  /** What the mesh tools operate through — see ActiveInstance in index.ts. */
+/**
+ * One mesh, wired and running.
+ *
+ * It **extends MeshView**, which is what the panel needs from a mesh, and that
+ * is load-bearing rather than tidy: register() hands these objects straight to
+ * the panel, so the two shapes have to agree. Declared this way the compiler
+ * checks it here, where the object is built.
+ *
+ * It did not, and that is how a panel shipped calling two members no instance
+ * had. The check was not missing — it was erased at the call site, where one
+ * untyped `let` under strict:false made the whole list `any`, and `any` is
+ * assignable to anything. A contract that only holds where it is consumed is a
+ * contract one careless declaration can switch off.
+ */
+export interface MeshInstance extends MeshView {
+  /** What the mesh tools operate through — see ActiveMeshes in index.ts. */
   active: ActiveInstance;
-  snapshot(): any;
-  jobs: ReturnType<typeof createJobStore>;
-  dispatcher: ReturnType<typeof createDispatcher>;
-  registry: ReturnType<typeof createRegistry>;
+  /** The live peer directory. The panel reads .list(); snapshot() reads .size. */
   peers: ReturnType<typeof createPeerRegistry>;
-  profileWithBroker(): Record<string, unknown>;
   transport: ReturnType<typeof createTransport>;
-  fileVerdict(agent: string, jobId: string, verdict: Verdict, said?: Said): string | null;
   stop(): void;
 }
 
