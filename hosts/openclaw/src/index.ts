@@ -29,7 +29,7 @@ import type { Server } from "http";
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 
 import type { PluginConfig } from "./types.js";
-import { resolveConfig, resolveMeshes } from "./config.js";
+import { resolveConfig, resolveMeshes, withSavedBox } from "./config.js";
 import { deriveClientId } from "./mesh/transport.js";
 import { createSupervisor } from "./mesh/supervisor.js";
 import { watchRoster } from "./mesh/roster.js";
@@ -367,7 +367,10 @@ export default definePluginEntry({
     // variables and one panel however many meshes it is on: the capabilities
     // are the agent's, and `offer` decides which of them each mesh is told
     // about rather than giving each mesh a catalog of its own to drift.
-    const shared0 = resolveConfig(cfg, pluginDir);
+    // Where the panel says the box is, over what openclaw.json says. Applied
+    // once, here, so everything below resolves from the same answer.
+    let cfg0 = withSavedBox(cfg, pluginDir);
+    const shared0 = resolveConfig(cfg0, pluginDir);
     const catalog = createCatalog(
       shared0.mesh.servicesFile, logger, path.join(pluginDir, "services.example.json"),
     );
@@ -523,7 +526,9 @@ export default definePluginEntry({
 
       let fresh: Membership[];
       try {
-        fresh = resolveMeshes(cfg, pluginDir);
+        // Re-read, because the settings on disk are what just changed.
+        cfg0 = withSavedBox(cfg, pluginDir);
+        fresh = resolveMeshes(cfg0, pluginDir);
       } catch (e: any) {
         return e.message;
       }

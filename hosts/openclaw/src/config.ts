@@ -138,8 +138,14 @@ export function deploymentFile(name: string, pluginDir: string, exists = fs.exis
  * operator who typed a host into it has said where the box is, and a gateway
  * config edited months ago has not. Kept out of openclaw.json entirely so that
  * a credential never lands in the file people paste into issues.
+ *
+ * Applied by the caller, deliberately, rather than inside resolveConfig. A
+ * resolver that reads a file behind its caller's back is one whose answer
+ * depends on the machine it runs on: doing it there made every test resolve
+ * against whatever this operator had last saved, and two of them failed on a
+ * broker URL nobody in the test had written.
  */
-function withSavedBox(cfg: Partial<PluginConfig>, pluginDir: string): Partial<PluginConfig> {
+export function withSavedBox(cfg: Partial<PluginConfig>, pluginDir: string): Partial<PluginConfig> {
   const saved = readBox(deploymentFile("mesh.local.json", pluginDir));
   if (!saved.url && !saved.username && !saved.password) return cfg;
   return {
@@ -153,8 +159,7 @@ function withSavedBox(cfg: Partial<PluginConfig>, pluginDir: string): Partial<Pl
   };
 }
 
-export function resolveConfig(input: Partial<PluginConfig>, pluginDir: string): ResolvedConfig {
-  const cfg = withSavedBox(input, pluginDir);
+export function resolveConfig(cfg: Partial<PluginConfig>, pluginDir: string): ResolvedConfig {
   const mesh = cfg.mesh ?? {};
   const web = cfg.web ?? {};
   return {

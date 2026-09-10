@@ -390,7 +390,7 @@ async function loadMeshes() {
 
 function renderMeshPick() {
   const el = $('meshPick');
-  if (!el) return;
+  if (!el || typeof el.innerHTML !== 'string') return;
   // Hidden for one mesh: a picker with a single entry is a control that does
   // nothing, and every single-mesh deployment looked exactly as it did before.
   el.hidden = MESHES.length < 2;
@@ -1262,7 +1262,10 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-$('meshPick').addEventListener('change', (e) => switchMesh(e.target.value));
+// Optional-chained: the render check evaluates this script against a stub DOM
+// to prove every view renders, and a hard reference to a real element there is
+// a crash rather than a test result.
+$('meshPick')?.addEventListener?.('change', (e) => switchMesh(e.target.value));
 
 /* The mesh list is the box's answer and changes without anybody reloading the
    page: an agent joins a mesh the moment somebody grants it access. Polled on
