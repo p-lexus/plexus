@@ -13,6 +13,7 @@
  */
 
 import { readFile, writeFile, rm } from "node:fs/promises";
+import path from "node:path";
 import { existsSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -151,7 +152,10 @@ try {
     // is on the page when this expires, so too short means blank figures.
     "--virtual-time-budget=20000",
     `--print-to-pdf=${output}`,
-    `file://${process.cwd()}/${temp}`,
+    // Resolved, not concatenated: an absolute output path produced
+    // file:///…/plexus//Users/…, and Chrome printed its own "file couldn't
+    // be accessed" page into a PDF that looked like a successful render.
+    `file://${path.resolve(temp)}`,
   ], { maxBuffer: 1 << 26 });
 } finally {
   await rm(temp, { force: true });
