@@ -13,6 +13,9 @@ import { Readable } from "node:stream";
 
 const dist = (p) => new URL(`../dist/${p}`, import.meta.url).href;
 
+const { readMembership } = await import(dist("mesh/roster.js"));
+const { createSupervisor } = await import(dist("mesh/supervisor.js"));
+
 const { ownerScope, buildTopics, jobTopicPattern, parseJobTopic, escapeRe,
   peerInvokeTopicFor, invokeFilter, invokeTopicOwner,
   feedbackTopic, feedbackFilter, feedbackTopicOwner,
@@ -2112,6 +2115,142 @@ t("only the most recent lessons are carried", () => {
   const lines = renderLessons(many, "code.review").split("\n").filter((l) => l.startsWith("- "));
   assert.equal(lines.length, MAX_LESSONS);
   assert.match(lines[0], /lesson 0/, "newest first is the caller's order, kept as given");
+});
+
+
+// ── membership: what the box tells this agent it is on ──
+
+t("a membership message names the meshes to join", () => {
+  const got = readMembership(
+    JSON.stringify({ agent: "conan", meshes: ["4sale/global", "4sale/engineering"], at: "now" }),
+    "conan",
+  );
+  assert.deepEqual(got, ["4sale/global", "4sale/engineering"]);
+});
+
+t("an empty list is an answer, not an absence", () => {
+  // An agent taken off its last mesh is on nothing. Reading that as "no box
+  // spoke" would leave it connected to a mesh it was just removed from.
+  assert.deepEqual(readMembership(JSON.stringify({ agent: "conan", meshes: [] }), "conan"), []);
+});
+
+t("a message addressed to another agent is not about us", () => {
+  const got = readMembership(JSON.stringify({ agent: "someoneelse", meshes: ["a/b"] }), "conan");
+  assert.equal(got, null, "acting on it would join a mesh this agent has no grant on");
+});
+
+t("a wildcard in a root is dropped", () => {
+  // A root is a topic prefix and every filter is built from it. One wildcard
+  // here widens all of them, which is the single thing a root may never carry.
+  const got = readMembership(
+    JSON.stringify({ agent: "conan", meshes: ["4sale/global", "4sale/+", "#", "a/#"] }),
+    "conan",
+  );
+  assert.deepEqual(got, ["4sale/global"]);
+});
+
+t("the same mesh twice is one mesh", () => {
+  const got = readMembership(
+    JSON.stringify({ agent: "conan", meshes: ["a/b", "a/b", " a/b "] }),
+    "conan",
+  );
+  assert.deepEqual(got, ["a/b"], "two connections to one mesh is a client-id collision arranged in advance");
+});
+
+t("anything unreadable is ignored rather than acted on", () => {
+  for (const raw of ["", "not json", "[]", "null", '"a string"', "42",
+                     JSON.stringify({ agent: "conan" }),
+                     JSON.stringify({ agent: "conan", meshes: "a/b" })]) {
+    assert.equal(readMembership(raw, "conan"), null, `${raw} should be refused`);
+  }
+});
+
+t("entries that are not strings are skipped, and the rest still apply", () => {
+  const got = readMembership(
+    JSON.stringify({ agent: "conan", meshes: ["a/b", 42, null, { root: "c/d" }, "e/f"] }),
+    "conan",
+  );
+  assert.deepEqual(got, ["a/b", "e/f"]);
+});
+
+t("a message with no agent field is accepted — the topic already named us", () => {
+  assert.deepEqual(readMembership(JSON.stringify({ meshes: ["a/b"] }), "conan"), ["a/b"]);
+});
+
+// ── the supervisor: joining and leaving without a restart ──
+
+function fakeSupervisor() {
+  const started = [];
+  const stopped = [];
+  const build = (root) => ({ name: root, offer: null, conf: { mesh: { root } } });
+  const make = (m) => {
+    if (m.conf.mesh.root === "bad/mesh") throw new Error("refused");
+    started.push(m.conf.mesh.root);
+    return { stop() { stopped.push(m.conf.mesh.root); } };
+  };
+  return { sup: createSupervisor({}, quietLogger, build, make), started, stopped };
+}
+
+t("applying a list joins every mesh in it", () => {
+  const { sup, started } = fakeSupervisor();
+  sup.apply(["a/b", "a/c"]);
+  assert.deepEqual(started, ["a/b", "a/c"]);
+  assert.equal(sup.running().length, 2);
+});
+
+t("applying the same list again changes nothing", () => {
+  const { sup, started, stopped } = fakeSupervisor();
+  sup.apply(["a/b", "a/c"]);
+  sup.apply(["a/b", "a/c"]);
+  assert.deepEqual(started, ["a/b", "a/c"], "a republished list must not churn every connection");
+  assert.deepEqual(stopped, []);
+});
+
+t("a mesh added to the list is joined without touching the others", () => {
+  const { sup, started, stopped } = fakeSupervisor();
+  sup.apply(["a/b"]);
+  sup.apply(["a/b", "a/c"]);
+  assert.deepEqual(started, ["a/b", "a/c"]);
+  assert.deepEqual(stopped, [], "the mesh it was already on must keep its session");
+});
+
+t("a mesh dropped from the list is left", () => {
+  const { sup, stopped } = fakeSupervisor();
+  sup.apply(["a/b", "a/c"]);
+  sup.apply(["a/b"]);
+  assert.deepEqual(stopped, ["a/c"]);
+  assert.equal(sup.running().length, 1);
+});
+
+t("an empty list leaves everything", () => {
+  const { sup, stopped } = fakeSupervisor();
+  sup.apply(["a/b", "a/c"]);
+  sup.apply([]);
+  assert.deepEqual(stopped.sort(), ["a/b", "a/c"]);
+  assert.equal(sup.running().length, 0);
+});
+
+t("one mesh failing to join does not take the others down", () => {
+  const { sup, started } = fakeSupervisor();
+  sup.apply(["a/b", "bad/mesh", "a/c"]);
+  assert.deepEqual(started, ["a/b", "a/c"]);
+  assert.equal(sup.running().length, 2);
+});
+
+t("a mesh that failed to join is retried when the list is applied again", () => {
+  const { sup } = fakeSupervisor();
+  sup.apply(["bad/mesh"]);
+  assert.equal(sup.running().length, 0);
+  sup.apply(["bad/mesh", "a/b"]);
+  assert.equal(sup.running().length, 1, "the one that can join still does");
+});
+
+t("stopAll leaves every mesh", () => {
+  const { sup, stopped } = fakeSupervisor();
+  sup.apply(["a/b", "a/c"]);
+  sup.stopAll();
+  assert.deepEqual(stopped, ["a/c", "a/b"], "in reverse, so the first joined is the last to go");
+  assert.equal(sup.running().length, 0);
 });
 
 // Ask timeouts are unref'd so a pending delegation never keeps the gateway

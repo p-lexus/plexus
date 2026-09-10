@@ -82,6 +82,12 @@ nav button{
 nav button:hover{color:var(--ink)}
 nav button[aria-current="true"]{color:var(--ink);border-bottom-color:var(--accent)}
 .chrome-right{display:flex;align-items:center;gap:14px;padding:8px 0}
+/* The mesh this page is about. In the brand block rather than beside the
+   theme button: it changes what every number on the page means, which is a
+   different kind of control from one that changes how it looks. */
+.mesh-pick{background:var(--surface);color:var(--ink);border:1px solid var(--line);
+  border-radius:6px;padding:2px 6px;font:inherit;font-size:12px;max-width:180px}
+.mesh-pick:focus{outline:none;border-color:var(--accent)}
 
 /* Live link state: a signal meter, not a dot — bars animate only while
    messages are actually arriving, so "connected but idle" reads differently
@@ -236,7 +242,8 @@ details[open] summary{margin-bottom:8px}
          stroke-width="7" stroke-linecap="square" aria-hidden="true">
       <path d="M12 12 L26 26"/><path d="M38 38 L52 52"/>
       <path d="M52 12 L38 26"/><path d="M26 38 L12 52"/>
-    </svg><b>Plexus</b><span id="agentTag">—</span></div>
+    </svg><b>Plexus</b><span id="agentTag">—</span>
+    <select id="meshPick" class="mesh-pick" title="Which mesh this page is about" hidden></select></div>
   <nav id="nav"></nav>
   <div class="chrome-right">
     <div class="link" id="link"><span class="meter"><i></i><i></i><i></i></span><span id="linkTxt">connecting</span></div>
@@ -266,7 +273,24 @@ try { TOKEN = localStorage.getItem('mesh-token') || ''; } catch {}
   const clean = location.pathname + location.hash;
   history.replaceState(null, '', clean);
 })();
-const q = (p) => TOKEN ? `${p}${p.includes('?') ? '&' : '?'}token=${encodeURIComponent(TOKEN)}` : p;
+/* Which mesh a request is about.
+
+   The box decides which meshes this agent is on, so there can be several and
+   the number changes while the panel is open. Every route below /api acts on
+   ONE of them and answers 400 when it cannot tell which — so the mesh travels
+   on every request, and leaving it off is how the whole panel returned 400 the
+   first time an agent joined a second mesh. */
+let MESHES = [];
+let MESH = '';
+try { MESH = localStorage.getItem('mesh-current') || ''; } catch {}
+
+const q = (p) => {
+  const parts = [];
+  if (TOKEN) parts.push(`token=${encodeURIComponent(TOKEN)}`);
+  if (MESH) parts.push(`mesh=${encodeURIComponent(MESH)}`);
+  if (!parts.length) return p;
+  return `${p}${p.includes('?') ? '&' : '?'}${parts.join('&')}`;
+};
 function signOut() { TOKEN = ''; try { localStorage.removeItem('mesh-token'); } catch {} location.reload(); }
 
 let profile = null, status = null, jobs = { active: [], history: [] };
@@ -281,6 +305,7 @@ const PAGES = [
   ['services', 'Services'],
   ['session', 'Session'],
   ['vars', 'Variables'],
+  ['box', 'Box'],
 ];
 
 /* ── helpers ── */
@@ -339,9 +364,56 @@ async function post(p, body) {
   });
   return { ok: r.ok, data: await r.json().catch(() => ({})) };
 }
+/* The meshes this agent is on, and which one this page is about.
+
+   Read before anything else, because every other route needs it. The list is
+   the box's answer and changes while the panel is open — an agent joins a mesh
+   when somebody grants it access — so a stored choice is honoured only while it
+   is still in the list. */
+async function loadMeshes() {
+  const before = MESHES.join(',');
+  try {
+    const d = await getJSON('/meshes');
+    MESHES = Array.isArray(d.meshes) ? d.meshes : [];
+  } catch { MESHES = []; }
+
+  if (!MESHES.includes(MESH)) {
+    // Left the mesh that was being viewed. Falling back to the first is the
+    // only honest answer: the alternative is a page that keeps asking about a
+    // mesh this agent is no longer on and shows 400 forever.
+    if (MESH && MESHES.length) toast(`No longer on ${MESH} — showing ${MESHES[0]}`);
+    MESH = MESHES[0] || '';
+    try { localStorage.setItem('mesh-current', MESH); } catch {}
+  }
+  if (MESHES.join(',') !== before) renderMeshPick();
+}
+
+function renderMeshPick() {
+  const el = $('meshPick');
+  if (!el || typeof el.innerHTML !== 'string') return;
+  // Hidden for one mesh: a picker with a single entry is a control that does
+  // nothing, and every single-mesh deployment looked exactly as it did before.
+  el.hidden = MESHES.length < 2;
+  el.innerHTML = MESHES.map((m) =>
+    `<option value="${esc(m)}"${m === MESH ? ' selected' : ''}>${esc(m)}</option>`).join('');
+}
+
+function switchMesh(name) {
+  if (!name || name === MESH) return;
+  MESH = name;
+  try { localStorage.setItem('mesh-current', MESH); } catch {}
+  // The stream is per mesh, so it is rebuilt rather than left pointing at the
+  // one being left behind.
+  if (es) { try { es.close(); } catch {} es = null; }
+  jobs = { active: [], history: [] };
+  loadAll().then(() => stream());
+}
+
 async function loadAll() {
   try {
     needsAuth = false;
+    await loadMeshes();
+    if (!MESHES.length) { setLink(false, 'on no mesh'); render(); return; }
     [profile, status, jobs] = await Promise.all([getJSON('/profile'), getJSON('/status'), getJSON('/jobs')]);
     setLink(status.connected);
     render();
@@ -456,9 +528,103 @@ function render() {
     `<button data-p="${k}" aria-current="${page === k}">${label}</button>`).join('');
   const v = $('view');
   if (!profile || !status) { v.innerHTML = `<div class="panel"><div class="empty">Connecting to the bridge…</div></div>`; return; }
-  v.innerHTML = ({ overview, jobs: jobsView, run: runView, services, session: sessionView, vars: varsView })[page]();
+  v.innerHTML = ({ overview, jobs: jobsView, run: runView, services,
+                   session: sessionView, vars: varsView, box: boxView })[page]();
   if (page === 'run') fillArgs();
   if (page === 'vars') loadSecrets();
+  if (page === 'box') loadBox();
+}
+
+/* ── the box ──
+
+   Where this agent connects and the credential it connects with. Kept out of
+   openclaw.json: a password in the gateway's configuration is a password in
+   every backup and every issue somebody pastes it into.
+
+   The password is write-only. The panel is told whether one is set and never
+   what it is, which is the same rule the deployment variables follow. */
+let box = null, boxBusy = false, boxNote = '';
+
+async function loadBox() {
+  try {
+    const d = await getJSON('/box');
+    box = d.box || null;
+    boxNote = '';
+  } catch (e) {
+    box = null;
+    boxNote = e.message === '403'
+      ? 'Set web.auth in the plugin config, then sign in, to change where this agent connects.'
+      : 'Could not read the box settings.';
+  }
+  if (page === 'box') { $('view').innerHTML = boxView(); }
+}
+
+async function saveBox() {
+  if (boxBusy) return;
+  const url = $('boxUrl').value.trim();
+  const username = $('boxUser').value.trim();
+  const password = $('boxPass').value;
+  boxBusy = true;
+  $('boxSave').disabled = true;
+  $('boxSave').textContent = 'Reconnecting…';
+  // The password is sent only when it was typed. Sending an empty string would
+  // CLEAR it, which is a different intention and one nobody expresses by
+  // leaving a field alone.
+  const body = { url, username };
+  if (password) body.password = password;
+  const { data } = await post('/box', body);
+  boxBusy = false;
+  boxNote = data.error || (data.ok ? 'Saved and reconnected.' : 'Saved.');
+  $('boxPass').value = '';
+  await loadBox();
+  await loadAll();
+  toast(data.ok ? 'Reconnected' : (data.error || 'Saved'));
+}
+
+function boxView() {
+  if (!box) {
+    return `<div class="panel"><div class="empty">${esc(boxNote || 'Reading the box settings…')}</div></div>`;
+  }
+  const meshList = MESHES.length
+    ? MESHES.map((m) => `<span class="chip ${m === MESH ? 'accent' : 'plain'}">${esc(m)}</span>`).join(' ')
+    : '<span class="note">none — this agent is on no mesh</span>';
+  return `
+  <div class="stack">
+    <div class="panel">
+      <div class="panel-h"><span class="eyebrow">The box</span>
+        <span class="note" style="margin-left:auto">${
+          box.source === 'panel' ? 'set here' : 'from openclaw.json'}</span></div>
+      <div class="panel-b stack">
+        <p class="note">Where this agent connects, and who it connects as. Saved to
+          <span class="mono">mesh.local.json</span> beside the deployment variables — never to
+          <span class="mono">openclaw.json</span>, and never to a repository.</p>
+
+        <div class="field"><label for="boxUrl">Host</label>
+          <input id="boxUrl" class="mono" value="${esc(box.url || '')}"
+                 placeholder="mqtts://box.example.com:8883"></div>
+        <div class="field"><label for="boxUser">Username</label>
+          <input id="boxUser" class="mono" value="${esc(box.username || '')}"
+                 placeholder="the agent id the box issued"></div>
+        <div class="field"><label for="boxPass">Password</label>
+          <input id="boxPass" class="mono" type="password" autocomplete="new-password"
+                 placeholder="${box.hasPassword ? 'set — leave blank to keep it' : 'not set'}">
+          <p class="note" style="margin-top:6px">A blank password keeps the one already saved.
+            There is no way to read it back, here or anywhere else.</p></div>
+
+        ${boxNote ? `<p class="note">${esc(boxNote)}</p>` : ''}
+        <div class="rowflex"><button class="btn" id="boxSave">Save and reconnect</button></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-h"><span class="eyebrow">Meshes</span></div>
+      <div class="panel-b stack">
+        <p class="note">The box decides which meshes this agent is on and tells it — nothing here
+          chooses them. Ask whoever runs the box to add one, or to take one away.</p>
+        <div class="rowflex">${meshList}</div>
+      </div>
+    </div>
+  </div>`;
 }
 
 function overview() {
@@ -1003,6 +1169,7 @@ async function dispatch() {
 document.addEventListener('click', async (e) => {
   const t = e.target.closest('button'); if (!t) return;
   const d = t.dataset;
+  if (t.id === 'boxSave') { await saveBox(); return; }
   if (d.p) { page = d.p; render(); }
   else if (d.go) { page = d.go; render(); }
   else if (d.toggle) { open.has(d.toggle) ? open.delete(d.toggle) : open.add(d.toggle); render(); }
@@ -1094,6 +1261,17 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault(); page = 'jobs'; render(); $('f-text')?.focus();
   }
 });
+
+// Optional-chained: the render check evaluates this script against a stub DOM
+// to prove every view renders, and a hard reference to a real element there is
+// a crash rather than a test result.
+$('meshPick')?.addEventListener?.('change', (e) => switchMesh(e.target.value));
+
+/* The mesh list is the box's answer and changes without anybody reloading the
+   page: an agent joins a mesh the moment somebody grants it access. Polled on
+   its own timer so a panel left open follows, rather than showing a list that
+   was true when the tab was opened. */
+setInterval(() => { if (!needsAuth) loadMeshes(); }, 20000);
 
 try { const saved = localStorage.getItem('mesh-theme'); if (saved) document.documentElement.setAttribute('data-theme', saved); } catch {}
 loadAll().then(stream);

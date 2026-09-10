@@ -10,6 +10,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { readBox } from "./mesh/box.js";
 import { REVIEW_GRACE_MS } from "./mesh/review.js";
 import type { MeshEntry, PluginConfig } from "./types.js";
 
@@ -25,6 +26,16 @@ export interface ResolvedConfig {
   };
   mesh: {
     root: string;
+    /**
+     * The organization this agent belongs to, when a box tells it its meshes.
+     *
+     * Set this and `root` becomes a starting point rather than the answer: the
+     * box publishes the list on `<org>/members/<agentId>` and this agent joins
+     * what it is told, because the box issues the grants and is therefore the
+     * only thing that knows. Unset — or set against a broker with no box —
+     * nothing is published, and `root` is the one mesh, exactly as before.
+     */
+    org?: string;
     agentId: string;
     servicesFile: string;
     secretsFile: string;
@@ -111,13 +122,41 @@ export function deploymentDir(env: NodeJS.ProcessEnv = process.env): string {
  * example's prompts — an agent that looks correct in every list and answers
  * with somebody else's instructions.
  */
-function deploymentFile(name: string, pluginDir: string, exists = fs.existsSync): string {
+export function deploymentFile(name: string, pluginDir: string, exists = fs.existsSync): string {
   const current = path.join(deploymentDir(), name);
   if (exists(current)) return current;
   for (const legacy of [path.join(pluginDir, name), path.join(pluginDir, "..", name)]) {
     if (exists(legacy)) return path.resolve(legacy);
   }
   return current;
+}
+
+/**
+ * What the panel saved, over what openclaw.json says.
+ *
+ * The panel wins because it is the more recent statement of intent: an
+ * operator who typed a host into it has said where the box is, and a gateway
+ * config edited months ago has not. Kept out of openclaw.json entirely so that
+ * a credential never lands in the file people paste into issues.
+ *
+ * Applied by the caller, deliberately, rather than inside resolveConfig. A
+ * resolver that reads a file behind its caller's back is one whose answer
+ * depends on the machine it runs on: doing it there made every test resolve
+ * against whatever this operator had last saved, and two of them failed on a
+ * broker URL nobody in the test had written.
+ */
+export function withSavedBox(cfg: Partial<PluginConfig>, pluginDir: string): Partial<PluginConfig> {
+  const saved = readBox(deploymentFile("mesh.local.json", pluginDir));
+  if (!saved.url && !saved.username && !saved.password) return cfg;
+  return {
+    ...cfg,
+    broker: {
+      ...cfg.broker,
+      ...(saved.url ? { url: saved.url } : {}),
+      ...(saved.username ? { username: saved.username } : {}),
+      ...(saved.password ? { password: saved.password } : {}),
+    } as PluginConfig["broker"],
+  };
 }
 
 export function resolveConfig(cfg: Partial<PluginConfig>, pluginDir: string): ResolvedConfig {
@@ -135,6 +174,11 @@ export function resolveConfig(cfg: Partial<PluginConfig>, pluginDir: string): Re
     },
     mesh: {
       root: mesh.root ?? DEFAULTS.meshRoot,
+      // The organization, when one is configured. Also derived from a root
+      // that has one, so an agent already pointed at 4sale/agents is told its
+      // meshes without anybody editing a file — the box publishes to
+      // 4sale/members/<id> either way.
+      org: mesh.org ?? organizationIn(mesh.root ?? DEFAULTS.meshRoot),
       agentId: mesh.agentId ?? DEFAULTS.agentId,
       servicesFile: mesh.servicesFile ?? deploymentFile("services.json", pluginDir),
       secretsFile: deploymentFile("mesh.local.json", pluginDir),
@@ -195,6 +239,18 @@ export interface Membership {
  * single-mesh config every deployment already has is read as a list of one and
  * resolves exactly as it did.
  */
+/**
+ * The organization above a mesh root, or nothing.
+ *
+ * "4sale/agents" belongs to "4sale". A single-segment root is a mesh with no
+ * organization above it — the shape before a box told agents anything — and
+ * gets none, so nothing changes for it.
+ */
+export function organizationIn(root: string): string | undefined {
+  const [first, ...rest] = String(root).split("/");
+  return rest.length && first ? first : undefined;
+}
+
 export function resolveMeshes(cfg: Partial<PluginConfig>, pluginDir: string): Membership[] {
   const listed = Array.isArray(cfg.meshes) ? cfg.meshes : [];
   const entries: MeshEntry[] = listed.length ? listed : [{}];

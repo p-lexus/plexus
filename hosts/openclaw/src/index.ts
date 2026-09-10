@@ -29,9 +29,12 @@ import type { Server } from "http";
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 
 import type { PluginConfig } from "./types.js";
-import { resolveConfig, resolveMeshes } from "./config.js";
+import { resolveConfig, resolveMeshes, withSavedBox } from "./config.js";
+import { deriveClientId } from "./mesh/transport.js";
+import { createSupervisor } from "./mesh/supervisor.js";
+import { watchRoster } from "./mesh/roster.js";
 import type { Membership } from "./config.js";
-import { startMeshes } from "./mesh/instance.js";
+import { createMeshInstance, startMeshes } from "./mesh/instance.js";
 import type { MeshInstance } from "./mesh/instance.js";
 import { createLogger } from "./logger.js";
 import { createCatalog } from "./mesh/catalog.js";
@@ -364,7 +367,10 @@ export default definePluginEntry({
     // variables and one panel however many meshes it is on: the capabilities
     // are the agent's, and `offer` decides which of them each mesh is told
     // about rather than giving each mesh a catalog of its own to drift.
-    const shared0 = resolveConfig(cfg, pluginDir);
+    // Where the panel says the box is, over what openclaw.json says. Applied
+    // once, here, so everything below resolves from the same answer.
+    let cfg0 = withSavedBox(cfg, pluginDir);
+    const shared0 = resolveConfig(cfg0, pluginDir);
     const catalog = createCatalog(
       shared0.mesh.servicesFile, logger, path.join(pluginDir, "services.example.json"),
     );
@@ -385,23 +391,94 @@ export default definePluginEntry({
       return;
     }
 
-    // Every mesh, or none: a membership is live as soon as it is built, and the
-    // shutdown that would stop it is registered further down.
-    let instances: MeshInstance[];
-    try {
-      instances = startMeshes(memberships, {
-        logger, runtime: api.runtime, pluginDir, catalog, vars, sse, auth,
-      });
-    } catch (e: any) {
-      logger.info(`[mesh] could not join every mesh: ${e.message} — plugin inactive.`);
+    // Every mesh runs through the supervisor, including the ones named in the
+    // configuration. Two paths would mean the box adding a mesh this agent is
+    // already on starts a SECOND connection to it — one client id, two clients,
+    // and a broker that disconnects each in turn forever.
+    const shared = { logger, runtime: api.runtime, pluginDir, catalog, vars, sse, auth };
+    const configured = new Map(memberships.map((m) => [m.conf.mesh.root, m]));
+
+    // A mesh the box named that no configuration mentions still needs a full
+    // membership — resolved the same way, from the same defaults, so a mesh
+    // arriving at runtime is not a second-class one.
+    const buildMembership = (root: string): Membership => {
+      const known = configured.get(root);
+      if (known) return known;
+      // Built from a mesh that IS configured, not from the top level. The
+      // agent id, the owner policy and the prompt variables usually live in a
+      // mesh entry, so the top level carries defaults — and a mesh made from
+      // those published its profile as "agent", the default id, which the
+      // broker refused because the grant names the real one.
+      const template = memberships[0];
+      // Named by its mesh, not by its whole root: a configured mesh is called
+      // "global" and one that arrived at runtime was called "4sale/research",
+      // so the panel's own list read as two different products. The root when
+      // that name is already taken, because a duplicate name is how two meshes
+      // become one in every lookup keyed on it.
+      const taken = new Set([...configured.values()].map((m) => m.name));
+      const short = root.slice(root.lastIndexOf("/") + 1);
+      return {
+        name: taken.has(short) || !short ? root : short,
+        offer: template.offer,
+        conf: {
+          ...template.conf,
+          // A client id of its own, from the root.
+          //
+          // deriveClientId hashes the host and the plugin directory and NOT
+          // the root, so every mesh in one plugin derives the same one — which
+          // configured meshes escape by naming their own. A mesh that arrives
+          // at runtime cannot, so it is given one here: without it four
+          // connections shared an id and the broker disconnected each in turn,
+          // forever, which in the log reads as an agent flapping.
+          broker: {
+            ...template.conf.broker,
+            clientId: `${deriveClientId(pluginDir, template.conf.mesh.agentId, undefined)}-${
+              root.replace(/[^A-Za-z0-9]+/g, "-")
+            }`,
+          },
+          mesh: { ...template.conf.mesh, root },
+        },
+      };
+    };
+
+    const supervisor = createSupervisor(shared, logger, buildMembership, createMeshInstance);
+    supervisor.apply([...configured.keys()]);
+    if (supervisor.running().length === 0) {
+      logger.info(`[mesh] could not join any mesh — plugin inactive.`);
       sse.closeAll();
       delete globalAny[GUARD];
       delete globalAny[MODULE_SLOT];
       return;
     }
-    const byMesh = new Map(instances.map((i) => [i.name, i]));
+
+    let instances: MeshInstance[] = supervisor.running();
+    let byMesh = new Map(instances.map((i) => [i.name, i]));
     // Resolved most-specific-first; see forTopic.
-    const byLongestRoot = [...instances].sort((a, b) => b.conf.mesh.root.length - a.conf.mesh.root.length);
+    let byLongestRoot = [...instances].sort((a, b) => b.conf.mesh.root.length - a.conf.mesh.root.length);
+
+    // Rebuilt whenever the box changes what this agent is on. The lookups below
+    // close over these bindings, so they resolve against what is running now
+    // rather than against what was running at startup.
+    const refresh = () => {
+      instances = supervisor.running();
+      byMesh = new Map(instances.map((i) => [i.name, i]));
+      byLongestRoot = [...instances].sort((a, b) => b.conf.mesh.root.length - a.conf.mesh.root.length);
+    };
+
+    // The box decides which meshes this agent belongs to; this receives the
+    // decision. Nothing depends on it: no box publishes it, nothing arrives,
+    // and the configured mesh stays the only one — which is what a bare broker
+    // has always given.
+    // Taken from the meshes actually resolved, not from the top-level config:
+    // the root usually lives in a mesh entry, so the top level carries the
+    // default one and derives the wrong organization — or none.
+    const org = memberships.map((m) => m.conf.mesh.org).find(Boolean);
+    let roster = org
+      ? watchRoster(memberships[0].conf, org, logger, (roots) => {
+          supervisor.apply(roots);
+          refresh();
+        })
+      : null;
 
     // The tools reach whichever mesh the work is on through this. Registered in
     // every session, so they resolve at call time rather than closing over one
@@ -432,8 +509,63 @@ export default definePluginEntry({
       instances: () => instances,
     };
 
+    /**
+     * Reconnect with whatever the box settings now say.
+     *
+     * Only the transports: the panel, the tools and the catalog belong to the
+     * agent rather than to a broker, and tearing the plugin down to change a
+     * password would drop the very page the operator is typing into.
+     *
+     * Everything is re-resolved from disk, so this is the same code path as a
+     * cold start — a reload that read a cached config would report success and
+     * keep using the credential that was just replaced.
+     */
+    const reload = async (): Promise<string | null> => {
+      try { roster?.stop(); } catch { /* replaced below */ }
+      supervisor.stopAll();
+
+      let fresh: Membership[];
+      try {
+        // Re-read, because the settings on disk are what just changed.
+        cfg0 = withSavedBox(cfg, pluginDir);
+        fresh = resolveMeshes(cfg0, pluginDir);
+      } catch (e: any) {
+        return e.message;
+      }
+      configured.clear();
+      for (const m of fresh) configured.set(m.conf.mesh.root, m);
+      memberships = fresh;
+
+      supervisor.apply([...configured.keys()]);
+      refresh();
+      if (supervisor.running().length === 0) return "nothing could be joined with those settings";
+
+      // Wait for the broker to accept it. A mesh instance exists the moment it
+      // is built, so "running" says only that the object was made — it said
+      // "reconnected" over a password the broker refused, which is the one
+      // answer this page must never give.
+      const deadline = Date.now() + 6000;
+      for (;;) {
+        const live = supervisor.running().map((i) => i.snapshot());
+        if (live.some((s) => s.connected)) break;
+        if (Date.now() >= deadline) {
+          const why = live.map((s) => s.lastError).find(Boolean);
+          return why ? String(why) : "the broker did not accept the connection";
+        }
+        await new Promise((r) => setTimeout(r, 250));
+      }
+
+      const nextOrg = fresh.map((m) => m.conf.mesh.org).find(Boolean);
+      roster = nextOrg
+        ? watchRoster(fresh[0].conf, nextOrg, logger, (roots) => { supervisor.apply(roots); refresh(); })
+        : null;
+      logger.info(`[mesh] reconnected to ${fresh[0].conf.broker.url} as ${fresh[0].conf.broker.username}`);
+      return null;
+    };
+
     const { server } = startHttpServer({
-      cfg: shared0, logger, auth, sse, vars,
+      cfg: shared0, logger, auth, sse, vars, reload,
+      pluginDir,
       meshes: {
         names: () => instances.map((i) => i.name),
         pick: (name) => {
@@ -449,7 +581,10 @@ export default definePluginEntry({
     // ── Shutdown ───────────────────────────────────────
 
     const shutdown = () => {
-      for (const instance of instances) {
+      // The roster first: a membership arriving mid-shutdown would start a
+      // mesh nothing is going to stop.
+      try { roster?.stop(); } catch { /* going away anyway */ }
+      for (const instance of supervisor.running()) {
         try { instance.stop(); } catch (e: any) { logger.error(`stopping ${instance.name} failed: ${e.message}`); }
       }
       sse.closeAll();

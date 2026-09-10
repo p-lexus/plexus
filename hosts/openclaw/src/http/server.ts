@@ -11,6 +11,8 @@
 import * as fs from "fs";
 import type { Said } from "../mesh/feedback.js";
 import * as path from "path";
+import { deploymentFile } from "../config.js";
+import { checkURL, readBox, writeBox } from "../mesh/box.js";
 import { createServer } from "http";
 import type { IncomingMessage, ServerResponse, Server } from "http";
 import type { Logger } from "../types.js";
@@ -42,6 +44,15 @@ export interface HttpDeps {
   auth: Auth;
   sse: SseHub;
   vars: VarStore;
+  /** Where mesh.local.json lives, so the box settings can be read and written. */
+  pluginDir: string;
+  /**
+   * Reconnect with whatever the box settings now say, returning what went
+   * wrong or null. Only the transports are rebuilt: the panel and the tools
+   * belong to the agent, and tearing them down to change a password would drop
+   * the page the operator is typing into.
+   */
+  reload(): Promise<string | null>;
   meshes: {
     names(): string[];
     /**
@@ -65,7 +76,7 @@ async function readBody(req: IncomingMessage): Promise<any> {
 }
 
 export function createHttpHandler(deps: HttpDeps) {
-  const { cfg, auth, sse, vars, meshes } = deps;
+  const { cfg, auth, sse, vars, meshes, pluginDir, reload } = deps;
   const base = cfg.web.basePath;
   const webDir = cfg.web.dir;
 
@@ -116,6 +127,79 @@ export function createHttpHandler(deps: HttpDeps) {
     // the question a panel asks in order to resolve one.
     if (p === `${base}/api/meshes`) {
       sendJson(res, 200, { meshes: meshes.names() });
+      return true;
+    }
+
+    // ── The box this agent connects to ──
+    //
+    // Behind the same elevation as deployment variables: this is where the
+    // agent connects and the credential it connects with, which is a larger
+    // privilege than reading a job list. The password is write-only, exactly
+    // like a variable — there is a path that sets it and none that reads it
+    // back, because a panel needs to know whether one is set and never what.
+    if (p === `${base}/api/box`) {
+      if (!auth.elevated(req, url)) {
+        sendJson(res, 403, {
+          ok: false,
+          authRequired: true,
+          error: auth.configured
+            ? "A valid token is required to change where this agent connects."
+            : "Set web.auth in the plugin config to change the box from the panel.",
+        });
+        return true;
+      }
+      // The same resolver the config uses. Joining pluginDir by hand wrote to
+      // a file nothing reads: the panel then read its own writes back and
+      // reported settings that had never reached a connection.
+      const file = deploymentFile("mesh.local.json", pluginDir);
+      if (req.method === "GET") {
+        const saved = readBox(file);
+        sendJson(res, 200, {
+          ok: true,
+          box: {
+            url: saved.url ?? cfg.broker.url,
+            username: saved.username ?? cfg.broker.username ?? "",
+            hasPassword: Boolean(saved.password ?? cfg.broker.password),
+            source: saved.url || saved.username || saved.password ? "panel" : "config",
+          },
+          // What the agent is on right now, so the page that changes the
+          // connection also shows what the connection currently is.
+          meshes: meshes.names(),
+          connected: meshes.names().length > 0,
+        });
+        return true;
+      }
+      if (req.method === "POST") {
+        const body = await readBody(req);
+        const patch = {
+          url: typeof body.url === "string" ? body.url.trim() : undefined,
+          username: typeof body.username === "string" ? body.username.trim() : undefined,
+          password: typeof body.password === "string" ? body.password : undefined,
+        };
+        if (patch.url !== undefined && patch.url !== "") {
+          const bad = checkURL(patch.url);
+          if (bad) { sendJson(res, 400, { ok: false, error: bad }); return true; }
+        }
+        const failed = writeBox(file, patch);
+        if (failed) { sendJson(res, 500, { ok: false, error: `could not save: ${failed}` }); return true; }
+
+        // Saved first, then applied. A reload that fails leaves the settings on
+        // disk to be corrected, rather than discarding what was typed and
+        // leaving the operator with nothing to edit.
+        const problem = await reload();
+        if (problem) {
+          sendJson(res, 200, {
+            ok: false,
+            saved: true,
+            error: `Saved, but could not connect: ${problem}`,
+            meshes: meshes.names(),
+          });
+          return true;
+        }
+        sendJson(res, 200, { ok: true, saved: true, meshes: meshes.names() });
+        return true;
+      }
+      sendJson(res, 405, { ok: false, error: "GET or POST" });
       return true;
     }
 
