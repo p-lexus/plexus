@@ -11,6 +11,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { readBox } from "./mesh/box.js";
+import { heartbeatSeconds } from "./mesh/heartbeat.js";
 import { REVIEW_GRACE_MS } from "./mesh/review.js";
 import type { MeshEntry, PluginConfig } from "./types.js";
 
@@ -37,6 +38,8 @@ export interface ResolvedConfig {
      */
     org?: string;
     agentId: string;
+    /** How often this agent republishes its status, in seconds (v1.8). */
+    heartbeatSeconds: number;
     servicesFile: string;
     secretsFile: string;
     /** Job history, so the panel is not empty after a restart. */
@@ -179,6 +182,7 @@ export function resolveConfig(cfg: Partial<PluginConfig>, pluginDir: string): Re
       // meshes without anybody editing a file — the box publishes to
       // 4sale/members/<id> either way.
       org: mesh.org ?? organizationIn(mesh.root ?? DEFAULTS.meshRoot),
+      heartbeatSeconds: heartbeatSeconds(mesh.heartbeatSeconds),
       agentId: mesh.agentId ?? DEFAULTS.agentId,
       servicesFile: mesh.servicesFile ?? deploymentFile("services.json", pluginDir),
       secretsFile: deploymentFile("mesh.local.json", pluginDir),

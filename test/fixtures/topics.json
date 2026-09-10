@@ -1,6 +1,6 @@
 {
   "fixtureVersion": 1,
-  "protocolVersion": "1.7",
+  "protocolVersion": "1.8",
   "root": "acme/agents",
   "agentId": "reviewer",
   "owner": "ci",
