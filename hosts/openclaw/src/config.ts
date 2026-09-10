@@ -10,6 +10,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { readBox } from "./mesh/box.js";
 import { REVIEW_GRACE_MS } from "./mesh/review.js";
 import type { MeshEntry, PluginConfig } from "./types.js";
 
@@ -121,7 +122,7 @@ export function deploymentDir(env: NodeJS.ProcessEnv = process.env): string {
  * example's prompts — an agent that looks correct in every list and answers
  * with somebody else's instructions.
  */
-function deploymentFile(name: string, pluginDir: string, exists = fs.existsSync): string {
+export function deploymentFile(name: string, pluginDir: string, exists = fs.existsSync): string {
   const current = path.join(deploymentDir(), name);
   if (exists(current)) return current;
   for (const legacy of [path.join(pluginDir, name), path.join(pluginDir, "..", name)]) {
@@ -130,7 +131,30 @@ function deploymentFile(name: string, pluginDir: string, exists = fs.existsSync)
   return current;
 }
 
-export function resolveConfig(cfg: Partial<PluginConfig>, pluginDir: string): ResolvedConfig {
+/**
+ * What the panel saved, over what openclaw.json says.
+ *
+ * The panel wins because it is the more recent statement of intent: an
+ * operator who typed a host into it has said where the box is, and a gateway
+ * config edited months ago has not. Kept out of openclaw.json entirely so that
+ * a credential never lands in the file people paste into issues.
+ */
+function withSavedBox(cfg: Partial<PluginConfig>, pluginDir: string): Partial<PluginConfig> {
+  const saved = readBox(deploymentFile("mesh.local.json", pluginDir));
+  if (!saved.url && !saved.username && !saved.password) return cfg;
+  return {
+    ...cfg,
+    broker: {
+      ...cfg.broker,
+      ...(saved.url ? { url: saved.url } : {}),
+      ...(saved.username ? { username: saved.username } : {}),
+      ...(saved.password ? { password: saved.password } : {}),
+    } as PluginConfig["broker"],
+  };
+}
+
+export function resolveConfig(input: Partial<PluginConfig>, pluginDir: string): ResolvedConfig {
+  const cfg = withSavedBox(input, pluginDir);
   const mesh = cfg.mesh ?? {};
   const web = cfg.web ?? {};
   return {

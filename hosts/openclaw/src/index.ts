@@ -407,8 +407,15 @@ export default definePluginEntry({
       // those published its profile as "agent", the default id, which the
       // broker refused because the grant names the real one.
       const template = memberships[0];
+      // Named by its mesh, not by its whole root: a configured mesh is called
+      // "global" and one that arrived at runtime was called "4sale/research",
+      // so the panel's own list read as two different products. The root when
+      // that name is already taken, because a duplicate name is how two meshes
+      // become one in every lookup keyed on it.
+      const taken = new Set([...configured.values()].map((m) => m.name));
+      const short = root.slice(root.lastIndexOf("/") + 1);
       return {
-        name: root,
+        name: taken.has(short) || !short ? root : short,
         offer: template.offer,
         conf: {
           ...template.conf,
@@ -463,7 +470,7 @@ export default definePluginEntry({
     // the root usually lives in a mesh entry, so the top level carries the
     // default one and derives the wrong organization — or none.
     const org = memberships.map((m) => m.conf.mesh.org).find(Boolean);
-    const roster = org
+    let roster = org
       ? watchRoster(memberships[0].conf, org, logger, (roots) => {
           supervisor.apply(roots);
           refresh();
@@ -499,8 +506,61 @@ export default definePluginEntry({
       instances: () => instances,
     };
 
+    /**
+     * Reconnect with whatever the box settings now say.
+     *
+     * Only the transports: the panel, the tools and the catalog belong to the
+     * agent rather than to a broker, and tearing the plugin down to change a
+     * password would drop the very page the operator is typing into.
+     *
+     * Everything is re-resolved from disk, so this is the same code path as a
+     * cold start — a reload that read a cached config would report success and
+     * keep using the credential that was just replaced.
+     */
+    const reload = async (): Promise<string | null> => {
+      try { roster?.stop(); } catch { /* replaced below */ }
+      supervisor.stopAll();
+
+      let fresh: Membership[];
+      try {
+        fresh = resolveMeshes(cfg, pluginDir);
+      } catch (e: any) {
+        return e.message;
+      }
+      configured.clear();
+      for (const m of fresh) configured.set(m.conf.mesh.root, m);
+      memberships = fresh;
+
+      supervisor.apply([...configured.keys()]);
+      refresh();
+      if (supervisor.running().length === 0) return "nothing could be joined with those settings";
+
+      // Wait for the broker to accept it. A mesh instance exists the moment it
+      // is built, so "running" says only that the object was made — it said
+      // "reconnected" over a password the broker refused, which is the one
+      // answer this page must never give.
+      const deadline = Date.now() + 6000;
+      for (;;) {
+        const live = supervisor.running().map((i) => i.snapshot());
+        if (live.some((s) => s.connected)) break;
+        if (Date.now() >= deadline) {
+          const why = live.map((s) => s.lastError).find(Boolean);
+          return why ? String(why) : "the broker did not accept the connection";
+        }
+        await new Promise((r) => setTimeout(r, 250));
+      }
+
+      const nextOrg = fresh.map((m) => m.conf.mesh.org).find(Boolean);
+      roster = nextOrg
+        ? watchRoster(fresh[0].conf, nextOrg, logger, (roots) => { supervisor.apply(roots); refresh(); })
+        : null;
+      logger.info(`[mesh] reconnected to ${fresh[0].conf.broker.url} as ${fresh[0].conf.broker.username}`);
+      return null;
+    };
+
     const { server } = startHttpServer({
-      cfg: shared0, logger, auth, sse, vars,
+      cfg: shared0, logger, auth, sse, vars, reload,
+      pluginDir,
       meshes: {
         names: () => instances.map((i) => i.name),
         pick: (name) => {
