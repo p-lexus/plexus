@@ -1,4 +1,4 @@
-# Plexus — Agent Mesh Protocol v1.6
+# Plexus — Agent Mesh Protocol v1.7
 
 A protocol for autonomous agents to dispatch work to each other over MQTT — across laptops,
 VPNs and containers, none of which can accept an inbound connection. Broker root: `agents`.
@@ -235,6 +235,7 @@ actually enforces, so you never have to infer enforcement from the version numbe
 | `agents/commands/<agentId>/feedback/<owner>` | **recorder** → agent | **v1.5.** A relayed verdict. Publish granted to the recorder alone |
 | `agents/commands/<agentId>/memory/<service>` | **recorder** → agent | **v1.5.** What past runs of that capability reported, answering a question |
 | `agents/box` | **recorder** → everyone | **v1.6.** RETAINED. That this mesh has a recorder. Publish granted to it alone; everyone may read |
+| `<org>/members/<agentId>` | **box** → one agent | **v1.7.** RETAINED, and above every mesh. Which meshes this agent belongs to. Read by the identity it names; written by a box alone |
 
 ## Capabilities are data, not code
 
@@ -610,6 +611,33 @@ retained result but not earlier milestones.
 Job topics are **always owner-scoped**. There is no unscoped `jobs/<jobId>/…` form: a result
 belongs to exactly one owner and is published to exactly one topic.
 
+## Which meshes an agent belongs to (v1.7)
+
+An agent is configured with an **organization** and a credential. Which meshes it is on is not a
+setting it holds — the box issues the grants, so the box is the only participant that knows, and it
+says so:
+
+```
+<org>/members/<agentId>    RETAINED, {"agent":"…","meshes":["4sale/global",…],"at":"…"}
+```
+
+Published by a box and by nothing else; read by the one identity it names. Organization-level on
+purpose: an agent that has just connected knows its organization and its own name, and cannot be
+told about a mesh inside a mesh it has not been told about yet.
+
+The list is what the agent joins, and it is authoritative the moment it arrives — **including an
+empty one**, which means this agent is on nothing. Falling back to a configured root there would
+put it somewhere the broker refuses a moment later, silently, at QoS 1.
+
+Republished on every change, so an agent granted a mesh joins it without a restart, and one taken
+off a mesh leaves it. A message that is unreadable, addressed to another agent, or that names a
+root containing a wildcard is ignored rather than acted on: it decides what this agent connects to.
+
+**Absent means the agent's own configuration is the answer**, which is what every deployment did
+before this existed. A root with a single segment has no organization above it, gets no grant, and
+is never the subject of one of these messages. A box makes an agent multi-mesh; a broker without
+one changes nothing.
+
 ## Whether this mesh has a box (v1.6)
 
 Verdicts, postmortems and recall are one half of the protocol, and they need a participant that
@@ -894,6 +922,37 @@ The panel consumes the SSE stream and only falls back to polling if the stream d
 `web.auth` to require a bearer token — it is accepted as an `Authorization` header, or as
 `?token=` for the SSE stream, since `EventSource` cannot set headers. This setting was
 previously declared but never enforced; it is now enforced on every route.
+
+## Changes v1.6 → v1.7
+
+One addition, and it is the first message in the protocol that tells an agent something about
+itself rather than about work.
+
+- **`<org>/members/<agentId>`.** RETAINED. Which meshes this agent belongs to, published by a box:
+  `{ "agent": "conan", "meshes": ["4sale/global", "4sale/engineering"], "at": "…" }`. Read by the
+  one identity it names; written by nobody else.
+- **Organization-level, and deliberately above every mesh.** An agent that has just connected knows
+  its organization and its own name and nothing else — it cannot be told about a mesh inside a mesh
+  it has not been told about. A mesh is `<org>/<name>`; a root with a single segment has no
+  organization above it, gets no grant and no message, and behaves exactly as it did in v1.6.
+- **Retained, and republished on every change**, so an agent connecting later is told at once and
+  one granted a new mesh joins it without a restart.
+- **The list is authoritative once it arrives, including an empty one.** An agent taken off its
+  last mesh is on nothing. Falling back to a configured root there would put it somewhere the
+  broker refuses a moment later — silently, at QoS 1, which is the failure this protocol keeps
+  paying for.
+- **Membership follows the grants, so a box is what knows.** A box issues the credential and writes
+  the rules; an agent's own configuration cannot make it a member of anything. Before this, granting
+  access wrote broker rules and told nobody: the identity held a credential for a mesh, published no
+  capabilities on it, and read as broken.
+- **One new ACL rule**, and only one: `subscribePattern` on `<org>/members/<id>` for that identity.
+  Nothing else changes — an agent still reaches exactly its own meshes, and a mesh it has no grant
+  on is refused as before.
+
+**Nothing here is required, and an implementation that ignores it is still v1.6-correct.** On a
+broker with no box nothing is ever published, and the agent's configured root stays its one mesh —
+which is what every deployment did before this existed. A box makes an agent multi-mesh; the absence
+of one changes nothing.
 
 ## Changes v1.4 → v1.5
 
