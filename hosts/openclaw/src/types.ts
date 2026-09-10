@@ -41,6 +41,13 @@ export interface BrokerConfig {
 
 export interface MeshConfig {
   root?: string;
+  /**
+   * The organization this agent belongs to. With one, a box publishes the
+   * meshes it is a member of and this agent joins what it is told — it does
+   * not choose. Derived from `root` when that has an organization above it,
+   * so an existing deployment needs no edit.
+   */
+  org?: string;
   agentId?: string;
   servicesFile?: string;
   /** Where job history is kept so the panel survives a restart. */

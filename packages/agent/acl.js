@@ -66,6 +66,22 @@ export function aclFor({ root, role, id, ownerInTopic = false } = {}) {
     throw new TypeError(`role must be one of ${ROLES.join(", ")} — got ${JSON.stringify(role)}`);
   }
 
+  // Which meshes this identity belongs to (v1.7).
+  //
+  // Organization-level, and deliberately outside every mesh: an agent that has
+  // just connected knows its organization and its own name, and nothing else —
+  // it cannot be told about a mesh inside a mesh it has not been told about.
+  //
+  // Read by the one identity it names and written by nobody but a box, which
+  // is the point: membership follows the grants a box issued, so the box is
+  // what knows. An identity that could write this could add itself to a mesh.
+  //
+  // Empty when the root is a single segment, which is a mesh with no
+  // organization above it — the pre-v1.7 shape, where the agent's own
+  // configuration was the only answer.
+  const org = String(root).includes("/") ? String(root).split("/")[0] : "";
+  const members = org ? [`${org}/members/${id}`] : [];
+
   // Publishing an invoke is publishing as an owner. With the owner in the
   // topic that is enforceable; without it, the rule can only say "some invoke".
   const invoke = ownerInTopic
@@ -127,6 +143,7 @@ export function aclFor({ root, role, id, ownerInTopic = false } = {}) {
         // a cycle nothing records, and one that could withdraw the announcement
         // would switch off everyone else's.
         `${root}/box`,
+        ...members,
         // Answers about what past runs of a capability reported (v1.5). They
         // arrive under this agent's own commands subtree, which the first rule
         // already covers — listed nowhere else because there is nothing else
@@ -143,6 +160,7 @@ export function aclFor({ root, role, id, ownerInTopic = false } = {}) {
         `${root}/registry/+/profile`,    // so it can see what is on offer
         `${root}/registry/+/status`,
         `${root}/box`,                   // whether anything records its verdicts
+        ...members,
       ],
     };
   }

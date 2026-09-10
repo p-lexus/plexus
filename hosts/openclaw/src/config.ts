@@ -25,6 +25,16 @@ export interface ResolvedConfig {
   };
   mesh: {
     root: string;
+    /**
+     * The organization this agent belongs to, when a box tells it its meshes.
+     *
+     * Set this and `root` becomes a starting point rather than the answer: the
+     * box publishes the list on `<org>/members/<agentId>` and this agent joins
+     * what it is told, because the box issues the grants and is therefore the
+     * only thing that knows. Unset — or set against a broker with no box —
+     * nothing is published, and `root` is the one mesh, exactly as before.
+     */
+    org?: string;
     agentId: string;
     servicesFile: string;
     secretsFile: string;
@@ -135,6 +145,11 @@ export function resolveConfig(cfg: Partial<PluginConfig>, pluginDir: string): Re
     },
     mesh: {
       root: mesh.root ?? DEFAULTS.meshRoot,
+      // The organization, when one is configured. Also derived from a root
+      // that has one, so an agent already pointed at 4sale/agents is told its
+      // meshes without anybody editing a file — the box publishes to
+      // 4sale/members/<id> either way.
+      org: mesh.org ?? organizationIn(mesh.root ?? DEFAULTS.meshRoot),
       agentId: mesh.agentId ?? DEFAULTS.agentId,
       servicesFile: mesh.servicesFile ?? deploymentFile("services.json", pluginDir),
       secretsFile: deploymentFile("mesh.local.json", pluginDir),
@@ -195,6 +210,18 @@ export interface Membership {
  * single-mesh config every deployment already has is read as a list of one and
  * resolves exactly as it did.
  */
+/**
+ * The organization above a mesh root, or nothing.
+ *
+ * "4sale/agents" belongs to "4sale". A single-segment root is a mesh with no
+ * organization above it — the shape before a box told agents anything — and
+ * gets none, so nothing changes for it.
+ */
+export function organizationIn(root: string): string | undefined {
+  const [first, ...rest] = String(root).split("/");
+  return rest.length && first ? first : undefined;
+}
+
 export function resolveMeshes(cfg: Partial<PluginConfig>, pluginDir: string): Membership[] {
   const listed = Array.isArray(cfg.meshes) ? cfg.meshes : [];
   const entries: MeshEntry[] = listed.length ? listed : [{}];

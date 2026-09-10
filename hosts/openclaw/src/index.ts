@@ -30,8 +30,11 @@ import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 
 import type { PluginConfig } from "./types.js";
 import { resolveConfig, resolveMeshes } from "./config.js";
+import { deriveClientId } from "./mesh/transport.js";
+import { createSupervisor } from "./mesh/supervisor.js";
+import { watchRoster } from "./mesh/roster.js";
 import type { Membership } from "./config.js";
-import { startMeshes } from "./mesh/instance.js";
+import { createMeshInstance, startMeshes } from "./mesh/instance.js";
 import type { MeshInstance } from "./mesh/instance.js";
 import { createLogger } from "./logger.js";
 import { createCatalog } from "./mesh/catalog.js";
@@ -385,23 +388,87 @@ export default definePluginEntry({
       return;
     }
 
-    // Every mesh, or none: a membership is live as soon as it is built, and the
-    // shutdown that would stop it is registered further down.
-    let instances: MeshInstance[];
-    try {
-      instances = startMeshes(memberships, {
-        logger, runtime: api.runtime, pluginDir, catalog, vars, sse, auth,
-      });
-    } catch (e: any) {
-      logger.info(`[mesh] could not join every mesh: ${e.message} — plugin inactive.`);
+    // Every mesh runs through the supervisor, including the ones named in the
+    // configuration. Two paths would mean the box adding a mesh this agent is
+    // already on starts a SECOND connection to it — one client id, two clients,
+    // and a broker that disconnects each in turn forever.
+    const shared = { logger, runtime: api.runtime, pluginDir, catalog, vars, sse, auth };
+    const configured = new Map(memberships.map((m) => [m.conf.mesh.root, m]));
+
+    // A mesh the box named that no configuration mentions still needs a full
+    // membership — resolved the same way, from the same defaults, so a mesh
+    // arriving at runtime is not a second-class one.
+    const buildMembership = (root: string): Membership => {
+      const known = configured.get(root);
+      if (known) return known;
+      // Built from a mesh that IS configured, not from the top level. The
+      // agent id, the owner policy and the prompt variables usually live in a
+      // mesh entry, so the top level carries defaults — and a mesh made from
+      // those published its profile as "agent", the default id, which the
+      // broker refused because the grant names the real one.
+      const template = memberships[0];
+      return {
+        name: root,
+        offer: template.offer,
+        conf: {
+          ...template.conf,
+          // A client id of its own, from the root.
+          //
+          // deriveClientId hashes the host and the plugin directory and NOT
+          // the root, so every mesh in one plugin derives the same one — which
+          // configured meshes escape by naming their own. A mesh that arrives
+          // at runtime cannot, so it is given one here: without it four
+          // connections shared an id and the broker disconnected each in turn,
+          // forever, which in the log reads as an agent flapping.
+          broker: {
+            ...template.conf.broker,
+            clientId: `${deriveClientId(pluginDir, template.conf.mesh.agentId, undefined)}-${
+              root.replace(/[^A-Za-z0-9]+/g, "-")
+            }`,
+          },
+          mesh: { ...template.conf.mesh, root },
+        },
+      };
+    };
+
+    const supervisor = createSupervisor(shared, logger, buildMembership, createMeshInstance);
+    supervisor.apply([...configured.keys()]);
+    if (supervisor.running().length === 0) {
+      logger.info(`[mesh] could not join any mesh — plugin inactive.`);
       sse.closeAll();
       delete globalAny[GUARD];
       delete globalAny[MODULE_SLOT];
       return;
     }
-    const byMesh = new Map(instances.map((i) => [i.name, i]));
+
+    let instances: MeshInstance[] = supervisor.running();
+    let byMesh = new Map(instances.map((i) => [i.name, i]));
     // Resolved most-specific-first; see forTopic.
-    const byLongestRoot = [...instances].sort((a, b) => b.conf.mesh.root.length - a.conf.mesh.root.length);
+    let byLongestRoot = [...instances].sort((a, b) => b.conf.mesh.root.length - a.conf.mesh.root.length);
+
+    // Rebuilt whenever the box changes what this agent is on. The lookups below
+    // close over these bindings, so they resolve against what is running now
+    // rather than against what was running at startup.
+    const refresh = () => {
+      instances = supervisor.running();
+      byMesh = new Map(instances.map((i) => [i.name, i]));
+      byLongestRoot = [...instances].sort((a, b) => b.conf.mesh.root.length - a.conf.mesh.root.length);
+    };
+
+    // The box decides which meshes this agent belongs to; this receives the
+    // decision. Nothing depends on it: no box publishes it, nothing arrives,
+    // and the configured mesh stays the only one — which is what a bare broker
+    // has always given.
+    // Taken from the meshes actually resolved, not from the top-level config:
+    // the root usually lives in a mesh entry, so the top level carries the
+    // default one and derives the wrong organization — or none.
+    const org = memberships.map((m) => m.conf.mesh.org).find(Boolean);
+    const roster = org
+      ? watchRoster(memberships[0].conf, org, logger, (roots) => {
+          supervisor.apply(roots);
+          refresh();
+        })
+      : null;
 
     // The tools reach whichever mesh the work is on through this. Registered in
     // every session, so they resolve at call time rather than closing over one
@@ -449,7 +516,10 @@ export default definePluginEntry({
     // ── Shutdown ───────────────────────────────────────
 
     const shutdown = () => {
-      for (const instance of instances) {
+      // The roster first: a membership arriving mid-shutdown would start a
+      // mesh nothing is going to stop.
+      try { roster?.stop(); } catch { /* going away anyway */ }
+      for (const instance of supervisor.running()) {
         try { instance.stop(); } catch (e: any) { logger.error(`stopping ${instance.name} failed: ${e.message}`); }
       }
       sse.closeAll();
