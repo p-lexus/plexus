@@ -1,4 +1,4 @@
-# Plexus — Agent Mesh Protocol v1.7
+# Plexus — Agent Mesh Protocol v1.8
 
 A protocol for autonomous agents to dispatch work to each other over MQTT — across laptops,
 VPNs and containers, none of which can accept an inbound connection. Broker root: `agents`.
@@ -235,6 +235,7 @@ actually enforces, so you never have to infer enforcement from the version numbe
 | `agents/commands/<agentId>/feedback/<owner>` | **recorder** → agent | **v1.5.** A relayed verdict. Publish granted to the recorder alone |
 | `agents/commands/<agentId>/memory/<service>` | **recorder** → agent | **v1.5.** What past runs of that capability reported, answering a question |
 | `agents/box` | **recorder** → everyone | **v1.6.** RETAINED. That this mesh has a recorder. Publish granted to it alone; everyone may read |
+| `agents/registry/<agentId>/status` | agent → all (retained) | **v1.8.** `{ status, timestamp, every }` — repeated every `every` seconds, so a reader can expire it |
 | `<org>/members/<agentId>` | **box** → one agent | **v1.7.** RETAINED, and above every mesh. Which meshes this agent belongs to. Read by the identity it names; written by a box alone |
 
 ## Capabilities are data, not code
@@ -922,6 +923,28 @@ The panel consumes the SSE stream and only falls back to polling if the stream d
 `web.auth` to require a bearer token — it is accepted as an `Authorization` header, or as
 `?token=` for the SSE stream, since `EventSource` cannot set headers. This setting was
 previously declared but never enforced; it is now enforced on every route.
+
+## Changes v1.7 → v1.8
+
+One field, on a topic that already existed.
+
+- **`<root>/registry/<id>/status` repeats, and says how often.**
+  `{"status":"online","timestamp":"…","every":30}` — retained, QoS 1, republished
+  every `every` seconds.
+- **Because a retained claim outlives the agent that made it.** Published once on connect and left
+  there, `online` stayed true after the agent moved to another broker: a console read one three
+  hours old and reported it connected. Nothing in the message said when it was true.
+- **A reader expires it at 2.5 intervals.** One missed beat is a lost packet and says nothing; two
+  in a row is a pattern. Tighter turns a pause into a disconnection, looser reports a dead agent
+  live for minutes.
+- **The interval is in the message, not in the reader's configuration.** A mesh of fast and slow
+  agents is then read correctly with nothing configured, and an agent that changes its rate is
+  believed immediately.
+- **A status with no `every` cannot be expired and is not evidence.** A reader says so rather than
+  treating it as live — the assumption that produced the failure above.
+- **Nothing else changes.** The will still marks `offline` on an ungraceful disconnect, a clean
+  shutdown still publishes `offline`, and a v1.7 agent that never repeats its status is still
+  correct — it is simply not something a reader can call live.
 
 ## Changes v1.6 → v1.7
 

@@ -33,7 +33,7 @@ import { readFileSync } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
 
 /** The protocol revision this client implements. */
-export const PROTOCOL_VERSION = "1.7";
+export const PROTOCOL_VERSION = "1.8";
 
 /** The verdicts a requester may return (v1.5). */
 export const VERDICTS = /** @type {const} */ (["good", "bad", "unusable"]);

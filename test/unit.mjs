@@ -14,6 +14,8 @@ import { Readable } from "node:stream";
 const dist = (p) => new URL(`../dist/${p}`, import.meta.url).href;
 
 const { readMembership } = await import(dist("mesh/roster.js"));
+const { beat, isLive, heartbeatSeconds, staleAfterMs, DEFAULT_HEARTBEAT_SECONDS } =
+  await import(dist("mesh/heartbeat.js"));
 const { createSupervisor } = await import(dist("mesh/supervisor.js"));
 
 const { ownerScope, buildTopics, jobTopicPattern, parseJobTopic, escapeRe,
@@ -2251,6 +2253,99 @@ t("stopAll leaves every mesh", () => {
   sup.stopAll();
   assert.deepEqual(stopped, ["a/c", "a/b"], "in reverse, so the first joined is the last to go");
   assert.equal(sup.running().length, 0);
+});
+
+
+// ── a liveness claim that expires ───────────────────────
+
+t("a beat says when it was true and how often it repeats", () => {
+  const b = beat(30, () => new Date("2026-09-10T12:00:00.000Z"));
+  assert.equal(b.status, "online");
+  assert.equal(b.every, 30);
+  assert.equal(b.timestamp, "2026-09-10T12:00:00.000Z");
+});
+
+t("a fresh beat is live", () => {
+  const now = Date.parse("2026-09-10T12:00:00Z");
+  const b = { status: "online", timestamp: "2026-09-10T11:59:50Z", every: 30 };
+  assert.equal(isLive(b, now).live, true);
+});
+
+t("one missed beat is not a disconnection", () => {
+  // A lost packet or a slow tick says nothing. Treating it as death turns
+  // every garbage-collection pause into an agent going offline.
+  const now = Date.parse("2026-09-10T12:00:00Z");
+  const b = { status: "online", timestamp: "2026-09-10T11:59:20Z", every: 30 }; // 40s, of 75
+  assert.equal(isLive(b, now).live, true);
+});
+
+t("two missed beats is a pattern, and expires", () => {
+  const now = Date.parse("2026-09-10T12:00:00Z");
+  const b = { status: "online", timestamp: "2026-09-10T11:58:00Z", every: 30 }; // 120s, of 75
+  const r = isLive(b, now);
+  assert.equal(r.live, false);
+  assert.match(r.why, /last heartbeat 120s ago/);
+});
+
+t("the failure this exists to end: a claim hours old is not live", () => {
+  // 4sale's console reported an agent connected on two meshes while its
+  // retained status was three hours old.
+  const now = Date.parse("2026-09-10T10:58:00Z");
+  const b = { status: "online", timestamp: "2026-09-10T07:15:47Z", every: 30 };
+  assert.equal(isLive(b, now).live, false);
+});
+
+t("a claim with no interval cannot be believed", () => {
+  // The pre-v1.8 shape. It cannot be expired, so it is not evidence — which is
+  // the whole reason the interval is in the message rather than in a config.
+  const now = Date.parse("2026-09-10T12:00:00Z");
+  const r = isLive({ status: "online", timestamp: "2026-09-10T11:59:59Z" }, now);
+  assert.equal(r.live, false);
+  assert.match(r.why, /predates v1\.8/);
+});
+
+t("offline is offline however fresh", () => {
+  const now = Date.parse("2026-09-10T12:00:00Z");
+  const r = isLive({ status: "offline", reason: "shutdown", timestamp: "2026-09-10T11:59:59Z", every: 30 }, now);
+  assert.equal(r.live, false);
+  assert.equal(r.why, "offline");
+});
+
+t("nothing retained is not live", () => {
+  const now = Date.parse("2026-09-10T12:00:00Z");
+  for (const junk of [null, undefined, "", 42, []]) {
+    assert.equal(isLive(junk, now).live, false, `${JSON.stringify(junk)} should not read as live`);
+  }
+});
+
+t("a timestamp that is not one is not live", () => {
+  const now = Date.parse("2026-09-10T12:00:00Z");
+  assert.equal(isLive({ status: "online", timestamp: "soon", every: 30 }, now).live, false);
+});
+
+t("a beat from the future is still live", () => {
+  // Clock skew between an agent and a box is somebody else's problem to solve;
+  // reading a slightly-ahead clock as dead would be a worse answer than
+  // believing it.
+  const now = Date.parse("2026-09-10T12:00:00Z");
+  assert.equal(isLive({ status: "online", timestamp: "2026-09-10T12:00:05Z", every: 30 }, now).live, true);
+});
+
+t("the interval is bounded, because readers trust what it advertises", () => {
+  assert.equal(heartbeatSeconds(undefined), DEFAULT_HEARTBEAT_SECONDS);
+  assert.equal(heartbeatSeconds(0), 5, "a zero interval would beat continuously");
+  assert.equal(heartbeatSeconds(-9), 5);
+  assert.equal(heartbeatSeconds(99999), 600, "an hour-long window is not liveness");
+  assert.equal(heartbeatSeconds(45), 45);
+  assert.equal(heartbeatSeconds(NaN), DEFAULT_HEARTBEAT_SECONDS);
+});
+
+t("an advertised interval widens the window it is read with", () => {
+  // A slow agent is not a dead one: whoever beats every 5 minutes is given
+  // five minutes' grace, and whoever beats every 5 seconds is not.
+  assert.equal(staleAfterMs(30), 75000);
+  assert.equal(staleAfterMs(5), 12500);
+  assert.equal(staleAfterMs(600), 1500000);
 });
 
 // Ask timeouts are unref'd so a pending delegation never keeps the gateway

@@ -36,6 +36,7 @@ import { reviewPromptFor, UNJUDGED } from "./review.js";
 import type { Catalog } from "./catalog.js";
 import type { VarStore } from "./vars.js";
 import { createJobStore } from "./jobs.js";
+import { beat, heartbeatSeconds } from "./heartbeat.js";
 import { createTransport } from "./transport.js";
 import { createDispatcher } from "./dispatch.js";
 import { createRegistry } from "./registry.js";
@@ -684,11 +685,28 @@ export function createMeshInstance(membership: Membership, shared: SharedDeps): 
     [registryStatusFilter(conf.mesh.root)]: { qos: 1 },
   });
 
+  // Republished on a timer, so the claim expires instead of outliving the
+  // agent.
+  //
+  // The timestamp is made at publish time, so a beat the transport queues
+  // during an outage arrives already old and is expired by the reader rather
+  // than reviving a dead agent. On reconnect a fresh one goes out at once.
+  let beating: ReturnType<typeof setInterval> | null = null;
+  const every = heartbeatSeconds(conf.mesh.heartbeatSeconds);
+  const publishBeat = () =>
+    transport.publish(topics.status, JSON.stringify(beat(every)), { qos: 1, retain: true });
+  const stopBeating = () => {
+    if (beating) clearInterval(beating);
+    beating = null;
+  };
+
   transport.start({
     onConnect() {
-      transport.publish(topics.status,
-        JSON.stringify({ status: "online", timestamp: new Date().toISOString() }),
-        { qos: 1, retain: true });
+      publishBeat();
+      stopBeating();
+      beating = setInterval(publishBeat, every * 1000);
+      // Unref'd: a heartbeat must never be the reason a process cannot exit.
+      beating.unref?.();
       registry.publishProfile();
       logger.info(`connected (MQTT ${conf.broker.protocolVersion === 5 ? "5" : "3.1.1"}) — commands, jobs and peer registry subscribed`);
       broadcast("status", snapshot());
@@ -774,6 +792,7 @@ export function createMeshInstance(membership: Membership, shared: SharedDeps): 
     stop() {
       stopWatchdog();
       stopCatalogWatch();
+      stopBeating();
       transport.publish(topics.status,
         JSON.stringify({ status: "offline", reason: "shutdown", timestamp: new Date().toISOString() }),
         { qos: 1, retain: true });

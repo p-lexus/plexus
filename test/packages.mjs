@@ -61,7 +61,7 @@ t("clientId is stable across calls and distinct per agent and mesh", () => {
 });
 
 t("protocol version is the one the bridge speaks", () => {
-  assert.equal(PROTOCOL_VERSION, "1.7");
+  assert.equal(PROTOCOL_VERSION, "1.8");
 });
 
 t("v1.5: the feedback topic builders put the judge where an ACL can see it", () => {

@@ -5,7 +5,7 @@
  * dragging the MQTT client or the plugin SDK along with them.
  */
 
-export const PROTOCOL_VERSION = "1.7";
+export const PROTOCOL_VERSION = "1.8";
 
 // ── Configuration ──────────────────────────────────────
 
@@ -49,6 +49,13 @@ export interface MeshConfig {
    */
   org?: string;
   agentId?: string;
+  /**
+   * How often this agent republishes its status, in seconds (v1.8).
+   *
+   * Advertised in the message, so a reader expires the claim at a multiple of
+   * it rather than guessing. Default 30, bounded 5–600.
+   */
+  heartbeatSeconds?: number;
   servicesFile?: string;
   /** Where job history is kept so the panel survives a restart. */
   historyFile?: string;
